@@ -35,6 +35,19 @@ def _env_list(name: str, default: str) -> list[str]:
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
+def _frontend_origins() -> list[str]:
+    defaults = [
+        "https://campexfront.vercel.app",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+    ]
+    configured = _env_list("CAMPEX_FRONTEND_ORIGINS", "")
+    origins = configured + defaults
+    return list(dict.fromkeys(origins))
+
+
 def _env_mapping(name: str, default: str = "") -> dict[str, str]:
     mapping: dict[str, str] = {}
     for item in _env_list(name, default):
@@ -225,10 +238,7 @@ class Settings:
             database_url=os.getenv(
                 "DATABASE_URL", _default_database_url()
             ),
-            frontend_origins=_env_list(
-                "CAMPEX_FRONTEND_ORIGINS",
-                "http://127.0.0.1:5174,http://localhost:5174,http://127.0.0.1:5500,http://localhost:5500",
-            ),
+            frontend_origins=_frontend_origins(),
             camera_reconnect_seconds=float(os.getenv("CAMERA_RECONNECT_SECONDS", "5")),
             camera_stale_seconds=float(os.getenv("CAMERA_STALE_SECONDS", "10")),
             camera_offline_seconds=float(os.getenv("CAMERA_OFFLINE_SECONDS", "30")),
