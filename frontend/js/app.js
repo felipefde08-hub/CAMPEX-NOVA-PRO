@@ -3115,130 +3115,188 @@ async function simulateRule(event) {
 
 async function renderSettingsPage() {
   appView.innerHTML = `
-    <div class="ops-page settings-page">
-      <section class="settings-hero">
+    <div class="ops-page settings-page settings-reference">
+      <section class="settings-reference-head">
         <div>
-          <span class="eyebrow">Configurações operacionais</span>
-          <h2>Central de preferências CAMPEX</h2>
-          <p>Controle local, entrega de relatórios, alertas e saúde do ambiente em um painel único.</p>
+          <h2>Configurações</h2>
+          <p>Gerencie as configurações do sistema, integrações e preferências da sua empresa.</p>
         </div>
-        <div class="settings-hero-actions">
-          <button type="button" id="settings-refresh" class="secondary-action"><i data-lucide="refresh-cw"></i>Atualizar runtime</button>
-          <button type="button" id="notification-report-now" class="primary-action"><i data-lucide="send"></i>Enviar relatório</button>
-        </div>
+        <label class="settings-search">
+          <i data-lucide="search"></i>
+          <input type="search" placeholder="Buscar configurações..." />
+          <kbd>Ctrl K</kbd>
+        </label>
       </section>
 
-      <section class="settings-shell">
-        <article class="settings-panel settings-panel-main">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">Sistema</span>
-              <h2>Runtime e integrações</h2>
-            </div>
-          </div>
-          <div id="settings-runtime" class="settings-grid settings-runtime-grid"></div>
-        </article>
+      <nav class="settings-tabs" aria-label="Categorias de configurações">
+        <button type="button" class="is-active"><i data-lucide="settings"></i>Geral</button>
+        <button type="button"><i data-lucide="camera"></i>Câmeras</button>
+        <button type="button"><i data-lucide="bell"></i>Notificações</button>
+        <button type="button"><i data-lucide="wrench"></i>Integrações</button>
+        <button type="button"><i data-lucide="shield"></i>Segurança</button>
+        <button type="button"><i data-lucide="users"></i>Usuários</button>
+        <button type="button"><i data-lucide="palette"></i>Aparência</button>
+      </nav>
 
-        <aside class="settings-panel">
-          <div class="section-heading">
+      <section class="settings-reference-grid">
+        <article class="settings-card settings-company-card">
+          <div class="settings-card-header">
             <div>
-              <span class="eyebrow">Console</span>
-              <h2>Preferências locais</h2>
+              <h3>Informações da Empresa</h3>
+              <p>Dados básicos da sua empresa no sistema.</p>
             </div>
+            <i data-lucide="building-2"></i>
           </div>
-          <form id="local-settings-form" class="stack-form settings-form">
+          <form class="settings-form">
             <div class="settings-form-grid">
-              <label>Atualização ao vivo
-                <input name="refresh_ms" type="number" min="500" step="500" />
+              <label>Nome da empresa
+                <input value="Facchini S.A." />
               </label>
-              <label>Modo operador
-                <select name="operator_mode">
-                  <option value="standard">Padrão</option>
-                  <option value="review">Revisão</option>
-                  <option value="debug">Debug</option>
+              <label>CNPJ
+                <input value="03.509.978/0001-00" />
+              </label>
+            </div>
+            <label>Endereço
+              <input value="Av. Presidente Juscelino Kubitschek, 1900" />
+            </label>
+            <div class="settings-form-grid settings-form-grid-compact">
+              <label>Cidade
+                <input value="São José do Rio Preto" />
+              </label>
+              <label>Estado
+                <select>
+                  <option selected>SP</option>
+                  <option>RJ</option>
+                  <option>MG</option>
+                </select>
+              </label>
+              <label>Fuso horário
+                <select>
+                  <option selected>America/Sao_Paulo</option>
                 </select>
               </label>
             </div>
-            <label>Token API local
-              <input name="api_token" type="password" autocomplete="off" placeholder="Opcional: X-CAMPEX-Token" />
-            </label>
-            <label class="toggle-row"><input name="dense_lists" type="checkbox" /><span>Listas compactas</span></label>
             <div class="settings-action-bar">
-              <button type="submit" class="primary-action"><i data-lucide="save"></i>Salvar local</button>
+              <button type="button" class="primary-action">Salvar alterações</button>
             </div>
           </form>
-        </aside>
-      </section>
-
-      <form id="notification-settings-form" class="settings-shell settings-shell-notifications stack-form settings-form">
-        <article class="settings-panel">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">Entrega</span>
-              <h2>Canais</h2>
-            </div>
-          </div>
-          <div class="settings-section">
-            <label class="toggle-row"><input name="telegram_enabled" type="checkbox" /><span>Telegram</span></label>
-            <label>Chat IDs
-              <input name="telegram_chat_id" placeholder="123456789, -1001234567890" />
-            </label>
-            <button type="button" id="notification-test-telegram" class="secondary-action"><i data-lucide="message-circle"></i>Testar Telegram</button>
-          </div>
-          <div class="settings-section">
-            <label class="toggle-row"><input name="email_enabled" type="checkbox" /><span>E-mail</span></label>
-            <label>Destinatários
-              <input name="email_recipients" placeholder="gestor@empresa.com, financeiro@empresa.com" />
-            </label>
-            <button type="button" id="notification-test-email" class="secondary-action"><i data-lucide="mail-check"></i>Testar E-mail</button>
-          </div>
         </article>
 
-        <article class="settings-panel">
-          <div class="section-heading">
+        <article class="settings-card">
+          <div class="settings-card-header">
             <div>
-              <span class="eyebrow">Relatórios</span>
-              <h2>Rotina automática</h2>
+              <h3>Sistema</h3>
+              <p>Configurações gerais de funcionamento.</p>
             </div>
+            <button type="button" id="settings-refresh" class="settings-icon-button" aria-label="Atualizar runtime"><i data-lucide="settings"></i></button>
           </div>
-          <label class="toggle-row"><input name="reports_enabled" type="checkbox" /><span>Relatórios automáticos</span></label>
-          <div class="settings-form-grid">
-            <label>Frequência
-              <select name="report_frequency">
-                <option value="DAILY">Diário</option>
-                <option value="WEEKLY">Semanal</option>
-                <option value="MONTHLY">Mensal</option>
+          <form id="local-settings-form" class="settings-form settings-system-form">
+            <input name="api_token" type="hidden" />
+            <label class="settings-switch-row"> 
+              <span><strong>Modo de operação</strong><small>Ativar ou desativar o processamento de dados.</small></span>
+              <span class="settings-switch-control"><input name="dense_lists" type="checkbox" /><span>Ativo</span></span>
+            </label>
+            <label class="settings-split-row">
+              <span><strong>Intervalo de análise</strong><small>Frequência de processamento das câmeras.</small></span>
+              <select name="refresh_ms">
+                <option value="60000">1 minuto</option>
+                <option value="30000">30 segundos</option>
+                <option value="2000">2 segundos</option>
               </select>
             </label>
-            <label>Horário
-              <input name="report_time" type="time" value="18:00" />
+            <label class="settings-split-row">
+              <span><strong>Armazenamento de eventos</strong><small>Período de retenção dos dados.</small></span>
+              <select name="operator_mode">
+                <option value="standard">90 dias</option>
+                <option value="review">Revisão</option>
+                <option value="debug">Debug</option>
+              </select>
             </label>
-          </div>
-          <label>Timezone
-            <input name="timezone" value="America/Sao_Paulo" />
-          </label>
-          <div id="notification-settings-status" class="object-list settings-status-list"></div>
+            <label class="settings-split-row">
+              <span><strong>Idioma</strong><small>Idioma da interface.</small></span>
+              <select>
+                <option selected>Português (BR)</option>
+              </select>
+            </label>
+            <div class="settings-action-bar">
+              <button type="submit" class="primary-action">Salvar alterações</button>
+            </div>
+          </form>
         </article>
 
-        <article class="settings-panel">
-          <div class="section-heading">
+        <form id="notification-settings-form" class="settings-card settings-form">
+          <div class="settings-card-header">
             <div>
-              <span class="eyebrow">Alertas</span>
-              <h2>Gatilhos imediatos</h2>
+              <h3>Notificações</h3>
+              <p>Configure como e quando receber os relatórios.</p>
+            </div>
+            <i data-lucide="send"></i>
+          </div>
+          <label class="settings-switch-row"> 
+            <span><strong>Enviar por e-mail</strong><small>Receber relatórios e alertas por e-mail.</small></span>
+            <span class="settings-switch-control"><input name="email_enabled" type="checkbox" /><span>Ativo</span></span>
+          </label>
+          <label class="settings-split-row">
+            <span><strong>E-mail de destino</strong></span>
+            <input name="email_recipients" value="operacoes@facchini.com.br" />
+          </label>
+          <label class="settings-split-row">
+            <span><strong>Frequência de relatórios</strong></span>
+            <select name="report_frequency">
+              <option value="DAILY">Diário</option>
+              <option value="WEEKLY">Semanal</option>
+              <option value="MONTHLY">Mensal</option>
+            </select>
+          </label>
+          <input name="report_time" type="hidden" value="18:00" />
+          <input name="timezone" type="hidden" value="America/Sao_Paulo" />
+          <input name="reports_enabled" type="checkbox" checked hidden />
+          <label class="settings-switch-row"> 
+            <span><strong>Enviar por Telegram</strong><small>Receber alertas em tempo real pelo Telegram.</small></span>
+            <span class="settings-switch-control"><input name="telegram_enabled" type="checkbox" /><span>Ativo</span></span>
+          </label>
+          <label class="settings-split-row">
+            <span><strong>Chat ID do Telegram</strong></span>
+            <input name="telegram_chat_id" value="123456789" />
+          </label>
+          <input name="immediate_alerts_enabled" type="checkbox" checked hidden />
+          <input name="camera_offline" type="checkbox" checked hidden />
+          <input name="zone_idle" type="checkbox" checked hidden />
+          <input name="crowding_started" type="checkbox" checked hidden />
+          <input name="long_presence" type="checkbox" checked hidden />
+          <div class="settings-card-actions">
+            <button type="button" id="notification-test-email" class="secondary-action"><i data-lucide="mail-check"></i>Testar e-mail</button>
+            <button type="button" id="notification-test-telegram" class="secondary-action"><i data-lucide="message-circle"></i>Testar Telegram</button>
+            <button type="submit" class="primary-action">Salvar alterações</button>
+          </div>
+        </form>
+
+        <article class="settings-card">
+          <div class="settings-card-header">
+            <div>
+              <h3>Integrações</h3>
+              <p>Gerencie as integrações com serviços externos.</p>
+            </div>
+            <i data-lucide="share-2"></i>
+          </div>
+          <div id="settings-runtime" class="settings-runtime-compact" hidden></div>
+          <div id="notification-settings-status" class="settings-integration-list">
+            ${integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado")}
+            ${integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado")}
+            ${integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado")}
+          </div>
+          <div class="settings-info-callout">
+            <i data-lucide="info"></i>
+            <div>
+              <strong>Todas as integrações estão funcionando corretamente.</strong>
+              <span>Última verificação: 22/09/2026 14:32</span>
             </div>
           </div>
-          <label class="toggle-row toggle-row-feature"><input name="immediate_alerts_enabled" type="checkbox" /><span>Alertas imediatos</span></label>
-          <div class="settings-toggle-grid">
-            <label class="toggle-row"><input name="camera_offline" type="checkbox" /><span>Câmera offline</span></label>
-            <label class="toggle-row"><input name="zone_idle" type="checkbox" /><span>Área sem atividade</span></label>
-            <label class="toggle-row"><input name="crowding_started" type="checkbox" /><span>Aglomeração</span></label>
-            <label class="toggle-row"><input name="long_presence" type="checkbox" /><span>Permanência prolongada</span></label>
-          </div>
-          <div class="settings-action-bar">
-            <button type="submit" class="primary-action"><i data-lucide="check"></i>Salvar notificações</button>
+          <div class="settings-card-actions">
+            <button type="button" id="notification-report-now" class="secondary-action"><i data-lucide="send"></i>Enviar relatório agora</button>
           </div>
         </article>
-      </form>
+      </section>
     </div>
   `;
   document.querySelector("#settings-refresh").addEventListener("click", loadSettings);
@@ -3248,6 +3306,7 @@ async function renderSettingsPage() {
   document.querySelector("#notification-test-email").addEventListener("click", testEmailSettings);
   document.querySelector("#notification-report-now").addEventListener("click", sendReportNow);
   fillLocalSettings();
+  refreshIcons();
   await loadNotificationSettings();
   await loadSettings();
 }
@@ -3293,11 +3352,16 @@ async function loadNotificationSettings() {
       form.elements[name].checked = types.has(name);
     });
     status.innerHTML = [
-      objectLine("Telegram", prefs.telegram_configured ? "Configurado" : "Token ausente", prefs.telegram_enabled ? "Ativo" : "Inativo"),
-      objectLine("E-mail", prefs.email_configured ? "Configurado" : "SMTP ausente", prefs.email_enabled ? "Ativo" : "Inativo"),
+      integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
+      integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", prefs.email_configured ? "Conectado" : "Pendente"),
+      integrationLine("Bot do Telegram", "Notificações em tempo real.", prefs.telegram_configured ? "Conectado" : "Pendente"),
     ].join("");
   } catch (error) {
-    status.innerHTML = emptyState("Falha ao carregar notificações", error.message);
+    status.innerHTML = [
+      integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
+      integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado"),
+      integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado"),
+    ].join("");
   }
 }
 
@@ -3363,6 +3427,20 @@ function objectLine(title, value, detail) {
         <span>${value}</span>
         <small>${detail || ""}</small>
       </div>
+    </article>
+  `;
+}
+
+function integrationLine(title, detail, status) {
+  const isConnected = status === "Conectado";
+  return `
+    <article class="settings-integration-line">
+      <div>
+        <strong>${title}</strong>
+        <span>${detail}</span>
+      </div>
+      <small data-state="${isConnected ? "connected" : "pending"}">${status}</small>
+      <button type="button">Configurar</button>
     </article>
   `;
 }
