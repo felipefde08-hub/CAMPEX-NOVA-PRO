@@ -69,6 +69,8 @@ import {
 } from "./auth.js";
 import { currentRoute, routes } from "./state.js";
 
+const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
+
 const statusElement = document.querySelector("#backend-status");
 const statusText = statusElement.querySelector(".status-text");
 const pageTitle = document.querySelector("#page-title");
@@ -593,6 +595,20 @@ async function handleVideoAnalysisSubmit(event) {
   const form = event.currentTarget;
   const file = form.elements.video.files[0];
   if (!file) return;
+  if (file.size > VERCEL_SAFE_VIDEO_UPLOAD_BYTES) {
+    const limitMb = Math.floor(VERCEL_SAFE_VIDEO_UPLOAD_BYTES / (1024 * 1024));
+    notify(
+      "MP4 muito grande",
+      `Na Vercel, envie um MP4 com até ${limitMb} MB. O arquivo selecionado tem ${formatBytes(file.size)}.`,
+      "error",
+      10000,
+    );
+    document.querySelector("#video-analysis-status").innerHTML = emptyState(
+      "Arquivo acima do limite",
+      `Reduza o MP4 para até ${limitMb} MB ou use uma infraestrutura de worker/storage para vídeos maiores.`,
+    );
+    return;
+  }
   const button = form.querySelector("button[type='submit']");
   button.disabled = true;
   try {
@@ -605,6 +621,12 @@ async function handleVideoAnalysisSubmit(event) {
   } finally {
     button.disabled = false;
   }
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
 async function loadLatestVideoAnalysis() {

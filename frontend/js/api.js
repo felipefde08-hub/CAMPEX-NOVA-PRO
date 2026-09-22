@@ -44,7 +44,9 @@ async function requestJson(path, options = {}) {
       const body = await response.json();
       detail = body.detail || detail;
     } catch {
-      detail = response.statusText || detail;
+      detail = response.status === 413
+        ? "Arquivo grande demais para upload direto na Vercel. Use MP4 de até 4 MB."
+        : response.statusText || detail;
     }
     throw new Error(detail);
   }
