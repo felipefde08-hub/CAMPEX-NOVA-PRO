@@ -2123,6 +2123,56 @@ button:hover {
   font-size: 0.76rem;
 }
 
+.settings-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.settings-row-actions button,
+.settings-integration-line button:disabled {
+  min-height: 2.25rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text);
+  padding: 0 0.75rem;
+}
+
+.settings-integration-line button:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.settings-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 1rem;
+}
+
+body[data-accent="green"] .settings-tabs button.is-active,
+body[data-accent="green"] .secondary-action:hover,
+body[data-accent="green"] .primary-action:hover {
+  border-color: rgba(49, 196, 107, 0.54);
+}
+
+body[data-accent="white"] .settings-tabs button.is-active {
+  border-bottom-color: rgba(255, 255, 255, 0.8);
+}
+
+body[data-motion="reduced"] *,
+body[data-motion="reduced"] *::before,
+body[data-motion="reduced"] *::after {
+  transition-duration: 0.001ms !important;
+  animation-duration: 0.001ms !important;
+}
+
 @media (max-width: 1180px) {
   .settings-reference-grid {
     grid-template-columns: 1fr;
@@ -2142,6 +2192,15 @@ button:hover {
   .settings-split-row,
   .settings-integration-line {
     grid-template-columns: 1fr;
+  }
+
+  .settings-row-actions {
+    justify-content: stretch;
+  }
+
+  .settings-row-actions button,
+  .settings-integration-line button {
+    width: 100%;
   }
 
   .settings-reference .settings-form-grid,

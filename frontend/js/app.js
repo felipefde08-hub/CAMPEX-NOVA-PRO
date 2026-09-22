@@ -64,6 +64,7 @@
 import {
   createLocalAccount,
   getCurrentUser,
+  listLocalUsers,
   signInLocal,
   signOutLocal,
 } from "./auth.js";
@@ -3129,190 +3130,611 @@ async function renderSettingsPage() {
       </section>
 
       <nav class="settings-tabs" aria-label="Categorias de configurações">
-        <button type="button" class="is-active"><i data-lucide="settings"></i>Geral</button>
-        <button type="button"><i data-lucide="camera"></i>Câmeras</button>
-        <button type="button"><i data-lucide="bell"></i>Notificações</button>
-        <button type="button"><i data-lucide="wrench"></i>Integrações</button>
-        <button type="button"><i data-lucide="shield"></i>Segurança</button>
-        <button type="button"><i data-lucide="users"></i>Usuários</button>
-        <button type="button"><i data-lucide="palette"></i>Aparência</button>
+        ${settingsTabs().map((tab) => `
+          <button type="button" data-settings-tab="${tab.id}">
+            <i data-lucide="${tab.icon}"></i>${tab.label}
+          </button>
+        `).join("")}
       </nav>
 
-      <section class="settings-reference-grid">
-        <article class="settings-card settings-company-card">
-          <div class="settings-card-header">
-            <div>
-              <h3>Informações da Empresa</h3>
-              <p>Dados básicos da sua empresa no sistema.</p>
-            </div>
-            <i data-lucide="building-2"></i>
-          </div>
-          <form class="settings-form">
-            <div class="settings-form-grid">
-              <label>Nome da empresa
-                <input value="Facchini S.A." />
-              </label>
-              <label>CNPJ
-                <input value="03.509.978/0001-00" />
-              </label>
-            </div>
-            <label>Endereço
-              <input value="Av. Presidente Juscelino Kubitschek, 1900" />
-            </label>
-            <div class="settings-form-grid settings-form-grid-compact">
-              <label>Cidade
-                <input value="São José do Rio Preto" />
-              </label>
-              <label>Estado
-                <select>
-                  <option selected>SP</option>
-                  <option>RJ</option>
-                  <option>MG</option>
-                </select>
-              </label>
-              <label>Fuso horário
-                <select>
-                  <option selected>America/Sao_Paulo</option>
-                </select>
-              </label>
-            </div>
-            <div class="settings-action-bar">
-              <button type="button" class="primary-action">Salvar alterações</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="settings-card">
-          <div class="settings-card-header">
-            <div>
-              <h3>Sistema</h3>
-              <p>Configurações gerais de funcionamento.</p>
-            </div>
-            <button type="button" id="settings-refresh" class="settings-icon-button" aria-label="Atualizar runtime"><i data-lucide="settings"></i></button>
-          </div>
-          <form id="local-settings-form" class="settings-form settings-system-form">
-            <input name="api_token" type="hidden" />
-            <label class="settings-switch-row"> 
-              <span><strong>Modo de operação</strong><small>Ativar ou desativar o processamento de dados.</small></span>
-              <span class="settings-switch-control"><input name="dense_lists" type="checkbox" /><span>Ativo</span></span>
-            </label>
-            <label class="settings-split-row">
-              <span><strong>Intervalo de análise</strong><small>Frequência de processamento das câmeras.</small></span>
-              <select name="refresh_ms">
-                <option value="60000">1 minuto</option>
-                <option value="30000">30 segundos</option>
-                <option value="2000">2 segundos</option>
-              </select>
-            </label>
-            <label class="settings-split-row">
-              <span><strong>Armazenamento de eventos</strong><small>Período de retenção dos dados.</small></span>
-              <select name="operator_mode">
-                <option value="standard">90 dias</option>
-                <option value="review">Revisão</option>
-                <option value="debug">Debug</option>
-              </select>
-            </label>
-            <label class="settings-split-row">
-              <span><strong>Idioma</strong><small>Idioma da interface.</small></span>
-              <select>
-                <option selected>Português (BR)</option>
-              </select>
-            </label>
-            <div class="settings-action-bar">
-              <button type="submit" class="primary-action">Salvar alterações</button>
-            </div>
-          </form>
-        </article>
-
-        <form id="notification-settings-form" class="settings-card settings-form">
-          <div class="settings-card-header">
-            <div>
-              <h3>Notificações</h3>
-              <p>Configure como e quando receber os relatórios.</p>
-            </div>
-            <i data-lucide="send"></i>
-          </div>
-          <label class="settings-switch-row"> 
-            <span><strong>Enviar por e-mail</strong><small>Receber relatórios e alertas por e-mail.</small></span>
-            <span class="settings-switch-control"><input name="email_enabled" type="checkbox" /><span>Ativo</span></span>
-          </label>
-          <label class="settings-split-row">
-            <span><strong>E-mail de destino</strong></span>
-            <input name="email_recipients" value="operacoes@facchini.com.br" />
-          </label>
-          <label class="settings-split-row">
-            <span><strong>Frequência de relatórios</strong></span>
-            <select name="report_frequency">
-              <option value="DAILY">Diário</option>
-              <option value="WEEKLY">Semanal</option>
-              <option value="MONTHLY">Mensal</option>
-            </select>
-          </label>
-          <input name="report_time" type="hidden" value="18:00" />
-          <input name="timezone" type="hidden" value="America/Sao_Paulo" />
-          <input name="reports_enabled" type="checkbox" checked hidden />
-          <label class="settings-switch-row"> 
-            <span><strong>Enviar por Telegram</strong><small>Receber alertas em tempo real pelo Telegram.</small></span>
-            <span class="settings-switch-control"><input name="telegram_enabled" type="checkbox" /><span>Ativo</span></span>
-          </label>
-          <label class="settings-split-row">
-            <span><strong>Chat ID do Telegram</strong></span>
-            <input name="telegram_chat_id" value="123456789" />
-          </label>
-          <input name="immediate_alerts_enabled" type="checkbox" checked hidden />
-          <input name="camera_offline" type="checkbox" checked hidden />
-          <input name="zone_idle" type="checkbox" checked hidden />
-          <input name="crowding_started" type="checkbox" checked hidden />
-          <input name="long_presence" type="checkbox" checked hidden />
-          <div class="settings-card-actions">
-            <button type="button" id="notification-test-email" class="secondary-action"><i data-lucide="mail-check"></i>Testar e-mail</button>
-            <button type="button" id="notification-test-telegram" class="secondary-action"><i data-lucide="message-circle"></i>Testar Telegram</button>
-            <button type="submit" class="primary-action">Salvar alterações</button>
-          </div>
-        </form>
-
-        <article class="settings-card">
-          <div class="settings-card-header">
-            <div>
-              <h3>Integrações</h3>
-              <p>Gerencie as integrações com serviços externos.</p>
-            </div>
-            <i data-lucide="share-2"></i>
-          </div>
-          <div id="settings-runtime" class="settings-runtime-compact" hidden></div>
-          <div id="notification-settings-status" class="settings-integration-list">
-            ${integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado")}
-            ${integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado")}
-            ${integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado")}
-          </div>
-          <div class="settings-info-callout">
-            <i data-lucide="info"></i>
-            <div>
-              <strong>Todas as integrações estão funcionando corretamente.</strong>
-              <span>Última verificação: 22/09/2026 14:32</span>
-            </div>
-          </div>
-          <div class="settings-card-actions">
-            <button type="button" id="notification-report-now" class="secondary-action"><i data-lucide="send"></i>Enviar relatório agora</button>
-          </div>
-        </article>
-      </section>
+      <section class="settings-reference-grid" id="settings-tab-panel"></section>
     </div>
   `;
-  document.querySelector("#settings-refresh").addEventListener("click", loadSettings);
-  document.querySelector("#local-settings-form").addEventListener("submit", saveLocalSettings);
-  document.querySelector("#notification-settings-form").addEventListener("submit", saveNotificationSettings);
-  document.querySelector("#notification-test-telegram").addEventListener("click", testTelegramSettings);
-  document.querySelector("#notification-test-email").addEventListener("click", testEmailSettings);
-  document.querySelector("#notification-report-now").addEventListener("click", sendReportNow);
-  fillLocalSettings();
+  setupSettingsInteractions();
+  await renderSettingsTab("general");
+}
+
+function settingsTabs() {
+  return [
+    { id: "general", label: "Geral", icon: "settings" },
+    { id: "cameras", label: "Câmeras", icon: "camera" },
+    { id: "notifications", label: "Notificações", icon: "bell" },
+    { id: "integrations", label: "Integrações", icon: "wrench" },
+    { id: "security", label: "Segurança", icon: "shield" },
+    { id: "users", label: "Usuários", icon: "users" },
+    { id: "appearance", label: "Aparência", icon: "palette" },
+  ];
+}
+
+function readStoredSettings(key, fallback) {
+  try {
+    return { ...fallback, ...JSON.parse(localStorage.getItem(key) || "{}") };
+  } catch {
+    return { ...fallback };
+  }
+}
+
+function writeStoredSettings(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function companySettings() {
+  return readStoredSettings("campex.company", {
+    name: "Facchini S.A.",
+    document: "03.509.978/0001-00",
+    address: "Av. Presidente Juscelino Kubitschek, 1900",
+    city: "São José do Rio Preto",
+    state: "SP",
+    timezone: "America/Sao_Paulo",
+  });
+}
+
+function securitySettings() {
+  return readStoredSettings("campex.security", {
+    session_timeout: "8",
+    audit_log: true,
+    strict_token: Boolean(localStorage.getItem("campex.api_token")),
+    evidence_retention_days: "7",
+  });
+}
+
+function appearanceSettings() {
+  return readStoredSettings("campex.appearance", {
+    density: document.body.dataset.density || "comfortable",
+    accent: "blue",
+    motion: "full",
+    sidebar: appShell.dataset.sidebar || "expanded",
+  });
+}
+
+function settingsCard(title, detail, icon, body, actions = "") {
+  return `
+    <article class="settings-card" data-settings-card>
+      <div class="settings-card-header">
+        <div>
+          <h3>${title}</h3>
+          <p>${detail}</p>
+        </div>
+        ${icon ? `<i data-lucide="${icon}"></i>` : ""}
+      </div>
+      ${body}
+      ${actions ? `<div class="settings-card-actions">${actions}</div>` : ""}
+    </article>
+  `;
+}
+
+async function renderSettingsTab(tabId) {
+  const panel = document.querySelector("#settings-tab-panel");
+  if (!panel) return;
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    const active = button.dataset.settingsTab === tabId;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  panel.dataset.settingsTab = tabId;
+  panel.innerHTML = settingsTabMarkup(tabId);
+  wireSettingsTab(tabId);
   refreshIcons();
-  await loadNotificationSettings();
-  await loadSettings();
+  await hydrateSettingsTab(tabId);
+  filterSettingsCards(document.querySelector(".settings-search input")?.value || "");
+}
+
+function settingsTabMarkup(tabId) {
+  if (tabId === "cameras") return camerasSettingsMarkup();
+  if (tabId === "notifications") return notificationsSettingsMarkup();
+  if (tabId === "integrations") return integrationsSettingsMarkup();
+  if (tabId === "security") return securitySettingsMarkup();
+  if (tabId === "users") return usersSettingsMarkup();
+  if (tabId === "appearance") return appearanceSettingsMarkup();
+  return generalSettingsMarkup();
+}
+
+function generalSettingsMarkup() {
+  const company = companySettings();
+  return `
+    ${settingsCard("Informações da Empresa", "Dados básicos da sua empresa no sistema.", "building-2", `
+      <form id="company-settings-form" class="settings-form">
+        <div class="settings-form-grid">
+          <label>Nome da empresa<input name="name" value="${escapeHtml(company.name)}" /></label>
+          <label>CNPJ<input name="document" value="${escapeHtml(company.document)}" /></label>
+        </div>
+        <label>Endereço<input name="address" value="${escapeHtml(company.address)}" /></label>
+        <div class="settings-form-grid settings-form-grid-compact">
+          <label>Cidade<input name="city" value="${escapeHtml(company.city)}" /></label>
+          <label>Estado
+            <select name="state">${["SP", "RJ", "MG", "PR", "SC", "RS"].map((state) => `<option ${state === company.state ? "selected" : ""}>${state}</option>`).join("")}</select>
+          </label>
+          <label>Fuso horário<input name="timezone" value="${escapeHtml(company.timezone)}" /></label>
+        </div>
+        <div class="settings-action-bar"><button type="submit" class="primary-action">Salvar alterações</button></div>
+      </form>
+    `)}
+    ${settingsCard("Sistema", "Configurações gerais de funcionamento.", "settings", `
+      <form id="local-settings-form" class="settings-form settings-system-form">
+        <input name="api_token" type="hidden" />
+        <label class="settings-switch-row">
+          <span><strong>Modo de operação</strong><small>Ativar ou desativar o modo compacto de operação.</small></span>
+          <span class="settings-switch-control"><input name="dense_lists" type="checkbox" /><span>Ativo</span></span>
+        </label>
+        <label class="settings-split-row">
+          <span><strong>Intervalo de análise</strong><small>Frequência de atualização da interface.</small></span>
+          <select name="refresh_ms">
+            <option value="60000">1 minuto</option>
+            <option value="30000">30 segundos</option>
+            <option value="2000">2 segundos</option>
+          </select>
+        </label>
+        <label class="settings-split-row">
+          <span><strong>Modo do operador</strong><small>Define a experiência operacional local.</small></span>
+          <select name="operator_mode">
+            <option value="standard">Padrão</option>
+            <option value="review">Revisão</option>
+            <option value="debug">Debug</option>
+          </select>
+        </label>
+        <label class="settings-split-row">
+          <span><strong>Token API local</strong><small>Usado em chamadas protegidas por X-CAMPEX-Token.</small></span>
+          <input name="api_token_visible" type="password" autocomplete="off" placeholder="Opcional" />
+        </label>
+        <div class="settings-action-bar"><button type="submit" class="primary-action">Salvar alterações</button></div>
+      </form>
+    `)}
+  `;
+}
+
+function camerasSettingsMarkup() {
+  return `
+    ${settingsCard("Câmeras", "Gerencie disponibilidade, visão computacional e testes de conexão.", "camera", `
+      <div id="settings-camera-list" class="settings-integration-list">${emptyState("Carregando câmeras", "Buscando câmeras cadastradas.")}</div>
+    `, `<button type="button" class="secondary-action" data-settings-action="refresh-cameras"><i data-lucide="refresh-cw"></i>Atualizar</button>`)}
+    ${settingsCard("Operação visual", "Resumo operacional calculado a partir do backend.", "activity", `
+      <div id="settings-camera-summary" class="settings-runtime-grid"></div>
+    `)}
+  `;
+}
+
+function notificationsSettingsMarkup() {
+  return `
+    <form id="notification-settings-form" class="settings-card settings-form" data-settings-card>
+      <div class="settings-card-header">
+        <div>
+          <h3>Notificações</h3>
+          <p>Configure como e quando receber os relatórios.</p>
+        </div>
+        <i data-lucide="send"></i>
+      </div>
+      <label class="settings-switch-row">
+        <span><strong>Enviar por e-mail</strong><small>Receber relatórios e alertas por e-mail.</small></span>
+        <span class="settings-switch-control"><input name="email_enabled" type="checkbox" /><span>Ativo</span></span>
+      </label>
+      <label class="settings-split-row"><span><strong>E-mail de destino</strong></span><input name="email_recipients" value="operacoes@facchini.com.br" /></label>
+      <label class="settings-split-row">
+        <span><strong>Frequência de relatórios</strong></span>
+        <select name="report_frequency">
+          <option value="DAILY">Diário</option>
+          <option value="WEEKLY">Semanal</option>
+          <option value="MONTHLY">Mensal</option>
+        </select>
+      </label>
+      <div class="settings-form-grid">
+        <label>Horário<input name="report_time" type="time" value="18:00" /></label>
+        <label>Timezone<input name="timezone" value="America/Sao_Paulo" /></label>
+      </div>
+      <label class="settings-switch-row">
+        <span><strong>Enviar por Telegram</strong><small>Receber alertas em tempo real pelo Telegram.</small></span>
+        <span class="settings-switch-control"><input name="telegram_enabled" type="checkbox" /><span>Ativo</span></span>
+      </label>
+      <label class="settings-split-row"><span><strong>Chat ID do Telegram</strong></span><input name="telegram_chat_id" value="123456789" /></label>
+      <label class="settings-switch-row">
+        <span><strong>Alertas imediatos</strong><small>Dispara alertas assim que eventos críticos forem registrados.</small></span>
+        <span class="settings-switch-control"><input name="immediate_alerts_enabled" type="checkbox" /><span>Ativo</span></span>
+      </label>
+      <div class="settings-toggle-grid">
+        <label class="toggle-row"><input name="camera_offline" type="checkbox" /><span>Câmera offline</span></label>
+        <label class="toggle-row"><input name="zone_idle" type="checkbox" /><span>Área sem atividade</span></label>
+        <label class="toggle-row"><input name="crowding_started" type="checkbox" /><span>Aglomeração</span></label>
+        <label class="toggle-row"><input name="long_presence" type="checkbox" /><span>Permanência prolongada</span></label>
+      </div>
+      <input name="reports_enabled" type="checkbox" checked hidden />
+      <div class="settings-card-actions">
+        <button type="button" id="notification-test-email" class="secondary-action"><i data-lucide="mail-check"></i>Testar e-mail</button>
+        <button type="button" id="notification-test-telegram" class="secondary-action"><i data-lucide="message-circle"></i>Testar Telegram</button>
+        <button type="submit" class="primary-action">Salvar alterações</button>
+      </div>
+    </form>
+    ${settingsCard("Status de entrega", "Última leitura das integrações de notificação.", "radio", `<div id="notification-settings-status" class="settings-integration-list"></div>`)}
+  `;
+}
+
+function integrationsSettingsMarkup() {
+  return `
+    ${settingsCard("Integrações", "Gerencie as integrações com serviços externos.", "share-2", `
+      <div id="notification-settings-status" class="settings-integration-list">
+        ${integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado", "runtime")}
+        ${integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado", "email")}
+        ${integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado", "telegram")}
+      </div>
+      <div class="settings-info-callout">
+        <i data-lucide="info"></i>
+        <div>
+          <strong>Monitoramento de integrações ativo.</strong>
+          <span id="settings-integration-check">Aguardando verificação do backend.</span>
+        </div>
+      </div>
+    `, `
+      <button type="button" id="settings-refresh" class="secondary-action"><i data-lucide="refresh-cw"></i>Verificar</button>
+      <button type="button" id="notification-report-now" class="secondary-action"><i data-lucide="send"></i>Enviar relatório agora</button>
+    `)}
+    ${settingsCard("Runtime", "Informações técnicas retornadas pelo backend.", "server", `<div id="settings-runtime" class="settings-runtime-grid"></div>`)}
+  `;
+}
+
+function securitySettingsMarkup() {
+  const settings = securitySettings();
+  return `
+    ${settingsCard("Segurança", "Controle de sessão, token e retenção de evidências.", "shield", `
+      <form id="security-settings-form" class="settings-form">
+        <label class="settings-switch-row">
+          <span><strong>Exigir token local</strong><small>Salva o token usado nas chamadas protegidas do backend.</small></span>
+          <span class="settings-switch-control"><input name="strict_token" type="checkbox" ${settings.strict_token ? "checked" : ""} /><span>Ativo</span></span>
+        </label>
+        <label class="settings-split-row"><span><strong>Token API</strong><small>X-CAMPEX-Token do ambiente.</small></span><input name="api_token" type="password" value="${escapeHtml(localStorage.getItem("campex.api_token") || "")}" /></label>
+        <label class="settings-split-row"><span><strong>Tempo de sessão</strong><small>Preferência local para auditoria operacional.</small></span><select name="session_timeout"><option value="4">4 horas</option><option value="8">8 horas</option><option value="12">12 horas</option></select></label>
+        <label class="settings-split-row"><span><strong>Retenção de evidências</strong><small>Executa limpeza pelo backend quando solicitado.</small></span><select name="evidence_retention_days"><option value="7">7 dias</option><option value="15">15 dias</option><option value="30">30 dias</option></select></label>
+        <label class="settings-switch-row">
+          <span><strong>Log de auditoria</strong><small>Mantém trilha local de alterações nas configurações.</small></span>
+          <span class="settings-switch-control"><input name="audit_log" type="checkbox" ${settings.audit_log ? "checked" : ""} /><span>Ativo</span></span>
+        </label>
+        <div class="settings-card-actions">
+          <button type="button" class="secondary-action" data-settings-action="cleanup-evidence"><i data-lucide="trash-2"></i>Limpar evidências antigas</button>
+          <button type="submit" class="primary-action">Salvar alterações</button>
+        </div>
+      </form>
+    `)}
+    ${settingsCard("Auditoria", "Histórico local de alterações feitas nesta tela.", "list-checks", `<div id="settings-audit-log" class="settings-integration-list">${settingsAuditMarkup()}</div>`)}
+  `;
+}
+
+function usersSettingsMarkup() {
+  const users = listLocalUsers();
+  const invites = readStoredSettings("campex.user_invites", { items: [] }).items || [];
+  return `
+    ${settingsCard("Usuários", "Gerencie usuários locais e convites operacionais.", "users", `
+      <div class="settings-integration-list">
+        ${users.map((user) => settingsUserLine(user.name, user.email, user.role || "operator", "Ativo")).join("") || emptyState("Nenhum usuário local", "Crie uma conta na tela de acesso.")}
+      </div>
+    `)}
+    ${settingsCard("Convidar usuário", "Registre convites para liberação operacional.", "user-plus", `
+      <form id="user-invite-form" class="settings-form">
+        <div class="settings-form-grid">
+          <label>Nome<input name="name" required placeholder="Nome do operador" /></label>
+          <label>E-mail<input name="email" type="email" required placeholder="operador@empresa.com" /></label>
+        </div>
+        <label>Perfil<select name="role"><option value="operator">Operador</option><option value="admin">Administrador</option><option value="viewer">Visualizador</option></select></label>
+        <div class="settings-action-bar"><button type="submit" class="primary-action">Registrar convite</button></div>
+      </form>
+      <div class="settings-integration-list">${invites.map((invite) => settingsUserLine(invite.name, invite.email, invite.role, "Convite pendente")).join("")}</div>
+    `)}
+  `;
+}
+
+function appearanceSettingsMarkup() {
+  const settings = appearanceSettings();
+  return `
+    ${settingsCard("Aparência", "Personalize densidade, navegação e feedback visual.", "palette", `
+      <form id="appearance-settings-form" class="settings-form">
+        <label class="settings-split-row"><span><strong>Densidade</strong><small>Controla espaçamento das listas e cards.</small></span><select name="density"><option value="comfortable">Confortável</option><option value="compact">Compacta</option></select></label>
+        <label class="settings-split-row"><span><strong>Menu lateral</strong><small>Define estado inicial do menu.</small></span><select name="sidebar"><option value="expanded">Expandido</option><option value="collapsed">Recolhido</option></select></label>
+        <label class="settings-split-row"><span><strong>Cor de destaque</strong><small>Aplica destaque visual nos controles.</small></span><select name="accent"><option value="blue">Azul CAMPEX</option><option value="green">Verde operação</option><option value="white">Neutro claro</option></select></label>
+        <label class="settings-split-row"><span><strong>Movimento</strong><small>Reduz animações para operações longas.</small></span><select name="motion"><option value="full">Completo</option><option value="reduced">Reduzido</option></select></label>
+        <div class="settings-action-bar"><button type="submit" class="primary-action">Salvar aparência</button></div>
+      </form>
+    `)}
+    ${settingsCard("Pré-visualização", "Amostra dos componentes principais.", "sparkles", `
+      <div class="settings-preview">
+        <button type="button" class="primary-action">Ação primária</button>
+        <button type="button" class="secondary-action">Ação secundária</button>
+        <span class="health-badge" data-status="ONLINE">ONLINE</span>
+      </div>
+    `)}
+  `;
+}
+
+function setupSettingsInteractions() {
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    button.addEventListener("click", () => renderSettingsTab(button.dataset.settingsTab));
+  });
+  const searchInput = document.querySelector(".settings-search input");
+  searchInput?.addEventListener("input", (event) => filterSettingsCards(event.currentTarget.value));
+  window.addEventListener("keydown", focusSettingsSearch);
+}
+
+function focusSettingsSearch(event) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && currentRoute() === "settings") {
+    event.preventDefault();
+    document.querySelector(".settings-search input")?.focus();
+  }
+}
+
+function wireSettingsTab(tabId) {
+  document.querySelector("#company-settings-form")?.addEventListener("submit", saveCompanySettings);
+  document.querySelector("#local-settings-form")?.addEventListener("submit", saveLocalSettings);
+  document.querySelector("#notification-settings-form")?.addEventListener("submit", saveNotificationSettings);
+  document.querySelector("#notification-test-telegram")?.addEventListener("click", testTelegramSettings);
+  document.querySelector("#notification-test-email")?.addEventListener("click", testEmailSettings);
+  document.querySelector("#notification-report-now")?.addEventListener("click", sendReportNow);
+  document.querySelector("#settings-refresh")?.addEventListener("click", () => hydrateSettingsTab(tabId));
+  document.querySelector("#security-settings-form")?.addEventListener("submit", saveSecuritySettings);
+  document.querySelector("#user-invite-form")?.addEventListener("submit", saveUserInvite);
+  document.querySelector("#appearance-settings-form")?.addEventListener("submit", saveAppearanceSettings);
+  document.querySelectorAll("[data-settings-action]").forEach((button) => {
+    button.addEventListener("click", handleSettingsAction);
+  });
+  document.querySelectorAll("[data-camera-action]").forEach((button) => {
+    button.addEventListener("click", handleSettingsCameraAction);
+  });
+}
+
+async function hydrateSettingsTab(tabId) {
+  if (tabId === "general") {
+    fillLocalSettings();
+    return;
+  }
+  if (tabId === "cameras") {
+    await loadSettingsCameras();
+    return;
+  }
+  if (tabId === "notifications") {
+    await loadNotificationSettings();
+    return;
+  }
+  if (tabId === "integrations") {
+    await Promise.allSettled([loadNotificationSettings(), loadSettings()]);
+    const check = document.querySelector("#settings-integration-check");
+    if (check) check.textContent = `Última verificação: ${new Date().toLocaleString("pt-BR")}`;
+    return;
+  }
+  if (tabId === "security") {
+    const form = document.querySelector("#security-settings-form");
+    const settings = securitySettings();
+    if (form) {
+      form.elements.session_timeout.value = settings.session_timeout;
+      form.elements.evidence_retention_days.value = settings.evidence_retention_days;
+    }
+    return;
+  }
+  if (tabId === "appearance") {
+    const form = document.querySelector("#appearance-settings-form");
+    const settings = appearanceSettings();
+    if (form) {
+      form.elements.density.value = settings.density;
+      form.elements.sidebar.value = settings.sidebar;
+      form.elements.accent.value = settings.accent;
+      form.elements.motion.value = settings.motion;
+    }
+  }
+}
+
+function filterSettingsCards(query) {
+  const normalized = String(query || "").trim().toLowerCase();
+  document.querySelectorAll("[data-settings-card]").forEach((card) => {
+    card.hidden = normalized ? !card.textContent.toLowerCase().includes(normalized) : false;
+  });
+}
+
+function saveCompanySettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = {
+    name: form.elements.name.value.trim(),
+    document: form.elements.document.value.trim(),
+    address: form.elements.address.value.trim(),
+    city: form.elements.city.value.trim(),
+    state: form.elements.state.value,
+    timezone: form.elements.timezone.value.trim() || "America/Sao_Paulo",
+  };
+  writeStoredSettings("campex.company", payload);
+  appendSettingsAudit("Empresa atualizada");
+  notify("Empresa salva", "Dados da empresa atualizados neste navegador.", "success");
+}
+
+async function loadSettingsCameras() {
+  const listHost = document.querySelector("#settings-camera-list");
+  const summaryHost = document.querySelector("#settings-camera-summary");
+  if (!listHost) return;
+  try {
+    const [cameras, zones, events] = await Promise.all([
+      listCameras(),
+      listZones(),
+      listEvents({ limit: 20 }),
+    ]);
+    listHost.innerHTML = cameras.length
+      ? cameras.map(settingsCameraLine).join("")
+      : emptyState("Nenhuma câmera cadastrada", "Cadastre câmeras na área Câmeras.");
+    if (summaryHost) {
+      const online = cameras.filter((camera) => camera.status === "ONLINE").length;
+      const enabled = cameras.filter((camera) => camera.enabled).length;
+      summaryHost.innerHTML = [
+        metricItem("Câmeras", `${cameras.length} cadastradas`, `${enabled} habilitadas`),
+        metricItem("Online", `${online} online`, `${cameras.length - online} offline/degradadas`),
+        metricItem("Zonas", `${zones.length} áreas`, "Polígonos operacionais"),
+        metricItem("Eventos", `${events.length} recentes`, "Última leitura operacional"),
+      ].join("");
+    }
+    refreshIcons();
+    document.querySelectorAll("[data-camera-action]").forEach((button) => {
+      button.addEventListener("click", handleSettingsCameraAction);
+    });
+  } catch (error) {
+    listHost.innerHTML = emptyState("Falha ao carregar câmeras", error.message);
+    if (summaryHost) summaryHost.innerHTML = "";
+  }
+}
+
+function settingsCameraLine(camera) {
+  const status = camera.status || (camera.enabled ? "ONLINE" : "OFFLINE");
+  return `
+    <article class="settings-integration-line" data-camera-id="${camera.id}">
+      <div>
+        <strong>${escapeHtml(camera.name || camera.id)}</strong>
+        <span>${escapeHtml(camera.source_type || "camera")} · ${escapeHtml(camera.area_id || "sem área")}</span>
+      </div>
+      <small data-state="${status === "ONLINE" ? "connected" : "pending"}">${status}</small>
+      <div class="settings-row-actions">
+        <button type="button" data-camera-action="test">Testar</button>
+        <button type="button" data-camera-action="toggle">${camera.enabled ? "Desativar" : "Ativar"}</button>
+      </div>
+    </article>
+  `;
+}
+
+async function handleSettingsCameraAction(event) {
+  const row = event.currentTarget.closest("[data-camera-id]");
+  const cameraId = row?.dataset.cameraId;
+  if (!cameraId) return;
+  const action = event.currentTarget.dataset.cameraAction;
+  try {
+    if (action === "test") {
+      await testCamera(cameraId);
+      notify("Câmera testada", "Conexão validada pelo backend.", "success");
+    }
+    if (action === "toggle") {
+      const enabled = event.currentTarget.textContent === "Desativar";
+      await updateCamera(cameraId, { enabled: !enabled });
+      notify("Câmera atualizada", `Câmera ${enabled ? "desativada" : "ativada"}.`, "success");
+    }
+    await loadSettingsCameras();
+  } catch (error) {
+    notify("Falha na câmera", error.message, "error");
+  }
+}
+
+async function handleSettingsAction(event) {
+  const action = event.currentTarget.dataset.settingsAction;
+  if (action === "refresh-cameras") {
+    await loadSettingsCameras();
+    return;
+  }
+  if (action === "cleanup-evidence") {
+    const days = Number(document.querySelector("#security-settings-form")?.elements.evidence_retention_days.value || 7);
+    try {
+      await cleanupEvidence(days);
+      appendSettingsAudit(`Evidências antigas limpas (${days} dias)`);
+      notify("Limpeza solicitada", `Evidências com mais de ${days} dias foram processadas.`, "success");
+    } catch (error) {
+      notify("Falha na limpeza", error.message, "error");
+    }
+  }
+}
+
+function saveSecuritySettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = {
+    strict_token: form.elements.strict_token.checked,
+    audit_log: form.elements.audit_log.checked,
+    session_timeout: form.elements.session_timeout.value,
+    evidence_retention_days: form.elements.evidence_retention_days.value,
+  };
+  const token = form.elements.api_token.value.trim();
+  if (payload.strict_token && token) {
+    localStorage.setItem("campex.api_token", token);
+  } else if (!payload.strict_token) {
+    localStorage.removeItem("campex.api_token");
+  }
+  writeStoredSettings("campex.security", payload);
+  appendSettingsAudit("Segurança atualizada");
+  notify("Segurança salva", "Preferências de segurança atualizadas.", "success");
+}
+
+function saveUserInvite(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const store = readStoredSettings("campex.user_invites", { items: [] });
+  const invite = {
+    id: `invite_${Date.now()}`,
+    name: form.elements.name.value.trim(),
+    email: form.elements.email.value.trim(),
+    role: form.elements.role.value,
+    created_at: new Date().toISOString(),
+  };
+  writeStoredSettings("campex.user_invites", { items: [invite, ...(store.items || [])] });
+  appendSettingsAudit(`Convite registrado para ${invite.email}`);
+  notify("Convite registrado", "O convite ficou salvo nesta instalação.", "success");
+  renderSettingsTab("users");
+}
+
+function saveAppearanceSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const payload = {
+    density: form.elements.density.value,
+    sidebar: form.elements.sidebar.value,
+    accent: form.elements.accent.value,
+    motion: form.elements.motion.value,
+  };
+  writeStoredSettings("campex.appearance", payload);
+  document.body.dataset.density = payload.density;
+  document.body.dataset.accent = payload.accent;
+  document.body.dataset.motion = payload.motion;
+  appShell.dataset.sidebar = payload.sidebar;
+  localStorage.setItem(sidebarStorageKey, payload.sidebar);
+  appendSettingsAudit("Aparência atualizada");
+  notify("Aparência salva", "Preferências visuais aplicadas.", "success");
+}
+
+function appendSettingsAudit(message) {
+  const security = securitySettings();
+  if (!security.audit_log) return;
+  const store = readStoredSettings("campex.settings_audit", { items: [] });
+  const items = [{ message, at: new Date().toISOString() }, ...(store.items || [])].slice(0, 20);
+  writeStoredSettings("campex.settings_audit", { items });
+  const host = document.querySelector("#settings-audit-log");
+  if (host) host.innerHTML = settingsAuditMarkup();
+}
+
+function settingsAuditMarkup() {
+  const items = readStoredSettings("campex.settings_audit", { items: [] }).items || [];
+  return items.length
+    ? items.map((item) => objectLine(item.message, formatDate(item.at), "Configurações")).join("")
+    : emptyState("Sem alterações registradas", "As próximas ações salvas aparecerão aqui.");
+}
+
+function settingsUserLine(name, email, role, status) {
+  return `
+    <article class="settings-integration-line">
+      <div>
+        <strong>${escapeHtml(name || email)}</strong>
+        <span>${escapeHtml(email || "")} · ${escapeHtml(role || "operator")}</span>
+      </div>
+      <small data-state="${status === "Ativo" ? "connected" : "pending"}">${status}</small>
+      <button type="button" disabled>Perfil</button>
+    </article>
+  `;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 async function loadSettings() {
   const host = document.querySelector("#settings-runtime");
+  if (!host) return;
   try {
     const [runtime, cameras, zones, events] = await Promise.all([
       getRuntimeSettings(),
@@ -3338,30 +3760,36 @@ async function loadNotificationSettings() {
   const status = document.querySelector("#notification-settings-status");
   try {
     const prefs = await getNotificationPreferences();
-    form.elements.telegram_enabled.checked = Boolean(prefs.telegram_enabled);
-    form.elements.telegram_chat_id.value = prefs.telegram_chat_id || "";
-    form.elements.email_enabled.checked = Boolean(prefs.email_enabled);
-    form.elements.email_recipients.value = (prefs.email_recipients || []).join(", ");
-    form.elements.reports_enabled.checked = Boolean(prefs.reports_enabled);
-    form.elements.report_frequency.value = prefs.report_frequency || "DAILY";
-    form.elements.report_time.value = prefs.report_time || "18:00";
-    form.elements.timezone.value = prefs.timezone || "America/Sao_Paulo";
-    form.elements.immediate_alerts_enabled.checked = Boolean(prefs.immediate_alerts_enabled);
-    const types = new Set(prefs.alert_types || []);
-    ["camera_offline", "zone_idle", "crowding_started", "long_presence"].forEach((name) => {
-      form.elements[name].checked = types.has(name);
-    });
-    status.innerHTML = [
-      integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
-      integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", prefs.email_configured ? "Conectado" : "Pendente"),
-      integrationLine("Bot do Telegram", "Notificações em tempo real.", prefs.telegram_configured ? "Conectado" : "Pendente"),
-    ].join("");
+    if (form) {
+      form.elements.telegram_enabled.checked = Boolean(prefs.telegram_enabled);
+      form.elements.telegram_chat_id.value = prefs.telegram_chat_id || "";
+      form.elements.email_enabled.checked = Boolean(prefs.email_enabled);
+      form.elements.email_recipients.value = (prefs.email_recipients || []).join(", ");
+      form.elements.reports_enabled.checked = Boolean(prefs.reports_enabled);
+      form.elements.report_frequency.value = prefs.report_frequency || "DAILY";
+      form.elements.report_time.value = prefs.report_time || "18:00";
+      form.elements.timezone.value = prefs.timezone || "America/Sao_Paulo";
+      form.elements.immediate_alerts_enabled.checked = Boolean(prefs.immediate_alerts_enabled);
+      const types = new Set(prefs.alert_types || []);
+      ["camera_offline", "zone_idle", "crowding_started", "long_presence"].forEach((name) => {
+        form.elements[name].checked = types.has(name);
+      });
+    }
+    if (status) {
+      status.innerHTML = [
+        integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
+        integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", prefs.email_configured ? "Conectado" : "Pendente"),
+        integrationLine("Bot do Telegram", "Notificações em tempo real.", prefs.telegram_configured ? "Conectado" : "Pendente"),
+      ].join("");
+    }
   } catch (error) {
-    status.innerHTML = [
-      integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
-      integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado"),
-      integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado"),
-    ].join("");
+    if (status) {
+      status.innerHTML = [
+        integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
+        integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado"),
+        integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado"),
+      ].join("");
+    }
   }
 }
 
@@ -3463,8 +3891,11 @@ function localSettings() {
 
 function applyLocalSettings() {
   const settings = localSettings();
+  const appearance = appearanceSettings();
   document.body.dataset.density = settings.dense_lists ? "compact" : "comfortable";
   document.body.dataset.operatorMode = settings.operator_mode || "standard";
+  document.body.dataset.accent = appearance.accent;
+  document.body.dataset.motion = appearance.motion;
   if (settings.api_token) {
     localStorage.setItem("campex.api_token", settings.api_token);
   }
@@ -3473,10 +3904,14 @@ function applyLocalSettings() {
 function fillLocalSettings() {
   const settings = localSettings();
   const form = document.querySelector("#local-settings-form");
+  if (!form) return;
   form.elements.refresh_ms.value = settings.refresh_ms;
   form.elements.operator_mode.value = settings.operator_mode;
   form.elements.dense_lists.checked = Boolean(settings.dense_lists);
   form.elements.api_token.value = settings.api_token || localStorage.getItem("campex.api_token") || "";
+  if (form.elements.api_token_visible) {
+    form.elements.api_token_visible.value = form.elements.api_token.value;
+  }
 }
 
 function saveLocalSettings(event) {
@@ -3486,7 +3921,7 @@ function saveLocalSettings(event) {
     refresh_ms: Number(form.elements.refresh_ms.value || 2000),
     operator_mode: form.elements.operator_mode.value,
     dense_lists: form.elements.dense_lists.checked,
-    api_token: form.elements.api_token.value.trim(),
+    api_token: (form.elements.api_token_visible?.value || form.elements.api_token.value || "").trim(),
   };
   localStorage.setItem("campex.settings", JSON.stringify(settings));
   if (settings.api_token) {
