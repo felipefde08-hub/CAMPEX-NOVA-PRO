@@ -34,35 +34,77 @@ configure_logging(startup_settings)
 logger = logging.getLogger("campex")
 
 
-
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     settings = get_settings()
     app_instance.state.settings = settings
-    database_path = initialize_database(settings)
-    repository = CameraRepository(settings)
-    manager = CameraManager(settings, repository)
-    vision_engine = VisionEngine(settings, manager)
-    app_instance.state.camera_manager = manager
-    app_instance.state.vision_engine = vision_engine
-    if "PYTEST_CURRENT_TEST" not in os.environ:
-        video_detector = create_detector(settings)
-        video_detector.load()
-        app_instance.state.video_detector = video_detector
-    logger.info(
-        "CAMPEX started",
-        extra={
-            "environment": settings.environment,
-            "database_path": str(database_path),
-        },
-    )
-    manager.start_enabled_cameras()
-    _warn_security_posture(settings)
+    is_serverless = settings.runtime == "serverless"
+
+    # Try to initialize database, but don't fail in serverless mode
     try:
-        yield
-    finally:
-        vision_engine.shutdown()
-        manager.shutdown()
+        database_path = initialize_database(settings)
+        logger.info(
+            "Database initialized",
+            extra={"database_path": str(database_path)},
+        )
+    except Exception as db_error:
+        if is_serverless:
+            logger.warning(
+                "Database initialization failed in serverless mode (non-fatal)",
+                extra={"error": str(db_error)},
+            )
+            app_instance.state.database_error = db_error
+        else:
+            logger.error("Database initialization failed", exc_info=True)
+            raise
+
+    # In serverless mode, skip heavy initialization
+    if not is_serverless:
+        try:
+            repository = CameraRepository(settings)
+            manager = CameraManager(settings, repository)
+            vision_engine = VisionEngine(settings, manager)
+            app_instance.state.camera_manager = manager
+            app_instance.state.vision_engine = vision_engine
+
+            if "PYTEST_CURRENT_TEST" not in os.environ:
+                video_detector = create_detector(settings)
+                video_detector.load()
+                app_instance.state.video_detector = video_detector
+
+            logger.info(
+                "CAMPEX started (local mode)",
+                extra={
+                    "environment": settings.environment,
+                    "runtime": settings.runtime,
+                },
+            )
+
+            manager.start_enabled_cameras()
+            _warn_security_posture(settings)
+
+            try:
+                yield
+            finally:
+                vision_engine.shutdown()
+                manager.shutdown()
+        except Exception:
+            logger.error("Failed to initialize camera/vision systems", exc_info=True)
+            raise
+    else:
+        # Serverless mode: minimal initialization
+        logger.info(
+            "CAMPEX started (serverless mode)",
+            extra={
+                "environment": settings.environment,
+                "runtime": settings.runtime,
+            },
+        )
+        _warn_security_posture(settings)
+        try:
+            yield
+        finally:
+            pass  # Nothing to clean up in serverless mode
 
 
 app = FastAPI(

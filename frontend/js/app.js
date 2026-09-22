@@ -90,6 +90,7 @@ let backendStatusRefreshInFlight = false;
 let operationsStream = null;
 let operationsStreamLastSummary = "";
 let lastBackendState = "checking";
+let backendFailureCount = 0;
 const sidebarStorageKey = "campex.sidebar";
 let camerasCache = [];
 let rulesCache = [];
@@ -315,14 +316,14 @@ function startAuthenticatedApp(user = getCurrentUser()) {
   refreshIcons();
   refreshBackendStatus();
   if (!backendStatusTimer) {
-    backendStatusTimer = setInterval(refreshBackendStatus, 30000);
+    backendStatusTimer = setInterval(refreshBackendStatus, 45000);
   }
   if (!liveStatusTimer) {
     liveStatusTimer = setInterval(() => {
       if (currentRoute() === "live") {
         refreshLiveStatus();
       }
-    }, 3000);
+    }, 5000);
   }
 }
 
@@ -959,17 +960,28 @@ async function selectLiveCamera() {
   }
   try {
     const camera = await selectedCamera();
-    document.querySelector("#live-camera-name").textContent = camera?.name || "Camera";
+    const nameElement = document.querySelector("#live-camera-name");
+    if (nameElement && nameElement.textContent !== (camera?.name || "Camera")) {
+      nameElement.textContent = camera?.name || "Camera";
+    }
     const status = statusLabel(camera?.status);
     const statusElement = document.querySelector("#live-camera-status");
-    statusElement.textContent = status;
-    statusElement.dataset.status = status;
+    if (statusElement) {
+      if (statusElement.textContent !== status) statusElement.textContent = status;
+      if (statusElement.dataset.status !== status) statusElement.dataset.status = status;
+    }
     const visionStatus = await refreshLiveStatus();
     await renderLiveMedia(camera, visionStatus?.status === "RUNNING");
   } catch (error) {
-    document.querySelector("#live-camera-name").textContent = "Backend indisponivel";
-    document.querySelector("#live-camera-status").textContent = "OFFLINE";
-    document.querySelector("#live-camera-status").dataset.status = "OFFLINE";
+    const nameElement = document.querySelector("#live-camera-name");
+    if (nameElement && nameElement.textContent !== "Backend indisponivel") {
+      nameElement.textContent = "Backend indisponivel";
+    }
+    const statusElement = document.querySelector("#live-camera-status");
+    if (statusElement) {
+      if (statusElement.textContent !== "OFFLINE") statusElement.textContent = "OFFLINE";
+      if (statusElement.dataset.status !== "OFFLINE") statusElement.dataset.status = "OFFLINE";
+    }
     renderMediaPlaceholder("Stream indisponivel");
     renderVisionStatus(null, [], null);
     console.error(error);
@@ -1222,10 +1234,11 @@ async function refreshLiveStatus() {
       getVisionObjects(cameraId),
       getMappingPoses(cameraId),
     ]);
-    renderVisionStatus(visionStatus, objects, health, poses);
+    // Apenas atualiza os elementos de status, nunca re-renderiza a mídia
+    updateVisionStatusOnly(visionStatus, objects, health, poses);
     return visionStatus;
   } catch (error) {
-    renderVisionStatus({ status: "ERROR", error: error.message, metrics: null }, [], null, []);
+    updateVisionStatusOnly({ status: "ERROR", error: error.message, metrics: null }, [], null, []);
     return null;
   } finally {
     liveStatusRefreshInFlight = false;
@@ -1240,11 +1253,20 @@ function renderVisionStatus(visionStatus, objects, health, poses = []) {
   const visionBadge = document.querySelector("#live-vision-status");
   const detectionSummary = document.querySelector("#live-detection-summary");
   if (visionBadge) {
-    visionBadge.textContent = status === "RUNNING" ? "VISION ON" : status;
-    visionBadge.dataset.status = status === "RUNNING" ? "ONLINE" : status === "ERROR" ? "OFFLINE" : "DEGRADED";
+    const newStatus = status === "RUNNING" ? "VISION ON" : status;
+    const newDataStatus = status === "RUNNING" ? "ONLINE" : status === "ERROR" ? "OFFLINE" : "DEGRADED";
+    if (visionBadge.textContent !== newStatus) {
+      visionBadge.textContent = newStatus;
+    }
+    if (visionBadge.dataset.status !== newDataStatus) {
+      visionBadge.dataset.status = newDataStatus;
+    }
   }
   if (detectionSummary) {
-    detectionSummary.textContent = `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`;
+    const newSummary = `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`;
+    if (detectionSummary.textContent !== newSummary) {
+      detectionSummary.textContent = newSummary;
+    }
   }
   setText("#live-camera-fps", health?.approximate_fps ?? metrics.camera_fps ?? "0");
   setText("#live-vision-fps", metrics.vision_fps ?? "0");
@@ -1253,14 +1275,62 @@ function renderVisionStatus(visionStatus, objects, health, poses = []) {
   const error = visionStatus?.error || mapping.error;
   const errorLine = document.querySelector("#live-error-line");
   if (errorLine) {
-    errorLine.textContent = error || "Sem erros";
-    errorLine.dataset.state = error ? "error" : "ok";
+    const newError = error || "Sem erros";
+    if (errorLine.textContent !== newError) {
+      errorLine.textContent = newError;
+    }
+    const newState = error ? "error" : "ok";
+    if (errorLine.dataset.state !== newState) {
+      errorLine.dataset.state = newState;
+    }
+  }
+}
+
+function updateVisionStatusOnly(visionStatus, objects, health, poses = []) {
+  // Apenas atualiza o status, nunca toca na mídia ou re-renderiza
+  const metrics = visionStatus?.metrics || {};
+  const status = visionStatus?.status || "STOPPED";
+  const mapping = visionStatus?.components?.mapping || {};
+  updateModeButtons(status, mapping);
+  const visionBadge = document.querySelector("#live-vision-status");
+  const detectionSummary = document.querySelector("#live-detection-summary");
+  if (visionBadge) {
+    const newStatus = status === "RUNNING" ? "VISION ON" : status;
+    const newDataStatus = status === "RUNNING" ? "ONLINE" : status === "ERROR" ? "OFFLINE" : "DEGRADED";
+    if (visionBadge.textContent !== newStatus) {
+      visionBadge.textContent = newStatus;
+    }
+    if (visionBadge.dataset.status !== newDataStatus) {
+      visionBadge.dataset.status = newDataStatus;
+    }
+  }
+  if (detectionSummary) {
+    const newSummary = `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`;
+    if (detectionSummary.textContent !== newSummary) {
+      detectionSummary.textContent = newSummary;
+    }
+  }
+  setText("#live-camera-fps", health?.approximate_fps ?? metrics.camera_fps ?? "0");
+  setText("#live-vision-fps", metrics.vision_fps ?? "0");
+  setText("#live-frame-count", `${metrics.frames_processed ?? 0}/${metrics.frames_received ?? 0}`);
+  setText("#live-mapping-state", mappingLabel(mapping));
+  const error = visionStatus?.error || mapping.error;
+  const errorLine = document.querySelector("#live-error-line");
+  if (errorLine) {
+    const newError = error || "Sem erros";
+    if (errorLine.textContent !== newError) {
+      errorLine.textContent = newError;
+    }
+    const newState = error ? "error" : "ok";
+    if (errorLine.dataset.state !== newState) {
+      errorLine.dataset.state = newState;
+    }
   }
 }
 
 function setText(selector, value) {
   const element = document.querySelector(selector);
-  if (element) {
+  if (element && element.textContent !== String(value)) {
     element.textContent = value;
   }
 }
@@ -3295,24 +3365,36 @@ async function refreshBackendStatus() {
       statusText.textContent = "Verificando backend";
     }
     const health = await getHealth();
-    statusElement.dataset.state = "online";
-    statusText.textContent = `${health.service} ${health.version} online`;
-    if (lastBackendState !== "online") {
+    backendFailureCount = 0;
+    const newState = "online";
+    if (lastBackendState !== newState) {
+      statusElement.dataset.state = "online";
+      statusText.textContent = `${health.service} ${health.version} online`;
       notify("Backend conectado", `${health.service} ${health.version} respondeu em /health.`, "success");
     }
-    lastBackendState = "online";
+    lastBackendState = newState;
     if (backendSummary) {
       backendSummary.textContent = "Conectado via /api/v1/health";
     }
   } catch (error) {
-    statusElement.dataset.state = "offline";
-    statusText.textContent = "Backend indisponível";
-    if (lastBackendState !== "offline") {
-      notify("Backend indisponível", "Confira se o backend está em http://127.0.0.1:8000 ou se a URL da API está correta.", "error", 8000);
+    backendFailureCount += 1;
+    if (lastBackendState === "online" && backendFailureCount < 3) {
+      console.warn("[CAMPEX] health check transient failure", error);
+      return;
     }
-    lastBackendState = "offline";
+    const newState = backendFailureCount < 3 ? "checking" : "offline";
+    if (lastBackendState !== newState) {
+      statusElement.dataset.state = newState;
+      statusText.textContent = backendFailureCount < 3 ? "Verificando backend" : "Backend indisponível";
+      if (backendFailureCount >= 3) {
+        notify("Backend indisponível", "Confira se o backend está em http://127.0.0.1:8000 ou se a URL da API está correta.", "error", 8000);
+      }
+    }
+    if (backendFailureCount >= 3) {
+      lastBackendState = "offline";
+    }
     if (backendSummary) {
-      backendSummary.textContent = "Sem resposta do backend";
+      backendSummary.textContent = backendFailureCount < 3 ? "Tentando reconectar" : "Sem resposta do backend";
     }
     console.error(error);
   } finally {

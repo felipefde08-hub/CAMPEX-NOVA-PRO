@@ -67,6 +67,7 @@ class Settings:
     vision_fps: float
     vision_confidence: float
     vision_video_loop: bool
+    runtime: str = "local"
     api_token: str | None = None
     vision_model: str = "yolo11n.pt"
     vision_input_size: int = 960
@@ -217,6 +218,7 @@ class Settings:
             vision_enabled=os.getenv("VISION_ENABLED", "true").lower()
             in {"1", "true", "yes", "on"},
             vision_detector=os.getenv("VISION_DETECTOR", "yolo").lower(),
+            runtime=os.getenv("CAMPEX_RUNTIME", "local").lower(),
             vision_model=os.getenv("VISION_MODEL", "yolo11n.pt"),
             vision_device=os.getenv("VISION_DEVICE", "auto").lower(),
             vision_fps=float(os.getenv("VISION_FPS", "5")),

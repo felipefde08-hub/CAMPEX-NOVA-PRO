@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
-from enum import StrEnum
+from datetime import datetime, timezone
+from enum import Enum
 
 from backend.cameras.security import sanitize_error_message
 
 
-class CameraStatus(StrEnum):
+class CameraStatus(str, Enum):
     CONNECTING = "CONNECTING"
     ONLINE = "ONLINE"
     DEGRADED = "DEGRADED"
@@ -77,4 +77,4 @@ class CameraHealth:
 
 
 def utc_now() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
