@@ -135,6 +135,8 @@ app.add_middleware(
 async def api_token_guard(request: Request, call_next):
     settings = getattr(request.app.state, "settings", startup_settings)
     token = settings.api_token
+    if request.method == "OPTIONS":
+        return await call_next(request)
     if (
         token
         and request.url.path.startswith("/api/v1")
