@@ -1387,3 +1387,359 @@ body[data-density="compact"] .metric-item {
 button:hover {
   transform: none;
 }
+
+/* Professional dashboard pass: tighter CRM-like controls and settings cockpit. */
+.eyebrow {
+  color: #8fa0b3;
+  font-size: 0.68rem;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.primary-action,
+.secondary-action,
+.ghost-action,
+.section-heading button,
+.modal-actions button,
+.row-actions button,
+.ops-toolbar button,
+.stack-form button,
+.empty-state button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: var(--control-height);
+  width: auto;
+  border-radius: 7px;
+  font-weight: 720;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.primary-action,
+.stack-form button.primary-action {
+  border-color: rgba(125, 179, 255, 0.55);
+  background: #dfeaff;
+  color: #07111d;
+}
+
+.secondary-action,
+.section-heading button,
+.stack-form button.secondary-action,
+.modal-actions button,
+.empty-state button {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--color-text);
+}
+
+.ghost-action {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.primary-action:hover,
+.secondary-action:hover,
+.ghost-action:hover,
+.section-heading button:hover,
+.modal-actions button:hover,
+.row-actions button:hover,
+.ops-toolbar button:hover,
+.stack-form button:hover,
+.empty-state button:hover {
+  border-color: rgba(125, 179, 255, 0.68);
+  background: rgba(125, 179, 255, 0.14);
+  color: var(--color-text);
+}
+
+.primary-action svg,
+.secondary-action svg,
+.ghost-action svg,
+.stack-form button svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.ops-toolbar input,
+.ops-toolbar select,
+.stack-form input,
+.stack-form select,
+.stack-form textarea {
+  min-height: var(--control-height);
+  border-color: rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(6, 9, 13, 0.72);
+  color: var(--color-text);
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.ops-toolbar input:focus,
+.ops-toolbar select:focus,
+.stack-form input:focus,
+.stack-form select:focus,
+.stack-form textarea:focus {
+  border-color: rgba(125, 179, 255, 0.72);
+  background: rgba(10, 15, 22, 0.94);
+  box-shadow: 0 0 0 3px rgba(125, 179, 255, 0.12);
+}
+
+.ops-toolbar label,
+.stack-form label {
+  color: #c8d0da;
+  font-size: 0.78rem;
+  font-weight: 680;
+}
+
+.section-heading h2 {
+  margin: 0;
+}
+
+.settings-page {
+  gap: clamp(1rem, 1.4vw, 1.35rem);
+}
+
+.settings-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, rgba(24, 32, 42, 0.96), rgba(14, 18, 24, 0.96));
+  padding: clamp(1rem, 1.6vw, 1.4rem);
+}
+
+.settings-hero h2 {
+  margin: 0.35rem 0 0.4rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+  line-height: 1.15;
+}
+
+.settings-hero p {
+  max-width: 46rem;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.settings-hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.settings-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(20rem, 0.75fr);
+  gap: clamp(0.875rem, 1.2vw, 1.15rem);
+  align-items: start;
+}
+
+.settings-shell-notifications {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-panel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+  padding: clamp(0.9rem, 1.25vw, 1.15rem);
+}
+
+.settings-panel-main {
+  min-height: 100%;
+}
+
+.settings-form,
+.settings-section {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.settings-section {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 0.95rem;
+}
+
+.settings-section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.settings-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.settings-action-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-top: 0.25rem;
+}
+
+.settings-grid,
+.settings-runtime-grid {
+  border: 0;
+  gap: 0.55rem;
+}
+
+.settings-runtime-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-runtime-grid .metric-item {
+  grid-template-columns: 1fr;
+  gap: 0.32rem;
+  min-height: 6.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: var(--radius);
+  background: rgba(5, 8, 12, 0.36);
+  padding: 0.85rem;
+}
+
+.settings-runtime-grid .metric-item strong {
+  overflow-wrap: anywhere;
+  font-size: 0.98rem;
+}
+
+.settings-runtime-grid .metric-item small {
+  overflow-wrap: anywhere;
+}
+
+.toggle-row,
+.stack-form label.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  min-height: 2.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+  background: rgba(5, 8, 12, 0.28);
+  padding: 0.6rem 0.7rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.toggle-row span,
+.stack-form label.toggle-row span {
+  order: 1;
+}
+
+.toggle-row input,
+.stack-form label.toggle-row input {
+  order: 2;
+  appearance: none;
+  flex: 0 0 2.2rem;
+  width: 2.2rem;
+  height: 1.2rem;
+  min-width: 2.2rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+}
+
+.toggle-row input::after,
+.stack-form label.toggle-row input::after {
+  content: "";
+  position: absolute;
+  top: 0.16rem;
+  left: 0.16rem;
+  width: 0.78rem;
+  height: 0.78rem;
+  border-radius: 999px;
+  background: #a7b3c2;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.toggle-row input:checked,
+.stack-form label.toggle-row input:checked {
+  border-color: rgba(49, 196, 107, 0.58);
+  background: rgba(49, 196, 107, 0.18);
+}
+
+.toggle-row input:checked::after,
+.stack-form label.toggle-row input:checked::after {
+  transform: translateX(0.98rem);
+  background: var(--color-online);
+}
+
+.toggle-row-feature {
+  border-color: rgba(125, 179, 255, 0.18);
+  background: rgba(125, 179, 255, 0.07);
+}
+
+.settings-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.settings-status-list {
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding-top: 0.35rem;
+}
+
+.settings-status-list .insight-line {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius);
+  background: rgba(5, 8, 12, 0.22);
+  padding: 0.7rem;
+}
+
+.settings-status-list .empty-state {
+  border: 1px solid rgba(239, 91, 91, 0.18);
+  border-radius: var(--radius);
+  background: rgba(239, 91, 91, 0.06);
+  padding: 0.75rem;
+}
+
+@media (max-width: 1100px) {
+  .settings-shell,
+  .settings-shell-notifications {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-runtime-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .settings-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-hero-actions,
+  .settings-action-bar {
+    justify-content: stretch;
+  }
+
+  .settings-hero-actions button,
+  .settings-action-bar button {
+    width: 100%;
+  }
+
+  .settings-form-grid,
+  .settings-runtime-grid,
+  .settings-toggle-grid {
+    grid-template-columns: 1fr;
+  }
+}

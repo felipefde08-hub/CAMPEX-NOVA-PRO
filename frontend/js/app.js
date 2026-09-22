@@ -3115,60 +3115,130 @@ async function simulateRule(event) {
 
 async function renderSettingsPage() {
   appView.innerHTML = `
-    <div class="ops-page">
-      <section class="ops-grid">
+    <div class="ops-page settings-page">
+      <section class="settings-hero">
         <div>
-          <div class="section-heading"><h2>Runtime</h2><button type="button" id="settings-refresh">Atualizar</button></div>
-          <div id="settings-runtime" class="settings-grid"></div>
+          <span class="eyebrow">Configurações operacionais</span>
+          <h2>Central de preferências CAMPEX</h2>
+          <p>Controle local, entrega de relatórios, alertas e saúde do ambiente em um painel único.</p>
         </div>
-        <aside class="ops-detail">
-          <h2>Preferências locais</h2>
-          <form id="local-settings-form" class="stack-form">
-            <label>Atualização ao vivo (ms)<input name="refresh_ms" type="number" min="500" step="500" /></label>
-            <label>Modo operador
-              <select name="operator_mode">
-                <option value="standard">Padrão</option>
-                <option value="review">Revisão</option>
-                <option value="debug">Debug</option>
-              </select>
+        <div class="settings-hero-actions">
+          <button type="button" id="settings-refresh" class="secondary-action"><i data-lucide="refresh-cw"></i>Atualizar runtime</button>
+          <button type="button" id="notification-report-now" class="primary-action"><i data-lucide="send"></i>Enviar relatório</button>
+        </div>
+      </section>
+
+      <section class="settings-shell">
+        <article class="settings-panel settings-panel-main">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Sistema</span>
+              <h2>Runtime e integrações</h2>
+            </div>
+          </div>
+          <div id="settings-runtime" class="settings-grid settings-runtime-grid"></div>
+        </article>
+
+        <aside class="settings-panel">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Console</span>
+              <h2>Preferências locais</h2>
+            </div>
+          </div>
+          <form id="local-settings-form" class="stack-form settings-form">
+            <div class="settings-form-grid">
+              <label>Atualização ao vivo
+                <input name="refresh_ms" type="number" min="500" step="500" />
+              </label>
+              <label>Modo operador
+                <select name="operator_mode">
+                  <option value="standard">Padrão</option>
+                  <option value="review">Revisão</option>
+                  <option value="debug">Debug</option>
+                </select>
+              </label>
+            </div>
+            <label>Token API local
+              <input name="api_token" type="password" autocomplete="off" placeholder="Opcional: X-CAMPEX-Token" />
             </label>
-            <label>Token API local<input name="api_token" type="password" autocomplete="off" placeholder="Opcional: X-CAMPEX-Token" /></label>
-            <label class="inline-toggle"><input name="dense_lists" type="checkbox" /> Listas compactas</label>
-            <button type="submit">Salvar local</button>
+            <label class="toggle-row"><input name="dense_lists" type="checkbox" /><span>Listas compactas</span></label>
+            <div class="settings-action-bar">
+              <button type="submit" class="primary-action"><i data-lucide="save"></i>Salvar local</button>
+            </div>
           </form>
         </aside>
       </section>
-      <section class="ops-panel">
-        <div class="section-heading">
-          <h2>Notificações e relatórios</h2>
-          <button type="button" id="notification-report-now">Enviar relatório agora</button>
-        </div>
-        <form id="notification-settings-form" class="stack-form">
-          <label class="inline-toggle"><input name="telegram_enabled" type="checkbox" /> Telegram</label>
-          <label>Chat IDs<input name="telegram_chat_id" placeholder="123456789, -1001234567890" /></label>
-          <button type="button" id="notification-test-telegram">Testar Telegram</button>
-          <label class="inline-toggle"><input name="email_enabled" type="checkbox" /> E-mail</label>
-          <label>Destinatários<input name="email_recipients" placeholder="gestor@empresa.com, financeiro@empresa.com" /></label>
-          <button type="button" id="notification-test-email">Testar E-mail</button>
-          <label class="inline-toggle"><input name="reports_enabled" type="checkbox" /> Relatórios automáticos</label>
-          <label>Frequência
-            <select name="report_frequency">
-              <option value="DAILY">Diário</option>
-              <option value="WEEKLY">Semanal</option>
-              <option value="MONTHLY">Mensal</option>
-            </select>
+
+      <form id="notification-settings-form" class="settings-shell settings-shell-notifications stack-form settings-form">
+        <article class="settings-panel">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Entrega</span>
+              <h2>Canais</h2>
+            </div>
+          </div>
+          <div class="settings-section">
+            <label class="toggle-row"><input name="telegram_enabled" type="checkbox" /><span>Telegram</span></label>
+            <label>Chat IDs
+              <input name="telegram_chat_id" placeholder="123456789, -1001234567890" />
+            </label>
+            <button type="button" id="notification-test-telegram" class="secondary-action"><i data-lucide="message-circle"></i>Testar Telegram</button>
+          </div>
+          <div class="settings-section">
+            <label class="toggle-row"><input name="email_enabled" type="checkbox" /><span>E-mail</span></label>
+            <label>Destinatários
+              <input name="email_recipients" placeholder="gestor@empresa.com, financeiro@empresa.com" />
+            </label>
+            <button type="button" id="notification-test-email" class="secondary-action"><i data-lucide="mail-check"></i>Testar E-mail</button>
+          </div>
+        </article>
+
+        <article class="settings-panel">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Relatórios</span>
+              <h2>Rotina automática</h2>
+            </div>
+          </div>
+          <label class="toggle-row"><input name="reports_enabled" type="checkbox" /><span>Relatórios automáticos</span></label>
+          <div class="settings-form-grid">
+            <label>Frequência
+              <select name="report_frequency">
+                <option value="DAILY">Diário</option>
+                <option value="WEEKLY">Semanal</option>
+                <option value="MONTHLY">Mensal</option>
+              </select>
+            </label>
+            <label>Horário
+              <input name="report_time" type="time" value="18:00" />
+            </label>
+          </div>
+          <label>Timezone
+            <input name="timezone" value="America/Sao_Paulo" />
           </label>
-          <label>Horário<input name="report_time" type="time" value="18:00" /></label>
-          <label>Timezone<input name="timezone" value="America/Sao_Paulo" /></label>
-          <label class="inline-toggle"><input name="immediate_alerts_enabled" type="checkbox" /> Alertas imediatos</label>
-          <label class="inline-toggle"><input name="camera_offline" type="checkbox" /> Câmera offline</label>
-          <label class="inline-toggle"><input name="zone_idle" type="checkbox" /> Área sem atividade</label>
-          <label class="inline-toggle"><input name="crowding_started" type="checkbox" /> Aglomeração</label>
-          <label class="inline-toggle"><input name="long_presence" type="checkbox" /> Permanência prolongada</label>
-          <button type="submit">Salvar notificações</button>
-        </form>
-        <div id="notification-settings-status" class="object-list"></div>
-      </section>
+          <div id="notification-settings-status" class="object-list settings-status-list"></div>
+        </article>
+
+        <article class="settings-panel">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Alertas</span>
+              <h2>Gatilhos imediatos</h2>
+            </div>
+          </div>
+          <label class="toggle-row toggle-row-feature"><input name="immediate_alerts_enabled" type="checkbox" /><span>Alertas imediatos</span></label>
+          <div class="settings-toggle-grid">
+            <label class="toggle-row"><input name="camera_offline" type="checkbox" /><span>Câmera offline</span></label>
+            <label class="toggle-row"><input name="zone_idle" type="checkbox" /><span>Área sem atividade</span></label>
+            <label class="toggle-row"><input name="crowding_started" type="checkbox" /><span>Aglomeração</span></label>
+            <label class="toggle-row"><input name="long_presence" type="checkbox" /><span>Permanência prolongada</span></label>
+          </div>
+          <div class="settings-action-bar">
+            <button type="submit" class="primary-action"><i data-lucide="check"></i>Salvar notificações</button>
+          </div>
+        </article>
+      </form>
     </div>
   `;
   document.querySelector("#settings-refresh").addEventListener("click", loadSettings);
