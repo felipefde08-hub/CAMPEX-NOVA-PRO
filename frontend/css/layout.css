@@ -953,3 +953,80 @@
     position: static;
   }
 }
+
+/* Premium shell pass shared by every operational page. */
+.app-shell {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.035), transparent 34rem),
+    #0d1015;
+}
+
+.workspace {
+  background:
+    radial-gradient(circle at 72% 0%, rgba(125, 179, 255, 0.045), transparent 30rem),
+    linear-gradient(180deg, #101318 0%, #0d1015 100%);
+}
+
+.sidebar {
+  border-right-color: rgba(255, 255, 255, 0.075);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 16rem),
+    #0a0d11;
+}
+
+.brand-logo {
+  filter: drop-shadow(0 0.35rem 1rem rgba(0, 0, 0, 0.25));
+}
+
+.sidebar-toggle,
+.account-button,
+.connection {
+  border-color: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.topbar {
+  border-bottom-color: rgba(255, 255, 255, 0.075);
+  background: rgba(14, 18, 24, 0.9);
+}
+
+.topbar h1 {
+  font-family: var(--font-display);
+  letter-spacing: 0;
+}
+
+.topbar .eyebrow {
+  color: #8fa0b3;
+}
+
+.connection {
+  color: #d7dde6;
+}
+
+.account-button {
+  color: #f4f7fa;
+}
+
+.nav-group a {
+  border-radius: 8px;
+  color: #aeb7c3;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.nav-group a:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.055);
+  color: #f4f7fa;
+}
+
+.nav-group a[aria-current="page"] {
+  border-color: rgba(125, 179, 255, 0.48);
+  background: rgba(125, 179, 255, 0.12);
+  color: #f4f7fa;
+}
+
+.content-stage {
+  max-width: 110rem;
+  width: 100%;
+}

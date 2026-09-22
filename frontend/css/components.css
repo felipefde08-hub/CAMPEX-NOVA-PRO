@@ -2218,3 +2218,274 @@ body[data-motion="reduced"] *::after {
     width: 100%;
   }
 }
+
+/* Premium application pass: align operational pages with the Settings design language. */
+.module-notice,
+.camera-list-panel,
+.live-toolbar,
+.live-feed,
+.ops-toolbar,
+.ops-detail,
+.zone-designer,
+.wall-tile,
+.modal-window,
+.settings-card {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(255, 255, 255, 0.052), transparent 24rem),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.041), rgba(255, 255, 255, 0.014));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.module-notice,
+.camera-list-panel,
+.ops-detail,
+.ops-toolbar,
+.live-toolbar {
+  padding: clamp(1rem, 1.35vw, 1.3rem);
+}
+
+.ops-page {
+  gap: clamp(1rem, 1.4vw, 1.35rem);
+}
+
+.ops-grid {
+  gap: clamp(1rem, 1.35vw, 1.25rem);
+}
+
+.section-heading {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 1rem;
+  padding-bottom: 0.85rem;
+}
+
+.section-heading h2,
+.camera-list-panel h2,
+.ops-detail h2,
+.module-notice h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.05rem, 1.35vw, 1.25rem);
+  line-height: 1.2;
+}
+
+.section-heading span,
+.module-notice p,
+.ops-detail p {
+  color: #aeb7c3;
+}
+
+.ops-toolbar {
+  align-items: center;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.016));
+}
+
+.ops-toolbar label {
+  min-width: min(14rem, 100%);
+}
+
+.ops-toolbar input,
+.ops-toolbar select,
+.modal-form input,
+.modal-form select,
+.modal-form textarea,
+.stack-form input,
+.stack-form select,
+.stack-form textarea {
+  border-radius: 6px;
+  border-color: rgba(255, 255, 255, 0.13);
+  background: rgba(7, 10, 13, 0.62);
+}
+
+.section-heading button,
+.modal-actions button,
+.row-actions button,
+.ops-toolbar button,
+.stack-form button,
+.zone-draw-tools button,
+.empty-state button {
+  min-height: 2.3rem;
+  border-radius: 6px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.section-heading button:first-of-type,
+.ops-toolbar button:last-child,
+.modal-actions button[type="submit"],
+.stack-form button[type="submit"] {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: #f4f6f9;
+  color: #05070a;
+}
+
+.ops-list,
+.camera-list,
+.object-list {
+  gap: 0.72rem;
+}
+
+.ops-row,
+.camera-row,
+.metric-item,
+.insight-line,
+.empty-state {
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.024);
+  padding: clamp(0.75rem, 1vw, 0.95rem);
+}
+
+.ops-row,
+.camera-row {
+  align-items: center;
+}
+
+.ops-row:hover,
+.camera-row:hover,
+.metric-item:hover,
+.insight-line:hover {
+  border-color: rgba(125, 179, 255, 0.34);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ops-row strong,
+.camera-row strong,
+.insight-line strong {
+  color: #f7f9fb;
+  font-size: 0.94rem;
+  letter-spacing: 0;
+}
+
+.ops-row span,
+.camera-row span,
+.insight-line span,
+.ops-row small,
+.camera-row small,
+.insight-line small {
+  color: #aeb7c3;
+}
+
+.row-actions {
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.row-actions button {
+  padding: 0 0.72rem;
+}
+
+.metric-list {
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.024);
+  padding: 0.85rem;
+}
+
+.metric-list dt {
+  color: #8fa0b3;
+}
+
+.metric-list dd {
+  color: var(--color-text);
+  font-weight: 750;
+}
+
+.health-badge,
+.severity-badge {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+  padding: 0.32rem 0.62rem;
+  font-size: 0.72rem;
+  font-weight: 780;
+}
+
+.health-badge[data-status="ONLINE"],
+.health-badge[data-status="OPEN"],
+.health-badge[data-status="COMPLETED"],
+.health-badge[data-status="ATIVA"] {
+  border-color: rgba(49, 196, 107, 0.32);
+  background: rgba(49, 196, 107, 0.1);
+  color: #92e5b0;
+}
+
+.severity-badge[data-severity="critical"],
+.health-badge[data-status="FAILED"],
+.health-badge[data-status="OFFLINE"] {
+  border-color: rgba(239, 91, 91, 0.34);
+  background: rgba(239, 91, 91, 0.1);
+  color: #ffaaaa;
+}
+
+.severity-badge[data-severity="warning"],
+.health-badge[data-status="REVIEWED"],
+.health-badge[data-status="DEGRADED"] {
+  border-color: rgba(226, 178, 69, 0.34);
+  background: rgba(226, 178, 69, 0.1);
+  color: #f0d38a;
+}
+
+.video-wall-grid,
+.live-stage,
+.zone-media-host,
+.wall-media-host,
+.camera-preview,
+.event-evidence {
+  border-radius: 8px;
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.wall-tile {
+  overflow: hidden;
+}
+
+.wall-tile header,
+.live-toolbar {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.media-placeholder {
+  color: #aeb7c3;
+}
+
+.code-block {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.toast {
+  border-radius: 8px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(17, 22, 29, 0.96);
+  box-shadow: 0 1.5rem 3rem rgba(0, 0, 0, 0.28);
+}
+
+@media (max-width: 820px) {
+  .ops-toolbar label,
+  .ops-toolbar input,
+  .ops-toolbar select,
+  .ops-toolbar button {
+    width: 100%;
+  }
+
+  .ops-row,
+  .camera-row {
+    align-items: stretch;
+  }
+
+  .row-actions {
+    justify-content: stretch;
+  }
+
+  .row-actions button {
+    flex: 1 1 8rem;
+  }
+}
