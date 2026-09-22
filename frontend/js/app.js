@@ -30,6 +30,7 @@
   getVisionStatus,
   getVideoAnalysisStatus,
   getNotificationPreferences,
+  listNotificationDeliveries,
   listEvents,
   listEvidence,
   listInvestigations,
@@ -3314,6 +3315,10 @@ function notificationsSettingsMarkup() {
         <i data-lucide="send"></i>
       </div>
       <label class="settings-switch-row">
+        <span><strong>Notificações ativas</strong><small>Controla todos os envios automáticos e manuais do CAMPEX.</small></span>
+        <span class="settings-switch-control"><input name="enabled" type="checkbox" /><span>Ativo</span></span>
+      </label>
+      <label class="settings-switch-row">
         <span><strong>Enviar por e-mail</strong><small>Receber relatórios e alertas por e-mail.</small></span>
         <span class="settings-switch-control"><input name="email_enabled" type="checkbox" /><span>Ativo</span></span>
       </label>
@@ -3341,18 +3346,26 @@ function notificationsSettingsMarkup() {
       </label>
       <div class="settings-toggle-grid">
         <label class="toggle-row"><input name="camera_offline" type="checkbox" /><span>Câmera offline</span></label>
+        <label class="toggle-row"><input name="camera_online" type="checkbox" /><span>Câmera online</span></label>
         <label class="toggle-row"><input name="zone_idle" type="checkbox" /><span>Área sem atividade</span></label>
+        <label class="toggle-row"><input name="zone_activity_resumed" type="checkbox" /><span>Atividade retomada</span></label>
         <label class="toggle-row"><input name="crowding_started" type="checkbox" /><span>Aglomeração</span></label>
+        <label class="toggle-row"><input name="crowding_ended" type="checkbox" /><span>Aglomeração encerrada</span></label>
         <label class="toggle-row"><input name="long_presence" type="checkbox" /><span>Permanência prolongada</span></label>
       </div>
-      <input name="reports_enabled" type="checkbox" checked hidden />
+      <label class="settings-switch-row">
+        <span><strong>Relatórios automáticos</strong><small>Agenda relatórios recorrentes conforme frequência e horário.</small></span>
+        <span class="settings-switch-control"><input name="reports_enabled" type="checkbox" /><span>Ativo</span></span>
+      </label>
       <div class="settings-card-actions">
         <button type="button" id="notification-test-email" class="secondary-action"><i data-lucide="mail-check"></i>Testar e-mail</button>
         <button type="button" id="notification-test-telegram" class="secondary-action"><i data-lucide="message-circle"></i>Testar Telegram</button>
+        <button type="button" id="notification-report-now" class="secondary-action"><i data-lucide="send"></i>Enviar relatório agora</button>
         <button type="submit" class="primary-action">Salvar alterações</button>
       </div>
     </form>
     ${settingsCard("Status de entrega", "Última leitura das integrações de notificação.", "radio", `<div id="notification-settings-status" class="settings-integration-list"></div>`)}
+    ${settingsCard("Histórico de envios", "Entregas reais registradas pelo backend.", "history", `<div id="notification-delivery-history" class="settings-integration-list"></div>`)}
   `;
 }
 
@@ -3496,6 +3509,7 @@ async function hydrateSettingsTab(tabId) {
   }
   if (tabId === "notifications") {
     await loadNotificationSettings();
+    await loadNotificationDeliveries();
     return;
   }
   if (tabId === "integrations") {
@@ -3761,6 +3775,7 @@ async function loadNotificationSettings() {
   try {
     const prefs = await getNotificationPreferences();
     if (form) {
+      form.elements.enabled.checked = Boolean(prefs.enabled);
       form.elements.telegram_enabled.checked = Boolean(prefs.telegram_enabled);
       form.elements.telegram_chat_id.value = prefs.telegram_chat_id || "";
       form.elements.email_enabled.checked = Boolean(prefs.email_enabled);
@@ -3771,24 +3786,33 @@ async function loadNotificationSettings() {
       form.elements.timezone.value = prefs.timezone || "America/Sao_Paulo";
       form.elements.immediate_alerts_enabled.checked = Boolean(prefs.immediate_alerts_enabled);
       const types = new Set(prefs.alert_types || []);
-      ["camera_offline", "zone_idle", "crowding_started", "long_presence"].forEach((name) => {
+      notificationAlertTypes().forEach((name) => {
         form.elements[name].checked = types.has(name);
       });
+      const emailReady = Boolean(prefs.email_configured && prefs.email_recipients?.length);
+      const telegramReady = Boolean(prefs.telegram_configured && prefs.telegram_chat_id);
+      const emailButton = document.querySelector("#notification-test-email");
+      const telegramButton = document.querySelector("#notification-test-telegram");
+      if (emailButton) {
+        emailButton.disabled = !emailReady;
+        emailButton.title = emailReady ? "Enviar teste real de e-mail" : "Configure SMTP no backend e informe destinatários.";
+      }
+      if (telegramButton) {
+        telegramButton.disabled = !telegramReady;
+        telegramButton.title = telegramReady ? "Enviar teste real no Telegram" : "Configure TELEGRAM_BOT_TOKEN no backend e informe Chat ID.";
+      }
     }
     if (status) {
       status.innerHTML = [
-        integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
-        integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", prefs.email_configured ? "Conectado" : "Pendente"),
-        integrationLine("Bot do Telegram", "Notificações em tempo real.", prefs.telegram_configured ? "Conectado" : "Pendente"),
+        notificationStatusLine("Preferências", prefs.enabled ? "Notificações ativas" : "Notificações desativadas", prefs.enabled ? "Ativo" : "Inativo"),
+        notificationStatusLine("Servidor de e-mail (SMTP)", `${(prefs.email_recipients || []).length} destinatário(s)`, prefs.email_configured ? "Configurado" : "Não configurado"),
+        notificationStatusLine("Bot do Telegram", prefs.telegram_chat_id || "Chat ID ausente", prefs.telegram_configured ? "Configurado" : "Não configurado"),
+        notificationStatusLine("Relatórios", `${prefs.report_frequency || "DAILY"} às ${prefs.report_time || "18:00"}`, prefs.reports_enabled ? "Ativo" : "Inativo"),
       ].join("");
     }
   } catch (error) {
     if (status) {
-      status.innerHTML = [
-        integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado"),
-        integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado"),
-        integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado"),
-      ].join("");
+      status.innerHTML = emptyState("Falha ao carregar notificações", error.message);
     }
   }
 }
@@ -3796,10 +3820,10 @@ async function loadNotificationSettings() {
 async function saveNotificationSettings(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  const alertTypes = ["camera_offline", "zone_idle", "crowding_started", "long_presence"]
+  const alertTypes = notificationAlertTypes()
     .filter((name) => form.elements[name].checked);
   const payload = {
-    enabled: true,
+    enabled: form.elements.enabled.checked,
     telegram_enabled: form.elements.telegram_enabled.checked,
     telegram_chat_id: form.elements.telegram_chat_id.value.trim() || null,
     email_enabled: form.elements.email_enabled.checked,
@@ -3814,14 +3838,17 @@ async function saveNotificationSettings(event) {
   await updateNotificationPreferences(payload);
   notify("Notificações salvas", "Preferências de entrega atualizadas.", "success");
   await loadNotificationSettings();
+  await loadNotificationDeliveries();
 }
 
 async function testTelegramSettings() {
   try {
     await testTelegramNotification();
     notify("Telegram testado", "Mensagem de teste enviada.", "success");
+    await loadNotificationDeliveries();
   } catch (error) {
     notify("Falha no Telegram", error.message, "error");
+    await loadNotificationDeliveries();
   }
 }
 
@@ -3829,8 +3856,10 @@ async function testEmailSettings() {
   try {
     await testEmailNotification();
     notify("E-mail testado", "Mensagem de teste enviada.", "success");
+    await loadNotificationDeliveries();
   } catch (error) {
     notify("Falha no e-mail", error.message, "error");
+    await loadNotificationDeliveries();
   }
 }
 
@@ -3838,9 +3867,71 @@ async function sendReportNow() {
   try {
     const result = await sendNotificationReportNow();
     notify("Relatório solicitado", JSON.stringify(result.channels || {}), "success");
+    await loadNotificationDeliveries();
   } catch (error) {
     notify("Falha ao enviar relatório", error.message, "error");
+    await loadNotificationDeliveries();
   }
+}
+
+async function loadNotificationDeliveries() {
+  const host = document.querySelector("#notification-delivery-history");
+  if (!host) return;
+  try {
+    const deliveries = await listNotificationDeliveries();
+    host.innerHTML = deliveries.length
+      ? deliveries.slice(0, 12).map(notificationDeliveryLine).join("")
+      : emptyState("Nenhum envio registrado", "Testes e relatórios aparecerão aqui após o backend entregar ou falhar.");
+  } catch (error) {
+    host.innerHTML = emptyState("Falha ao carregar histórico", error.message);
+  }
+}
+
+function notificationAlertTypes() {
+  return [
+    "camera_offline",
+    "camera_online",
+    "zone_idle",
+    "zone_activity_resumed",
+    "crowding_started",
+    "crowding_ended",
+    "long_presence",
+  ];
+}
+
+function notificationStatusLine(title, detail, status) {
+  const connected = ["Configurado", "Ativo"].includes(status);
+  return `
+    <article class="settings-integration-line">
+      <div>
+        <strong>${title}</strong>
+        <span>${detail}</span>
+      </div>
+      <small data-state="${connected ? "connected" : "pending"}">${status}</small>
+      <button type="button" disabled>Real</button>
+    </article>
+  `;
+}
+
+function notificationDeliveryLine(delivery) {
+  const status = String(delivery.status || "pending").toLowerCase();
+  const ok = status === "sent";
+  const detail = [
+    delivery.channel,
+    delivery.type,
+    delivery.recipient,
+  ].filter(Boolean).join(" · ");
+  return `
+    <article class="settings-integration-line">
+      <div>
+        <strong>${escapeHtml(delivery.reference_id || delivery.id || "Entrega")}</strong>
+        <span>${escapeHtml(detail || "Entrega de notificação")} · ${formatDate(delivery.created_at)}</span>
+        ${delivery.error ? `<span>${escapeHtml(delivery.error)}</span>` : ""}
+      </div>
+      <small data-state="${ok ? "connected" : "pending"}">${escapeHtml(delivery.status || "pending")}</small>
+      <button type="button" disabled>${delivery.attempts ?? 0} tent.</button>
+    </article>
+  `;
 }
 
 function metricItem(title, value, detail) {
