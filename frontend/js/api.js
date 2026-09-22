@@ -1,7 +1,16 @@
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
-const defaultApiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
+const localApiBaseUrl = "http://127.0.0.1:8000/api/v1";
+const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 const API_BASE_URL =
-  queryApiBaseUrl || window.CAMPEX_API_BASE_URL || defaultApiBaseUrl;
+  (queryApiBaseUrl || window.CAMPEX_API_BASE_URL || (isLocalFrontend ? localApiBaseUrl : "")).replace(/\/$/, "");
+
+function assertApiBaseUrl() {
+  if (!API_BASE_URL) {
+    throw new Error(
+      "API_BASE_URL não configurada. Defina window.CAMPEX_API_BASE_URL em frontend/config.js."
+    );
+  }
+}
 
 function apiHeaders(extra = {}) {
   const apiToken = localStorage.getItem("campex.api_token") || "";
@@ -23,6 +32,7 @@ function uploadHeaders(extra = {}) {
 }
 
 async function requestJson(path, options = {}) {
+  assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: apiHeaders(options.headers || {}),
     ...options,
@@ -93,6 +103,7 @@ export function updateRule(ruleId, payload) {
 }
 
 export async function deleteRule(ruleId) {
+  assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/operations/rules/${ruleId}`, {
     method: "DELETE",
     headers: apiHeaders(),
@@ -112,6 +123,7 @@ export function setupDemo() {
 }
 
 export function operationsStreamUrl() {
+  assertApiBaseUrl();
   return `${API_BASE_URL}/operations/stream`;
 }
 
@@ -147,6 +159,7 @@ export function updateInvestigation(investigationId, payload) {
 }
 
 export async function deleteInvestigation(investigationId) {
+  assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/investigations/${investigationId}`, {
     method: "DELETE",
     headers: apiHeaders(),
@@ -199,10 +212,12 @@ export function updateEvent(eventId, payload) {
 }
 
 export function eventEvidenceUrl(eventId, variant = "overlay") {
+  assertApiBaseUrl();
   return `${API_BASE_URL}/events/${eventId}/evidence?variant=${encodeURIComponent(variant)}`;
 }
 
 export async function deleteEvent(eventId) {
+  assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/events/${eventId}`, {
     method: "DELETE",
     headers: apiHeaders(),
@@ -237,6 +252,7 @@ export function updateMachine(machineId, payload) {
 }
 
 export async function deleteMachine(machineId) {
+  assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/machines/${machineId}`, {
     method: "DELETE",
     headers: apiHeaders(),
@@ -261,6 +277,7 @@ export function updateZone(zoneId, payload) {
 }
 
 export async function deleteZone(zoneId) {
+  assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/zones/${zoneId}`, {
     method: "DELETE",
     headers: apiHeaders(),
@@ -271,6 +288,7 @@ export async function deleteZone(zoneId) {
 }
 
 export async function deleteCamera(cameraId) {
+  assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/cameras/${cameraId}`, {
     method: "DELETE",
     headers: apiHeaders(),
@@ -346,18 +364,22 @@ export function getStreamInfo(cameraId) {
 }
 
 export function cameraStreamUrl(cameraId) {
+  assertApiBaseUrl();
   return `${API_BASE_URL}/cameras/${cameraId}/stream`;
 }
 
 export function cameraVideoUrl(cameraId) {
+  assertApiBaseUrl();
   return `${API_BASE_URL}/cameras/${cameraId}/video`;
 }
 
 export function cameraSnapshotUrl(cameraId) {
+  assertApiBaseUrl();
   return `${API_BASE_URL}/cameras/${cameraId}/snapshot?t=${Date.now()}`;
 }
 
 export async function analyzeVideo(file) {
+  assertApiBaseUrl();
   const formData = new FormData();
   formData.append("file", file);
   const response = await fetch(`${API_BASE_URL}/videos/analyze`, {
@@ -387,10 +409,12 @@ export function getVideoAnalysisStatus(analysisId) {
 }
 
 export function uploadedVideoUrl(analysisId) {
+  assertApiBaseUrl();
   return `${API_BASE_URL}/videos/${analysisId}/video`;
 }
 
 export function debugVideoUrl(analysisId) {
+  assertApiBaseUrl();
   return `${API_BASE_URL}/videos/${analysisId}/debug-video`;
 }
 

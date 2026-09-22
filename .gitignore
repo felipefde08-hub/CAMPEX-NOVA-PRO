@@ -7,6 +7,9 @@ venv/
 env/
 
 .env
+.env.*
+!.env.example
+frontend/config.local.js
 *.sqlite
 *.sqlite3
 *.db

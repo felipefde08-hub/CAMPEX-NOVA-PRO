@@ -48,6 +48,27 @@ def _env_mapping(name: str, default: str = "") -> dict[str, str]:
     return mapping
 
 
+def _is_serverless_env() -> bool:
+    runtime = os.getenv("CAMPEX_RUNTIME", "").lower()
+    return runtime == "serverless" or bool(os.getenv("VERCEL"))
+
+
+def _default_database_url() -> str:
+    if _is_serverless_env():
+        return "sqlite:////tmp/campex_serverless.sqlite3"
+    return "sqlite:///./storage/campex_dev.sqlite3"
+
+
+def _default_video_upload_dir() -> str:
+    if _is_serverless_env():
+        return "/tmp/campex_video_uploads"
+    return "./storage/video_uploads"
+
+
+def _default_runtime() -> str:
+    return "serverless" if _is_serverless_env() else "local"
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: str
@@ -202,7 +223,7 @@ class Settings:
             version=os.getenv("CAMPEX_VERSION", "0.1.0"),
             log_level=os.getenv("CAMPEX_LOG_LEVEL", "INFO").upper(),
             database_url=os.getenv(
-                "DATABASE_URL", "sqlite:///./storage/campex_dev.sqlite3"
+                "DATABASE_URL", _default_database_url()
             ),
             frontend_origins=_env_list(
                 "CAMPEX_FRONTEND_ORIGINS",
@@ -218,7 +239,7 @@ class Settings:
             vision_enabled=os.getenv("VISION_ENABLED", "true").lower()
             in {"1", "true", "yes", "on"},
             vision_detector=os.getenv("VISION_DETECTOR", "yolo").lower(),
-            runtime=os.getenv("CAMPEX_RUNTIME", "local").lower(),
+            runtime=os.getenv("CAMPEX_RUNTIME", _default_runtime()).lower(),
             vision_model=os.getenv("VISION_MODEL", "yolo11n.pt"),
             vision_device=os.getenv("VISION_DEVICE", "auto").lower(),
             vision_fps=float(os.getenv("VISION_FPS", "5")),
@@ -279,7 +300,7 @@ class Settings:
             rate_limit_window_seconds=float(
                 os.getenv("CAMPEX_RATE_LIMIT_WINDOW_SECONDS", "60")
             ),
-            video_upload_dir=os.getenv("VIDEO_UPLOAD_DIR", "./storage/video_uploads"),
+            video_upload_dir=os.getenv("VIDEO_UPLOAD_DIR", _default_video_upload_dir()),
             video_max_upload_mb=int(os.getenv("VIDEO_MAX_UPLOAD_MB", "250")),
             video_analysis_fps=float(os.getenv("VIDEO_ANALYSIS_FPS", "5")),
             video_temporary_retention_hours=float(

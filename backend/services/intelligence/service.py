@@ -2,9 +2,8 @@ from __future__ import annotations
 import json
 import logging
 import time
-import from backend main.py
 from html import escape as _escape_html
-from typing import An
+from typing import Any
 
 from backend.services.intelligence.context import summarize_context
 from backend.services.intelligence.exceptions import IntelligenceError, IntelligenceInvalidResponseError

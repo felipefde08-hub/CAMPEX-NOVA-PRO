@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import time
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
-
 from backend.config import Settings
 from backend.services.intelligence.exceptions import (
     IntelligenceInvalidResponseError,
@@ -16,6 +14,12 @@ from backend.services.intelligence.exceptions import (
 
 
 logger = logging.getLogger("campex.intelligence")
+
+
+try:
+    from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
+except ImportError:
+    APIConnectionError = APIStatusError = APITimeoutError = OpenAI = None
 
 
 class NemotronClient:
@@ -32,6 +36,8 @@ class NemotronClient:
     def chat(self, messages: list[dict[str, str]]) -> str:
         if not self.api_key:
             raise IntelligenceNotConfiguredError("NVIDIA_API_KEY is not configured.")
+        if OpenAI is None:
+            raise IntelligenceNotConfiguredError("openai package is not installed.")
 
         client = OpenAI(
             base_url=self.base_url,

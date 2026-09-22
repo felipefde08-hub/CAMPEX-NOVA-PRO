@@ -3387,7 +3387,7 @@ async function refreshBackendStatus() {
       statusElement.dataset.state = newState;
       statusText.textContent = backendFailureCount < 3 ? "Verificando backend" : "Backend indisponível";
       if (backendFailureCount >= 3) {
-        notify("Backend indisponível", "Confira se o backend está em http://127.0.0.1:8000 ou se a URL da API está correta.", "error", 8000);
+        notify("Backend indisponível", "Confira a URL configurada da API no arquivo frontend/config.js.", "error", 8000);
       }
     }
     if (backendFailureCount >= 3) {

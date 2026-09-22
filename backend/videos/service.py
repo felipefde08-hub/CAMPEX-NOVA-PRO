@@ -65,6 +65,10 @@ class VideoAnalysisService:
             file_size=size,
         )
         self.repository.create(job)
+        if self.settings.runtime == "serverless":
+            self._run_job(job, self.detector)
+            return self.repository.get(analysis_id, organization_id)
+
         threading.Thread(
             target=self._run_job,
             args=(job, self.detector),
