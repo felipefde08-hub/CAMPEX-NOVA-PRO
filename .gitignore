@@ -23,6 +23,7 @@ htmlcov/
 storage/*.sqlite3
 storage/*.db
 storage/*.mp4
+storage/campex_node/
 storage/evidence/*
 !storage/evidence/.gitkeep
 storage/video_uploads/*
