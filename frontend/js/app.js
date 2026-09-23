@@ -4178,7 +4178,7 @@ function integrationsSettingsMarkup() {
     ${settingsCard("Integrações", "Gerencie as integrações com serviços externos.", "share-2", `
       <div id="notification-settings-status" class="settings-integration-list">
         ${integrationLine("NVIDIA Nemotron", "Análise de vídeo com IA.", "Conectado", "runtime")}
-        ${integrationLine("Servidor de e-mail (SMTP)", "Envio de relatórios e alertas.", "Conectado", "email")}
+        ${integrationLine("E-mail transacional (Resend)", "Envio de relatórios e alertas.", "Conectado", "email")}
         ${integrationLine("Bot do Telegram", "Notificações em tempo real.", "Conectado", "telegram")}
       </div>
       <div class="settings-info-callout">
@@ -4599,7 +4599,7 @@ async function loadNotificationSettings() {
       const telegramButton = document.querySelector("#notification-test-telegram");
       if (emailButton) {
         emailButton.disabled = !emailReady;
-        emailButton.title = emailReady ? "Enviar teste real de e-mail" : "Configure SMTP no backend e informe destinatários.";
+        emailButton.title = emailReady ? "Enviar teste real de e-mail" : "Configure RESEND_API_KEY no backend e informe destinatários.";
       }
       if (telegramButton) {
         telegramButton.disabled = !telegramReady;
@@ -4609,7 +4609,7 @@ async function loadNotificationSettings() {
     if (status) {
       status.innerHTML = [
         notificationStatusLine("Preferências", prefs.enabled ? "Notificações ativas" : "Notificações desativadas", prefs.enabled ? "Ativo" : "Inativo"),
-        notificationStatusLine("Servidor de e-mail (SMTP)", `${(prefs.email_recipients || []).length} destinatário(s)`, prefs.email_configured ? "Configurado" : "Não configurado"),
+        notificationStatusLine("E-mail transacional (Resend)", `${(prefs.email_recipients || []).length} destinatário(s)`, prefs.email_configured ? "Configurado" : "Não configurado"),
         notificationStatusLine("Bot do Telegram", prefs.telegram_chat_id || "Chat ID ausente", prefs.telegram_configured ? "Configurado" : "Não configurado"),
         notificationStatusLine("Relatórios", `${prefs.report_frequency || "DAILY"} às ${prefs.report_time || "18:00"}`, prefs.reports_enabled ? "Ativo" : "Inativo"),
       ].join("");

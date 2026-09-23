@@ -177,8 +177,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=startup_settings.frontend_origins,
+    allow_origin_regex=startup_settings.frontend_origin_regex,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 app.add_middleware(SecurityHeadersMiddleware)

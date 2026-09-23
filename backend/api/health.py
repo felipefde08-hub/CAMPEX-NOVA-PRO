@@ -28,6 +28,7 @@ def runtime_settings() -> dict:
         "log_level": settings.log_level,
         "database_url": settings.database_url,
         "frontend_origins": settings.frontend_origins,
+        "frontend_origin_regex": settings.frontend_origin_regex,
         "camera": {
             "reconnect_seconds": settings.camera_reconnect_seconds,
             "stale_seconds": settings.camera_stale_seconds,

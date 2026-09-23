@@ -102,6 +102,7 @@ class Settings:
     vision_confidence: float
     vision_video_loop: bool
     runtime: str = "local"
+    frontend_origin_regex: str | None = None
     api_token: str | None = None
     vision_model: str = "yolo11n.pt"
     vision_input_size: int = 960
@@ -124,6 +125,9 @@ class Settings:
     nemotron_top_p: float = 0.7
     nemotron_max_tokens: int = 700
     telegram_bot_token: str | None = None
+    resend_api_key: str | None = None
+    resend_from_email: str | None = None
+    resend_from_name: str = "CAMPEX"
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
@@ -239,6 +243,10 @@ class Settings:
                 "DATABASE_URL", _default_database_url()
             ),
             frontend_origins=_frontend_origins(),
+            frontend_origin_regex=(
+                os.getenv("CAMPEX_FRONTEND_ORIGIN_REGEX")
+                or r"^https://[a-z0-9-]+\.vercel\.app$"
+            ),
             camera_reconnect_seconds=float(os.getenv("CAMERA_RECONNECT_SECONDS", "5")),
             camera_stale_seconds=float(os.getenv("CAMERA_STALE_SECONDS", "10")),
             camera_offline_seconds=float(os.getenv("CAMERA_OFFLINE_SECONDS", "30")),
@@ -296,6 +304,16 @@ class Settings:
             nemotron_top_p=float(os.getenv("NEMOTRON_TOP_P", "0.7")),
             nemotron_max_tokens=int(os.getenv("NEMOTRON_MAX_TOKENS", "700")),
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
+            resend_api_key=os.getenv("RESEND_API_KEY") or None,
+            resend_from_email=(
+                os.getenv("RESEND_FROM_EMAIL")
+                or os.getenv("SMTP_FROM_EMAIL")
+                or None
+            ),
+            resend_from_name=os.getenv(
+                "RESEND_FROM_NAME",
+                os.getenv("SMTP_FROM_NAME", "CAMPEX"),
+            ),
             smtp_host=os.getenv("SMTP_HOST") or None,
             smtp_port=int(os.getenv("SMTP_PORT", "587")),
             smtp_username=os.getenv("SMTP_USERNAME") or None,
