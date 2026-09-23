@@ -96,6 +96,7 @@ class NodeSettings:
     cloud_timeout_seconds: float = 10.0
     config_sync_interval_seconds: float = 15.0
     sync_interval_seconds: float = 10.0
+    telemetry_interval_seconds: float = 30.0
     heartbeat_interval_seconds: float = 30.0
     camera_reconnect_seconds: float = 5.0
     camera_read_failure_limit: int = 3
@@ -132,6 +133,7 @@ class NodeSettings:
             cloud_timeout_seconds=_env_float("CAMPEX_NODE_CLOUD_TIMEOUT_SECONDS", 10.0),
             config_sync_interval_seconds=_env_float("CAMPEX_NODE_CONFIG_SYNC_SECONDS", 15.0),
             sync_interval_seconds=_env_float("CAMPEX_NODE_SYNC_SECONDS", 10.0),
+            telemetry_interval_seconds=_env_float("CAMPEX_NODE_TELEMETRY_SECONDS", 30.0),
             heartbeat_interval_seconds=_env_float("CAMPEX_NODE_HEARTBEAT_SECONDS", 30.0),
             camera_reconnect_seconds=_env_float("CAMPEX_NODE_CAMERA_RECONNECT_SECONDS", 5.0),
             camera_read_failure_limit=_env_int("CAMPEX_NODE_CAMERA_READ_FAILURE_LIMIT", 3),
@@ -147,6 +149,8 @@ class NodeSettings:
             raise ValueError("CAMPEX_NODE_CONFIG_SYNC_SECONDS must be greater than zero.")
         if self.sync_interval_seconds <= 0:
             raise ValueError("CAMPEX_NODE_SYNC_SECONDS must be greater than zero.")
+        if self.telemetry_interval_seconds <= 0:
+            raise ValueError("CAMPEX_NODE_TELEMETRY_SECONDS must be greater than zero.")
         if self.camera_reconnect_seconds < 0:
             raise ValueError("CAMPEX_NODE_CAMERA_RECONNECT_SECONDS must be non-negative.")
         if self.camera_read_failure_limit < 1:

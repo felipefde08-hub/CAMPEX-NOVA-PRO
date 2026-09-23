@@ -12,6 +12,7 @@ from campex_node.cloud.heartbeat import HeartbeatService
 from campex_node.cloud.sync import SyncService
 from campex_node.core.config import NodeSettings
 from campex_node.storage.local_store import LocalStore
+from campex_node.telemetry.collector import TelemetryCollector
 
 
 logger = logging.getLogger("campex.node.lifecycle")
@@ -34,6 +35,7 @@ class NodeLifecycle:
         self.heartbeat: HeartbeatService | None = None
         self.config_sync: ConfigSyncService | None = None
         self.sync: SyncService | None = None
+        self.telemetry: TelemetryCollector | None = None
         self._running = False
 
     def initialize(self) -> None:
@@ -64,6 +66,13 @@ class NodeLifecycle:
         self.camera_manager.start()
         if self.cloud_client.is_configured():
             self.config_sync.start()
+        self.telemetry = TelemetryCollector(
+            settings=self.settings,
+            node_id=self.node_id,
+            camera_manager=self.camera_manager,
+            store=self.store,
+        )
+        self.telemetry.start()
         self.sync = SyncService(
             settings=self.settings,
             cloud_client=self.cloud_client,
@@ -106,6 +115,8 @@ class NodeLifecycle:
             self.config_sync.stop()
         if self.sync is not None:
             self.sync.stop()
+        if self.telemetry is not None:
+            self.telemetry.stop()
         if self.heartbeat is not None:
             self.heartbeat.stop()
         self.camera_manager.stop()
@@ -121,6 +132,12 @@ class NodeLifecycle:
             ).sync_once()
         self.camera_manager.start()
         try:
+            TelemetryCollector(
+                settings=self.settings,
+                node_id=self.node_id,
+                camera_manager=self.camera_manager,
+                store=self.store,
+            ).collect_once()
             heartbeat = HeartbeatService(
                 settings=self.settings,
                 node_id=self.node_id,

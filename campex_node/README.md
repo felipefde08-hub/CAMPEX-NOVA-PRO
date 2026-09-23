@@ -6,7 +6,7 @@ temporary data locally, and prepares heartbeat communication with CAMPEX Cloud.
 
 This version does not run AI models. It only builds the runtime foundation:
 configuration, logging, node identity, camera capture, reconnects, local SQLite
-storage, and heartbeat delivery.
+storage, heartbeat delivery, sync outbox, and operational telemetry.
 
 ## Configuration
 
@@ -46,6 +46,8 @@ Local runtime settings:
 ```bash
 export CAMPEX_NODE_DATA_DIR="./storage/campex_node"
 export CAMPEX_NODE_HEARTBEAT_SECONDS=30
+export CAMPEX_NODE_SYNC_SECONDS=10
+export CAMPEX_NODE_TELEMETRY_SECONDS=30
 export CAMPEX_NODE_CAMERA_RECONNECT_SECONDS=5
 ```
 
@@ -65,9 +67,9 @@ and stops. Running without `--once` keeps the service alive for 24/7 operation.
 
 ## Cloud Behavior
 
-When `CAMPEX_NODE_CLOUD_URL` is missing or unavailable, heartbeat payloads are
-queued in local SQLite as `outbound_events`. The future Cloud sync worker can
-reuse this outbox.
+When `CAMPEX_NODE_CLOUD_URL` is missing or unavailable, heartbeat payloads,
+metrics, and events are queued in local SQLite as `outbound_events`. The sync
+worker retries pending items with backoff and marks delivered items as synced.
 
 The current heartbeat endpoint is prepared as:
 
@@ -76,8 +78,28 @@ POST {CAMPEX_NODE_CLOUD_URL}/node/heartbeat
 Authorization: Bearer {CAMPEX_NODE_TOKEN}
 ```
 
-If CAMPEX Cloud does not expose that endpoint yet, the heartbeat is stored
-locally and the Node keeps running.
+Node metrics and events are sent to:
+
+```text
+POST {CAMPEX_NODE_CLOUD_URL}/node-sync/metrics
+POST {CAMPEX_NODE_CLOUD_URL}/node-sync/events
+Authorization: Bearer {CAMPEX_NODE_TOKEN}
+```
+
+If CAMPEX Cloud is unavailable, the data is stored locally and the Node keeps
+running.
+
+## Operational Telemetry
+
+The Node periodically snapshots camera health and queues metrics without running
+AI. Current metric types are:
+
+- `camera_online`
+- `camera_frames_received`
+- `camera_reconnect_attempts`
+- `camera_consecutive_failures`
+
+The Node also emits `camera_status_changed` events when a camera changes state.
 
 ## Security
 
