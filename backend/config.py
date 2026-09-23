@@ -38,6 +38,8 @@ def _env_list(name: str, default: str) -> list[str]:
 def _frontend_origins() -> list[str]:
     defaults = [
         "https://campexfront.vercel.app",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
         "http://127.0.0.1:5174",
         "http://localhost:5174",
         "http://127.0.0.1:5500",
