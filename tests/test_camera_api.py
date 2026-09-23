@@ -253,3 +253,37 @@ def test_browser_camera_auth_and_preflight(monkeypatch, tmp_path):
         assert response.status_code == 200
         assert response.json()["success"] is False
         assert client.get("/api/v1/health").status_code == 200
+
+
+def test_serverless_explains_private_camera_connection(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAMPEX_RUNTIME", "serverless")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'serverless.sqlite3'}")
+    monkeypatch.setenv("CAMPEX_API_TOKEN", "test-token")
+    def no_capture(*args, **kwargs):
+        raise AssertionError("Cloud must not attempt local camera capture")
+    monkeypatch.setattr("backend.cameras.manager.create_camera_source", no_capture)
+    with TestClient(app) as client:
+        response = client.post('/api/v1/cameras/test-source',
+            headers={"X-CAMPEX-Token": "test-token"},
+            json={"source_type": "rtsp", "source_uri": "rtsp://192.168.1.10:554/stream"})
+    assert response.status_code == 200
+    assert response.json()["success"] is False
+    assert "backend CAMPEX local" in response.json()["error"]
+
+
+def test_local_network_preflight_is_limited_to_allowed_origins():
+    from fastapi import FastAPI
+    from backend.middleware.cors import LocalNetworkCORSMiddleware
+    for local_runtime in (True, False):
+        test_app = FastAPI()
+        test_app.add_middleware(LocalNetworkCORSMiddleware,
+            local_runtime=local_runtime, allow_origins=["https://campexfront.vercel.app"],
+            allow_headers=["*"], allow_methods=["GET"])
+        with TestClient(test_app) as client:
+            for origin in ("https://campexfront.vercel.app", "https://untrusted.example"):
+                response = client.options('/api/v1/cameras', headers={
+                    "Origin": origin, "Access-Control-Request-Method": "GET",
+                    "Access-Control-Request-Headers": "x-campex-token",
+                    "Access-Control-Request-Private-Network": "true"})
+                allowed = local_runtime and origin == "https://campexfront.vercel.app"
+                assert (response.headers.get("access-control-allow-private-network") == "true") == allowed

@@ -1,9 +1,12 @@
+import { createMediaUrl } from "./media-auth.js";
 import { getApiToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
 const localApiBaseUrl = "http://127.0.0.1:8000/api/v1";
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 const API_BASE_URL =
-  (queryApiBaseUrl || window.CAMPEX_API_BASE_URL || (isLocalFrontend ? localApiBaseUrl : "")).replace(/\/$/, "");
+  (queryApiBaseUrl || localStorage.getItem("campex.backend_url") || window.CAMPEX_API_BASE_URL || (isLocalFrontend ? localApiBaseUrl : "")).replace(/\/$/, "");
+
+const mediaUrl = await createMediaUrl(API_BASE_URL, getApiToken);
 
 function assertApiBaseUrl() {
   if (!API_BASE_URL) {
@@ -127,7 +130,7 @@ export function setupDemo() {
 
 export function operationsStreamUrl() {
   assertApiBaseUrl();
-  return `${API_BASE_URL}/operations/stream`;
+  return mediaUrl(`${API_BASE_URL}/operations/stream`);
 }
 
 export function simulateRule(payload) {
@@ -247,7 +250,7 @@ export function updateEvent(eventId, payload) {
 
 export function eventEvidenceUrl(eventId, variant = "overlay") {
   assertApiBaseUrl();
-  return `${API_BASE_URL}/events/${eventId}/evidence?variant=${encodeURIComponent(variant)}`;
+  return mediaUrl(`${API_BASE_URL}/events/${eventId}/evidence?variant=${encodeURIComponent(variant)}`);
 }
 
 export async function deleteEvent(eventId) {
@@ -400,12 +403,12 @@ export function getStreamInfo(cameraId) {
 export function cameraStreamUrl(cameraId, options = {}) {
   assertApiBaseUrl();
   const query = options.overlay ? "?overlay=true" : "";
-  return `${API_BASE_URL}/cameras/${cameraId}/stream${query}`;
+  return mediaUrl(`${API_BASE_URL}/cameras/${cameraId}/stream${query}`);
 }
 
 export function cameraVideoUrl(cameraId) {
   assertApiBaseUrl();
-  return `${API_BASE_URL}/cameras/${cameraId}/video`;
+  return mediaUrl(`${API_BASE_URL}/cameras/${cameraId}/video`);
 }
 
 export function cameraSnapshotUrl(cameraId, options = {}) {
@@ -414,7 +417,7 @@ export function cameraSnapshotUrl(cameraId, options = {}) {
   if (options.overlay) {
     params.set("overlay", "true");
   }
-  return `${API_BASE_URL}/cameras/${cameraId}/snapshot?${params}`;
+  return mediaUrl(`${API_BASE_URL}/cameras/${cameraId}/snapshot?${params}`);
 }
 
 export async function analyzeVideo(file) {
@@ -449,12 +452,12 @@ export function getVideoAnalysisStatus(analysisId) {
 
 export function uploadedVideoUrl(analysisId) {
   assertApiBaseUrl();
-  return `${API_BASE_URL}/videos/${analysisId}/video`;
+  return mediaUrl(`${API_BASE_URL}/videos/${analysisId}/video`);
 }
 
 export function debugVideoUrl(analysisId) {
   assertApiBaseUrl();
-  return `${API_BASE_URL}/videos/${analysisId}/debug-video`;
+  return mediaUrl(`${API_BASE_URL}/videos/${analysisId}/debug-video`);
 }
 
 export function getNotificationPreferences() {
@@ -482,4 +485,23 @@ export function sendNotificationReportNow() {
 
 export function listNotificationDeliveries() {
   return requestJson("/notifications/deliveries");
+}
+
+export function getBackendUrl() { return API_BASE_URL; }
+
+export async function connectBackend(mode, token) {
+  const base = mode === "local" ? "http://127.0.0.1:8000/api/v1" : window.CAMPEX_API_BASE_URL;
+  if (!base) throw new Error("Endereço do backend não configurado.");
+  const response = await fetch(`${base}/cameras`, {
+    headers: { Accept: "application/json", ...(token ? { "X-CAMPEX-Token": token.trim() } : {}) },
+    signal: AbortSignal.timeout(8000),
+    redirect: "error",
+  });
+  if (!response.ok) {
+    throw new Error(response.status === 401
+      ? "Token inválido para o backend selecionado."
+      : `O backend respondeu HTTP ${response.status}.`);
+  }
+  localStorage.setItem("campex.backend_url", base);
+  return base;
 }

@@ -13,7 +13,8 @@ globalThis.window = { location: { search: '', protocol: 'http:', hostname: 'loca
 const tokenSource = await readFile(new URL('../../frontend/js/api-token.js', import.meta.url), 'utf8');
 const tokenUrl = moduleUrl(tokenSource);
 const tokens = await import(tokenUrl);
-const apiSource = (await readFile(new URL('../../frontend/js/api.js', import.meta.url), 'utf8')).replace('./api-token.js', tokenUrl);
+const mediaUrl = moduleUrl((await readFile(new URL('../../frontend/js/media-auth.js', import.meta.url), 'utf8')).replace('import.meta.url', JSON.stringify('http://localhost/js/media-auth.js')));
+const apiSource = (await readFile(new URL('../../frontend/js/api.js', import.meta.url), 'utf8')).replace('./api-token.js', tokenUrl).replace('./media-auth.js', mediaUrl);
 const api = await import(moduleUrl(apiSource + "\nexport { requestJson };"));
 
 test('migrates persistent secrets, sends token for protected requests, clears it', async () => {
@@ -43,4 +44,19 @@ test('migrates persistent secrets, sends token for protected requests, clears it
   tokens.setApiToken('');
   await api.listCameras();
   assert.equal(calls.at(-1).options.headers['X-CAMPEX-Token'], undefined);
+});
+
+test('backend selection is saved only after successful authentication', async () => {
+  globalThis.fetch = async () => new Response('{}', { status: 401 });
+  await assert.rejects(api.connectBackend('local', 'incorrect'), /Token inválido/);
+  assert.equal(localStorage.getItem('campex.backend_url'), null);
+  let sent;
+  globalThis.fetch = async (url, options) => {
+    sent = { url, options };
+    return new Response('[]', { status: 200 });
+  };
+  assert.equal(await api.connectBackend('local', 'test-local-token'), 'http://127.0.0.1:8000/api/v1');
+  assert.equal(sent.options.headers['X-CAMPEX-Token'], 'test-local-token');
+  assert.equal(localStorage.getItem('campex.backend_url'), 'http://127.0.0.1:8000/api/v1');
+  assert.ok(!sent.url.includes('test-local-token'));
 });

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
+from backend.middleware.cors import LocalNetworkCORSMiddleware
 
 from backend.api.cameras import router as cameras_router
 from backend.api.analysis import router as analysis_router
@@ -210,12 +210,14 @@ async def api_token_guard(request: Request, call_next):
 
 # CORS wraps authentication, including preflight and error responses.
 app.add_middleware(
-    CORSMiddleware,
+    LocalNetworkCORSMiddleware,
+    local_runtime=startup_settings.runtime != "serverless",
     allow_origins=startup_settings.frontend_origins,
     allow_origin_regex=startup_settings.frontend_origin_regex,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
 app.include_router(health_router)
 app.include_router(analysis_router)

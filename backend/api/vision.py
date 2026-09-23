@@ -170,6 +170,12 @@ def stream_info(
         "camera_id": camera.id,
         "source_type": camera.source_type,
         "mode": mode,
+        "available": mode == "file_video" or get_settings().runtime != "serverless",
+        "message": (
+            "Câmeras ao vivo precisam do backend local na mesma rede da câmera. "
+            "A captura contínua não está ativa no backend da Vercel."
+            if mode != "file_video" and get_settings().runtime == "serverless" else None
+        ),
         "stream_url": f"/api/v1/cameras/{camera.id}/stream",
         "video_url": f"/api/v1/cameras/{camera.id}/video" if mode == "file_video" else None,
     }

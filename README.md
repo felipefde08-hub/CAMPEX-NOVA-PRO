@@ -107,3 +107,33 @@ com a origem exata do frontend. O preflight CORS não exige token; as chamadas
 protegidas continuam retornando 401 quando o token está ausente ou incorreto.
 `/api/v1/health` permanece público e a autenticação continua opcional quando
 `CAMPEX_API_TOKEN` não está definido. Tokens de organização são independentes.
+
+### Interface na Vercel com câmeras da rede local
+
+O backend serverless não alcança endereços privados como `192.168.x.x` e,
+neste projeto, não executa a captura contínua. Mantenha a interface na Vercel
+e execute o conector no computador da mesma rede das câmeras:
+
+```bash
+python scripts/run_local_connector.py
+```
+
+Use o Python do ambiente virtual com as dependências de `requirements.txt`.
+O conector escuta somente em `127.0.0.1:8000` e utiliza `CAMPEX_API_TOKEN` do
+ambiente ou `.env`. Se estiver ausente, gera um segredo e salva no `.env`
+ignorado pelo Git, sem mostrá-lo nos logs.
+
+Na interface da Vercel, abra **Configurações → Conexão com as câmeras**,
+selecione **Neste computador**, informe o token do `.env` local e clique em
+**Testar e conectar**. Permita o acesso à rede local quando o navegador pedir.
+O computador precisa ficar ligado e o navegador deve estar nesse computador.
+O backend da nuvem continua disponível na outra opção. Os dados pertencem ao
+backend selecionado; não há sincronização automática entre as duas bases.
+
+Imagens, vídeos e eventos ao vivo passam por um service worker da interface,
+que adiciona `X-CAMPEX-Token` ao pedido ao backend. O segredo não vai na URL,
+nem é gravado pelo worker. O frontend deve publicar também `media-worker.js`
+e `js/media-auth.js`. Use HTTPS (ou localhost para desenvolvimento).
+
+Verificação opcional em Chrome com Playwright instalado:
+`node scripts/check_media_browser.mjs`.

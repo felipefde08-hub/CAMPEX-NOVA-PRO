@@ -1,3 +1,4 @@
+import { connectBackend, getBackendUrl } from "./api.js";
 import { getApiToken, setApiToken } from "./api-token.js";
 ﻿import {
   createCamera,
@@ -1030,6 +1031,11 @@ async function renderLiveMedia(camera) {
       return;
     }
 
+    if (info.available === false) {
+      renderMediaPlaceholder(info.message);
+      return;
+    }
+
     if (info.mode === "file_video") {
       renderVideoElement(camera);
       return;
@@ -1037,7 +1043,7 @@ async function renderLiveMedia(camera) {
 
     renderMjpegElement(camera);
   } catch (error) {
-    renderMjpegElement(camera);
+    renderMediaPlaceholder(escapeHtml(error.message));
   }
 }
 
@@ -1078,7 +1084,8 @@ function renderVideoElement(camera) {
 
 function renderMjpegElement(camera) {
   const mediaHost = document.querySelector("#live-media-host");
-  const streamUrl = `${cameraStreamUrl(camera.id, { overlay: liveDetectionsVisible() })}${liveDetectionsVisible() ? "&" : "?"}t=${Date.now()}`;
+  const streamUrl = new URL(cameraStreamUrl(camera.id, { overlay: liveDetectionsVisible() }));
+  streamUrl.searchParams.set("t", String(Date.now()));
   mediaHost.innerHTML = `
     <img
       id="live-stream"
@@ -3921,6 +3928,24 @@ async function renderSettingsPage() {
         </label>
       </section>
 
+      <section class="ops-panel">
+        <h3>Conexão com as câmeras</h3>
+        <p>Para câmeras da rede local, mantenha o conector CAMPEX ligado neste computador. A interface continua na Vercel.</p>
+        <p>Backend em uso: <code>${escapeHtml(getBackendUrl())}</code></p>
+        <form id="backend-connection-form" class="stack-form">
+          <label>Onde executar
+            <select name="mode">
+              <option value="local">Neste computador — câmeras da rede local</option>
+              <option value="cloud">Backend configurado na nuvem</option>
+            </select>
+          </label>
+          <label>Token do backend selecionado<input name="token" type="password" autocomplete="off" required /></label>
+          <p>Use o CAMPEX_API_TOKEN do conector local. Os cadastros e dados exibidos pertencem ao backend selecionado.</p>
+          <button type="submit">Testar e conectar</button>
+          <p id="backend-connection-status" role="status"></p>
+        </form>
+      </section>
+
       <nav class="settings-tabs" aria-label="Categorias de configurações">
         ${settingsTabs().map((tab) => `
           <button type="button" data-settings-tab="${tab.id}">
@@ -3932,6 +3957,27 @@ async function renderSettingsPage() {
       <section class="settings-reference-grid" id="settings-tab-panel"></section>
     </div>
   `;
+  document.querySelector("#backend-connection-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const status = document.querySelector("#backend-connection-status");
+    const button = form.querySelector("button");
+    button.disabled = true;
+    status.textContent = "Conectando... Se o navegador solicitar acesso à rede local, permita para usar suas câmeras.";
+    try {
+      const token = form.elements.token.value.trim();
+      const base = await connectBackend(form.elements.mode.value, token);
+      setApiToken(token);
+      const target = new URL(window.location.href);
+      target.searchParams.set("api", base);
+      window.location.assign(target.href);
+    } catch (error) {
+      status.textContent = error.message === "Failed to fetch"
+        ? "Não foi possível acessar o backend. Inicie o conector local e permita o acesso à rede local no navegador."
+        : error.message;
+      button.disabled = false;
+    }
+  });
   setupSettingsInteractions();
   await renderSettingsTab("general");
 }

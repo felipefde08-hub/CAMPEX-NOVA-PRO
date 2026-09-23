@@ -315,6 +315,19 @@ class CameraManager:
 
 
 def test_camera_connection(camera: Camera, settings: Settings) -> dict:
+    if settings.runtime == "serverless" and camera.source_type != "video_file":
+        return {
+            "success": False,
+            "status": CameraStatus.OFFLINE.value,
+            "error": (
+                "A captura de câmeras IP/RTSP e USB precisa do backend CAMPEX local. "
+                "O backend na Vercel não acessa câmeras da sua rede privada "
+                "(por exemplo, 192.168.x.x) e não inicia a captura contínua. "
+                "Execute o backend em um computador na mesma rede da câmera "
+                "e configure o frontend para usar esse backend."
+            ),
+            "resolution": None,
+        }
     source = create_camera_source(
         CameraConfig(
             id=camera.id,
