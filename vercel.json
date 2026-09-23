@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{REPOGIT/**,docs/**,tests/**,frontend/**,designer/**,storage/**,.tmp/**,.pytest_cache/**,**/__pycache__/**,**/*.mp4,**/*.pt,**/*.sqlite,**/*.sqlite3,**/*.db,SECURITY_REVIEW.md,VERCEL_*.md,VERCEL_README_VISUAL.txt}"
+    }
+  }
+}
