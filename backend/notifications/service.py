@@ -343,6 +343,8 @@ def _format_alert_text(event: dict[str, Any], pref: NotificationPreference) -> s
         "crowding_started": "Aglomeracao acima do limite configurado.",
         "crowding_ended": "Aglomeracao normalizada.",
         "long_presence": "Permanencia prolongada observada.",
+        "equipment_stop_started": "Equipamento entrou em estado de parada.",
+        "equipment_state_changed": "Estado operacional do equipamento mudou.",
     }
     return "\n".join(
         [

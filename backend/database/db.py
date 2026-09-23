@@ -174,6 +174,98 @@ SCHEMA_STATEMENTS = (
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS organizations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sites (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        location TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS camera_rois (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        camera_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        shape TEXT NOT NULL CHECK(shape IN ('rect', 'polygon')),
+        coordinates TEXT NOT NULL,
+        description TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS camera_monitors (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        camera_id TEXT NOT NULL,
+        roi_id TEXT,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        configuration TEXT NOT NULL DEFAULT '{}',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS monitor_states (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        monitor_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        operational_meaning TEXT NOT NULL,
+        color TEXT NOT NULL,
+        hsv_target TEXT NOT NULL,
+        tolerance TEXT NOT NULL,
+        is_stop_state INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS automation_rules (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        camera_id TEXT,
+        monitor_id TEXT,
+        name TEXT NOT NULL,
+        condition_type TEXT NOT NULL,
+        condition_config TEXT NOT NULL DEFAULT '{}',
+        action_type TEXT NOT NULL,
+        action_config TEXT NOT NULL DEFAULT '{}',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS state_transitions (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        camera_id TEXT NOT NULL,
+        monitor_id TEXT NOT NULL,
+        roi_id TEXT,
+        previous_state_id TEXT,
+        current_state_id TEXT,
+        confidence REAL,
+        occurred_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_camera_started ON events(camera_id, started_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_events_zone_started ON events(zone_id, started_at DESC)",
@@ -184,6 +276,12 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_video_analyses_org_created ON video_analyses(organization_id, created_at DESC)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_delivery_idempotency ON notification_deliveries(organization_id, channel, type, reference_id, recipient)",
     "CREATE INDEX IF NOT EXISTS idx_notification_delivery_org_created ON notification_deliveries(organization_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_sites_org ON sites(organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_camera_rois_org_camera ON camera_rois(organization_id, camera_id)",
+    "CREATE INDEX IF NOT EXISTS idx_camera_monitors_org_camera ON camera_monitors(organization_id, camera_id)",
+    "CREATE INDEX IF NOT EXISTS idx_monitor_states_org_monitor ON monitor_states(organization_id, monitor_id)",
+    "CREATE INDEX IF NOT EXISTS idx_automation_rules_org_monitor ON automation_rules(organization_id, monitor_id)",
+    "CREATE INDEX IF NOT EXISTS idx_state_transitions_org_monitor_time ON state_transitions(organization_id, monitor_id, occurred_at DESC)",
 )
 
 
@@ -209,12 +307,13 @@ def initialize_database(settings: Settings) -> Path:
         _migrate_camera_runtime_state(connection)
         _migrate_organization_scope(connection, settings.intelligence_default_organization_id)
         _migrate_video_analysis_debug_columns(connection)
+        _ensure_default_organization(connection, settings.intelligence_default_organization_id)
         connection.execute(
             """
             INSERT INTO app_meta (key, value, updated_at)
-            VALUES ('schema_version', '5', CURRENT_TIMESTAMP)
+            VALUES ('schema_version', '6', CURRENT_TIMESTAMP)
             ON CONFLICT(key) DO UPDATE SET
-                value = '5',
+                value = '6',
                 updated_at = CURRENT_TIMESTAMP
             """
         )
@@ -310,6 +409,19 @@ def _migrate_video_analysis_debug_columns(connection: sqlite3.Connection) -> Non
     for column, statement in migrations.items():
         if column not in columns:
             connection.execute(statement)
+
+
+def _ensure_default_organization(
+    connection: sqlite3.Connection, default_organization_id: str
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO organizations (id, name)
+        VALUES (?, ?)
+        ON CONFLICT(id) DO NOTHING
+        """,
+        (default_organization_id, "Organização padrão"),
+    )
 
 
 def database_is_initialized(settings: Settings) -> bool:

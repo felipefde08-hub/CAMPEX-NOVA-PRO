@@ -12,6 +12,8 @@ ALERT_TYPES = {
     "crowding_started",
     "crowding_ended",
     "long_presence",
+    "equipment_stop_started",
+    "equipment_state_changed",
 }
 
 REPORT_FREQUENCIES = {"DAILY", "WEEKLY", "MONTHLY"}

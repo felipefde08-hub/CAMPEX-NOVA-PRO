@@ -2,6 +2,8 @@
   createCamera,
   createInvestigation,
   createMachine,
+  createMonitor,
+  createCameraRoi,
   createRule,
   createZone,
   cleanupEvidence,
@@ -21,6 +23,7 @@
   getCameraProductivity,
   getHealth,
   getMappingPoses,
+  getMonitorStatus,
   getOperationsDiagnostics,
   getOperationsSummary,
   getProductivitySummary,
@@ -35,6 +38,7 @@
   listEvidence,
   listInvestigations,
   listMachines,
+  listCameraTemplates,
   listRules,
   listCameras,
   listZones,
@@ -100,6 +104,7 @@ let camerasCache = [];
 let rulesCache = [];
 let editingCameraId = null;
 let editingRuleId = null;
+let cameraWizard = null;
 let backendStatusTimer = null;
 let liveStatusTimer = null;
 let videoAnalysisTimer = null;
@@ -164,81 +169,62 @@ function renderAuthScreen(mode = "login") {
   authScreen.className = "auth-screen";
   authScreen.id = "auth-screen";
   authScreen.innerHTML = `
-    <div class="auth-left">
-      <div class="auth-form-shell">
-        <div class="auth-logo-block">
-          <img src="./assets/campex-logo-white.png" alt="CAMPEX" />
-          <span>INTELIGÊNCIA EM OPERAÇÃO</span>
-        </div>
+    <div class="auth-card">
+      <div class="auth-logo-block">
+        <img src="./assets/campex-logo-white.png" alt="CAMPEX" />
+      </div>
 
-        <div class="auth-copy">
-          <h1 id="auth-title">Acesse sua conta</h1>
-          <p id="auth-subtitle">Entre para monitorar, analisar e transformar suas câmeras em resultados.</p>
-        </div>
+      <div class="auth-copy">
+        <h1 id="auth-title">Acesse sua conta</h1>
+        <p id="auth-subtitle">Entre para acompanhar câmeras, eventos e evidências.</p>
+      </div>
 
-        <form class="auth-form" id="login-form">
-          <label class="auth-field" aria-label="E-mail">
+      <form class="auth-form" id="login-form">
+        <label class="auth-field">
+          <span>E-mail</span>
+          <div>
             <i data-lucide="mail" aria-hidden="true"></i>
-            <input name="email" type="email" autocomplete="email" placeholder="E-mail" required />
-          </label>
-          <label class="auth-field" aria-label="Senha">
-            <i data-lucide="lock-keyhole" aria-hidden="true"></i>
-            <input name="password" type="password" autocomplete="current-password" placeholder="Senha" required />
-            <i data-lucide="eye" aria-hidden="true"></i>
-          </label>
-          <div class="auth-row-actions">
-            <label class="auth-check"><input type="checkbox" name="remember" /><span>Lembrar de mim</span></label>
-            <button class="auth-link" type="button">Esqueceu sua senha?</button>
+            <input name="email" type="email" autocomplete="email" placeholder="seu@email.com" required />
           </div>
-          <p class="auth-error" data-auth-error="login"></p>
-          <button class="auth-primary" type="submit"><span>Entrar</span><i data-lucide="arrow-right" aria-hidden="true"></i></button>
-          <div class="auth-divider"><span>ou</span></div>
-          <button class="auth-google" type="button"><span aria-hidden="true">G</span><strong>Entrar com o Google</strong></button>
-          <p class="auth-switch"><span>Ainda não tem uma conta?</span><button type="button" data-auth-tab="signup">Criar conta</button></p>
-        </form>
-
-        <form class="auth-form" id="signup-form">
-          <label class="auth-field" aria-label="Nome">
-            <i data-lucide="user" aria-hidden="true"></i>
-            <input name="name" autocomplete="name" placeholder="Nome" required minlength="2" />
-          </label>
-          <label class="auth-field" aria-label="E-mail">
-            <i data-lucide="mail" aria-hidden="true"></i>
-            <input name="email" type="email" autocomplete="email" placeholder="E-mail" required />
-          </label>
-          <label class="auth-field" aria-label="Senha">
+        </label>
+        <label class="auth-field">
+          <span>Senha</span>
+          <div>
             <i data-lucide="lock-keyhole" aria-hidden="true"></i>
-            <input name="password" type="password" autocomplete="new-password" placeholder="Senha" required minlength="6" />
-            <i data-lucide="eye" aria-hidden="true"></i>
-          </label>
-          <p class="auth-error" data-auth-error="signup"></p>
-          <button class="auth-primary" type="submit"><span>Criar e entrar</span><i data-lucide="arrow-right" aria-hidden="true"></i></button>
-          <p class="auth-switch"><span>Já tem uma conta?</span><button type="button" data-auth-tab="login">Entrar</button></p>
-        </form>
-      </div>
-      <footer class="auth-footer">
-        <strong>CAMPEX</strong>
-        <span>Segurança. Operação. Resultados.</span>
-      </footer>
-    </div>
+            <input name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required />
+          </div>
+        </label>
+        <p class="auth-error" data-auth-error="login"></p>
+        <button class="auth-primary" type="submit"><span>Entrar</span><i data-lucide="arrow-right" aria-hidden="true"></i></button>
+        <p class="auth-switch"><span>Ainda não tem uma conta?</span><button type="button" data-auth-tab="signup">Criar conta</button></p>
+      </form>
 
-    <div class="auth-hero-panel">
-      <div class="auth-hero-words" aria-label="Monitorar, analisar e evoluir">
-        <span>MONITORAR</span>
-        <span>ANALISAR</span>
-        <span>EVOLUIR</span>
-      </div>
-      <div class="auth-hero-message">
-        <span class="auth-mark-line" aria-hidden="true"></span>
-        <h2>Mais que câmeras.<br /><em>Inteligência real<br />para o seu negócio.</em></h2>
-        <p>A Campex ajuda empresas a enxergarem mais, agirem mais rápido e operarem com mais eficiência.</p>
-      </div>
-      <div class="auth-benefits" aria-label="Benefícios CAMPEX">
-        <div><i data-lucide="bar-chart-3" aria-hidden="true"></i><span>Mais eficiência</span></div>
-        <div><i data-lucide="shield-check" aria-hidden="true"></i><span>Mais segurança</span></div>
-        <div><i data-lucide="clock-3" aria-hidden="true"></i><span>Mais resultados</span></div>
-      </div>
-      <div class="auth-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+      <form class="auth-form" id="signup-form">
+        <label class="auth-field">
+          <span>Nome</span>
+          <div>
+            <i data-lucide="user" aria-hidden="true"></i>
+            <input name="name" autocomplete="name" placeholder="Seu nome" required minlength="2" />
+          </div>
+        </label>
+        <label class="auth-field">
+          <span>E-mail</span>
+          <div>
+            <i data-lucide="mail" aria-hidden="true"></i>
+            <input name="email" type="email" autocomplete="email" placeholder="seu@email.com" required />
+          </div>
+        </label>
+        <label class="auth-field">
+          <span>Senha</span>
+          <div>
+            <i data-lucide="lock-keyhole" aria-hidden="true"></i>
+            <input name="password" type="password" autocomplete="new-password" placeholder="Mínimo de 6 caracteres" required minlength="6" />
+          </div>
+        </label>
+        <p class="auth-error" data-auth-error="signup"></p>
+        <button class="auth-primary" type="submit"><span>Criar conta</span><i data-lucide="arrow-right" aria-hidden="true"></i></button>
+        <p class="auth-switch"><span>Já tem uma conta?</span><button type="button" data-auth-tab="login">Entrar</button></p>
+      </form>
     </div>
   `;  document.body.prepend(authScreen);
 
@@ -263,8 +249,8 @@ function setAuthMode(mode) {
   }
   if (subtitle) {
     subtitle.textContent = nextMode === "signup"
-      ? "Cadastre seu acesso local para acompanhar câmeras, eventos e evidências."
-      : "Entre para monitorar, analisar e transformar suas câmeras em resultados.";
+      ? "Cadastre seu acesso local em poucos segundos."
+      : "Entre para acompanhar câmeras, eventos e evidências.";
   }
   const loginForm = document.querySelector("#login-form");
   const signupForm = document.querySelector("#signup-form");
@@ -1486,57 +1472,31 @@ async function renderCamerasPage() {
       </section>
       <section class="modal-layer" id="camera-modal" aria-labelledby="camera-modal-title" aria-modal="true" role="dialog" hidden>
         <div class="modal-backdrop" data-close-modal></div>
-        <div class="modal-window">
+        <div class="modal-window camera-wizard-window">
           <header class="modal-header">
             <div>
-              <p class="eyebrow">Nova fonte de vídeo</p>
-              <h2 id="camera-modal-title">Adicionar câmera</h2>
+              <p class="eyebrow" id="wizard-step-count">Etapa 1 de 7</p>
+              <h2 id="camera-modal-title">Implantação da câmera</h2>
+              <span class="wizard-header-subtitle">Configure sua câmera em algumas etapas, da conexão à ativação operacional.</span>
             </div>
-            <button type="button" class="icon-button" id="close-camera-modal" aria-label="Fechar janela">
-              <i data-lucide="x" aria-hidden="true"></i>
-            </button>
+            <div class="wizard-header-actions">
+              <button type="button" id="wizard-draft-header"><i data-lucide="save" aria-hidden="true"></i><span>Salvar rascunho</span></button>
+              <button type="button" class="icon-button" id="close-camera-modal" aria-label="Fechar janela">
+                <i data-lucide="x" aria-hidden="true"></i>
+              </button>
+            </div>
           </header>
-          <form id="camera-form" class="modal-form">
-            <input type="hidden" name="camera_id" />
-            <label>
-              Nome
-              <input name="name" required maxlength="120" placeholder="Entrada principal" />
-            </label>
-            <label>
-              Tipo da fonte
-              <select name="source_type">
-                <option value="webcam">Webcam</option>
-                <option value="video_file">Arquivo de vídeo</option>
-                <option value="rtsp">RTSP</option>
-                <option value="ip_camera">Câmera IP / HTTP</option>
-              </select>
-            </label>
-            <label>
-              Fonte
-              <input name="source_uri" required maxlength="1000" placeholder="0, /caminho/video.mp4, rtsp://... ou http://ip/stream" />
-            </label>
-            <label>
-              Área opcional
-              <input name="area_id" maxlength="80" placeholder="entrada" />
-            </label>
-            <div class="form-options">
-              <label class="inline-toggle">
-                <input name="enabled" type="checkbox" checked />
-                Ativa
-              </label>
-              <label class="inline-toggle">
-                <input name="vision_enabled" type="checkbox" />
-                Vision habilitada quando existir
-              </label>
-            </div>
-            <div id="camera-test-result" class="modal-test-result" hidden></div>
-            <img id="camera-preview" class="camera-preview" alt="Preview da câmera" hidden />
-            <footer class="modal-actions">
-              <button type="button" id="test-camera-source"><i data-lucide="radio" aria-hidden="true"></i><span>Testar conexão</span></button>
-              <button type="button" id="cancel-camera-modal">Cancelar</button>
-              <button type="submit" class="primary-action">Salvar câmera</button>
+          <div class="camera-wizard">
+            <nav class="wizard-steps" id="wizard-steps" aria-label="Etapas do wizard"></nav>
+            <div id="wizard-body" class="wizard-body"></div>
+            <footer class="modal-actions wizard-actions">
+              <button type="button" id="wizard-back">Voltar</button>
+              <button type="button" id="wizard-draft">Salvar rascunho</button>
+              <div class="wizard-action-spacer"></div>
+              <button type="button" id="wizard-cancel">Cancelar</button>
+              <button type="button" id="wizard-next" class="primary-action">Avançar</button>
             </footer>
-          </form>
+          </div>
         </div>
       </section>
     </div>
@@ -1544,10 +1504,12 @@ async function renderCamerasPage() {
 
   document.querySelector("#add-camera").addEventListener("click", openCameraModal);
   document.querySelector("#close-camera-modal").addEventListener("click", closeCameraModal);
-  document.querySelector("#cancel-camera-modal").addEventListener("click", closeCameraModal);
+  document.querySelector("#wizard-cancel").addEventListener("click", closeCameraModal);
+  document.querySelector("#wizard-draft").addEventListener("click", saveCameraWizardDraft);
+  document.querySelector("#wizard-draft-header").addEventListener("click", saveCameraWizardDraft);
+  document.querySelector("#wizard-back").addEventListener("click", () => moveCameraWizard(-1));
+  document.querySelector("#wizard-next").addEventListener("click", () => moveCameraWizard(1));
   document.querySelector("#camera-modal [data-close-modal]").addEventListener("click", closeCameraModal);
-  document.querySelector("#test-camera-source").addEventListener("click", handleTestCameraSource);
-  document.querySelector("#camera-form").addEventListener("submit", handleCameraSubmit);
   document.querySelector("#refresh-cameras").addEventListener("click", loadCameras);
   refreshIcons();
   await loadCameras();
@@ -1555,44 +1517,37 @@ async function renderCamerasPage() {
 
 function openCameraModal() {
   const modal = document.querySelector("#camera-modal");
-  const form = document.querySelector("#camera-form");
-  if (!modal || !form) return;
+  if (!modal) return;
   editingCameraId = null;
-  form.reset();
-  form.elements.enabled.checked = true;
-  form.elements.camera_id.value = "";
-  document.querySelector("#camera-modal-title").textContent = "Adicionar câmera";
-  clearCameraTestResult();
+  cameraWizard = null;
+  renderCameraRegistrationChoice();
   modal.hidden = false;
   document.body.dataset.modalOpen = "true";
   refreshIcons();
-  requestAnimationFrame(() => form.elements.name.focus());
 }
 
 function openCameraEditModal(cameraId) {
   const camera = camerasCache.find((item) => item.id === cameraId);
   const modal = document.querySelector("#camera-modal");
-  const form = document.querySelector("#camera-form");
-  if (!camera || !modal || !form) return;
+  if (!camera || !modal) return;
   editingCameraId = camera.id;
-  form.elements.camera_id.value = camera.id;
-  form.elements.name.value = camera.name || "";
-  form.elements.source_type.value = camera.source_type;
-  form.elements.source_uri.value = camera.source_uri || "";
-  form.elements.area_id.value = camera.area_id || "";
-  form.elements.enabled.checked = Boolean(camera.enabled);
-  form.elements.vision_enabled.checked = Boolean(camera.vision_enabled);
-  document.querySelector("#camera-modal-title").textContent = "Editar câmera";
-  clearCameraTestResult();
-  const preview = document.querySelector("#camera-preview");
-  if (preview) {
-    preview.src = cameraSnapshotUrl(camera.id);
-    preview.hidden = false;
-  }
+  cameraWizard = newCameraWizardState();
+  cameraWizard.camera = {
+    ...cameraWizard.camera,
+    id: camera.id,
+    name: camera.name || "",
+    source_type: camera.source_type,
+    source_uri: camera.source_uri || "",
+    area_id: camera.area_id || "",
+    enabled: Boolean(camera.enabled),
+    vision_enabled: Boolean(camera.vision_enabled),
+  };
+  cameraWizard.createdCamera = camera;
+  document.querySelector("#camera-modal-title").textContent = "Configurar câmera";
+  renderCameraWizard();
   modal.hidden = false;
   document.body.dataset.modalOpen = "true";
   refreshIcons();
-  requestAnimationFrame(() => form.elements.name.focus());
 }
 
 function closeCameraModal() {
@@ -1600,7 +1555,132 @@ function closeCameraModal() {
   if (!modal) return;
   modal.hidden = true;
   editingCameraId = null;
+  cameraWizard = null;
   delete document.body.dataset.modalOpen;
+}
+
+function renderCameraRegistrationChoice() {
+  document.querySelector("#camera-modal-title").textContent = "Adicionar câmera";
+  document.querySelector("#wizard-step-count").textContent = "Escolha o tipo de cadastro";
+  const subtitle = document.querySelector(".wizard-header-subtitle");
+  if (subtitle) {
+    subtitle.textContent = "Comece rápido com um cadastro simples ou configure uma implantação operacional completa.";
+  }
+  document.querySelector("#wizard-steps").innerHTML = "";
+  document.querySelector("#wizard-body").innerHTML = `
+    <section class="camera-register-choice">
+      <button type="button" data-camera-register-mode="simple">
+        <i data-lucide="video" aria-hidden="true"></i>
+        <strong>Cadastro simples</strong>
+        <span>Registre nome, fonte, status e teste de conexão. Ideal para colocar uma câmera no ar rapidamente.</span>
+      </button>
+      <button type="button" data-camera-register-mode="advanced">
+        <i data-lucide="workflow" aria-hidden="true"></i>
+        <strong>Configuração avançada</strong>
+        <span>Configure câmera, cena, áreas, monitores, regras, saídas e validação operacional.</span>
+      </button>
+    </section>
+  `;
+  document.querySelector(".wizard-actions").hidden = true;
+  document.querySelectorAll("[data-camera-register-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.cameraRegisterMode === "simple") {
+        renderSimpleCameraRegistration();
+        return;
+      }
+      cameraWizard = newCameraWizardState();
+      loadCameraWizardDraft();
+      renderCameraWizard();
+      document.querySelector(".wizard-actions").hidden = false;
+      requestAnimationFrame(() => document.querySelector("[data-wizard-field='name']")?.focus());
+    });
+  });
+  refreshIcons();
+}
+
+function renderSimpleCameraRegistration() {
+  document.querySelector("#camera-modal-title").textContent = "Cadastro simples";
+  document.querySelector("#wizard-step-count").textContent = "Cadastro rápido";
+  const subtitle = document.querySelector(".wizard-header-subtitle");
+  if (subtitle) {
+    subtitle.textContent = "Informe a fonte da câmera, teste a conexão e salve.";
+  }
+  document.querySelector("#wizard-steps").innerHTML = "";
+  document.querySelector(".wizard-actions").hidden = true;
+  document.querySelector("#wizard-body").innerHTML = `
+    <form id="simple-camera-form" class="simple-camera-form">
+      <section class="simple-camera-hero">
+        <div>
+          <span><i data-lucide="video" aria-hidden="true"></i></span>
+          <div>
+            <h3>Cadastro rápido</h3>
+            <p>Adicione uma câmera com os dados essenciais. Você poderá configurar áreas e monitores depois.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="simple-camera-grid">
+        <label class="simple-field simple-field-wide">
+          <span>Nome da câmera</span>
+          <input name="name" required maxlength="120" placeholder="Entrada principal" />
+        </label>
+        <label class="simple-field">
+          <span>Área opcional</span>
+          <input name="area_id" maxlength="80" placeholder="entrada" />
+        </label>
+        <label class="simple-field">
+          <span>Tipo da fonte</span>
+          <select name="source_type">
+            <option value="webcam">Webcam</option>
+            <option value="video_file">Arquivo de vídeo</option>
+            <option value="rtsp">RTSP</option>
+            <option value="ip_camera">Câmera IP / HTTP</option>
+          </select>
+        </label>
+        <label class="simple-field simple-field-wide">
+          <span>Fonte</span>
+          <input name="source_uri" required maxlength="1000" placeholder="0, /caminho/video.mp4, rtsp://usuario:senha@ip/stream ou http://ip/stream" />
+        </label>
+      </section>
+
+      <section class="simple-camera-options">
+        <label>
+          <input name="enabled" type="checkbox" checked />
+          <span><strong>Câmera ativa</strong><small>Inicia disponível para uso após salvar.</small></span>
+        </label>
+        <label>
+          <input name="vision_enabled" type="checkbox" />
+          <span><strong>Vision habilitada</strong><small>Ativa processamento visual quando o backend suportar.</small></span>
+        </label>
+      </section>
+
+      <section class="simple-camera-test">
+        <div class="simple-test-header">
+          <div>
+            <span><i data-lucide="radio" aria-hidden="true"></i></span>
+            <div>
+              <h3>Teste de conexão</h3>
+              <p>Verifique se a CAMPEX consegue receber um frame dessa fonte.</p>
+            </div>
+          </div>
+          <button type="button" data-simple-action="test"><i data-lucide="radio" aria-hidden="true"></i><span>Testar conexão</span></button>
+        </div>
+        <div id="simple-camera-test-result" class="modal-test-result" hidden></div>
+        <img id="simple-camera-preview" class="camera-preview" alt="Preview da câmera" hidden />
+      </section>
+      <footer class="simple-camera-actions">
+        <button type="button" data-simple-action="back">Voltar</button>
+        <button type="button" data-simple-action="cancel">Cancelar</button>
+        <button type="submit" class="primary-action">Salvar câmera</button>
+      </footer>
+    </form>
+  `;
+  document.querySelector("#simple-camera-form").addEventListener("submit", handleSimpleCameraSubmit);
+  document.querySelector("[data-simple-action='back']").addEventListener("click", renderCameraRegistrationChoice);
+  document.querySelector("[data-simple-action='cancel']").addEventListener("click", closeCameraModal);
+  document.querySelector("[data-simple-action='test']").addEventListener("click", handleSimpleCameraTest);
+  refreshIcons();
+  requestAnimationFrame(() => document.querySelector("#simple-camera-form input[name='name']")?.focus());
 }
 
 function clearCameraTestResult() {
@@ -1706,6 +1786,700 @@ async function handleTestCameraSource() {
     result.dataset.state = "error";
     result.textContent = error.message;
   }
+}
+
+function simpleCameraPayloadFromForm(form) {
+  const data = new FormData(form);
+  return {
+    name: String(data.get("name") || "").trim(),
+    source_type: data.get("source_type"),
+    source_uri: String(data.get("source_uri") || "").trim(),
+    area_id: String(data.get("area_id") || "").trim() || null,
+    enabled: data.get("enabled") === "on",
+    vision_enabled: data.get("vision_enabled") === "on",
+  };
+}
+
+async function handleSimpleCameraTest() {
+  const form = document.querySelector("#simple-camera-form");
+  const result = document.querySelector("#simple-camera-test-result");
+  const preview = document.querySelector("#simple-camera-preview");
+  if (!form || !result) return;
+  result.hidden = false;
+  result.dataset.state = "loading";
+  result.textContent = "Testando conexão e aguardando frame válido...";
+  if (preview) {
+    preview.hidden = true;
+    preview.removeAttribute("src");
+  }
+  try {
+    const response = await testCameraSource(simpleCameraPayloadFromForm(form));
+    result.dataset.state = response.success ? "success" : "error";
+    const resolution = response.resolution ? `${response.resolution.width}x${response.resolution.height}` : "sem resolução";
+    result.textContent = response.success
+      ? `Conexão OK · ${resolution}`
+      : `Falha no teste: ${response.error || response.status}`;
+    if (preview && response.preview_data_url) {
+      preview.src = response.preview_data_url;
+      preview.hidden = false;
+    }
+  } catch (error) {
+    result.dataset.state = "error";
+    result.textContent = error.message;
+  }
+}
+
+async function handleSimpleCameraSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  try {
+    const camera = await createCamera(simpleCameraPayloadFromForm(form));
+    notify("Câmera cadastrada", `${camera.name} está pronta para operação.`, "success");
+    closeCameraModal();
+    await loadCameras();
+  } catch (error) {
+    notifyError("Falha ao cadastrar câmera", error);
+  }
+}
+
+function newCameraWizardState() {
+  return {
+    step: 0,
+    createdCamera: null,
+    createdRoi: null,
+    createdMonitor: null,
+    previewDataUrl: "",
+    camera: {
+      name: "",
+      description: "",
+      organization: "default",
+      site: "",
+      sector: "",
+      source_type: "rtsp",
+      ip: "",
+      port: "",
+      source_uri: "",
+      username: "",
+      password: "",
+      resolution: "",
+      fps: "5",
+      area_id: "",
+      enabled: true,
+      vision_enabled: false,
+    },
+    scene: {
+      template: "machine",
+      observes: ["Máquina / equipamento"],
+    },
+    roi: {
+      name: "LED Máquina 01",
+      type: "LED Máquina 01",
+      description: "Indicador visual do estado do equipamento",
+      coordinates: { x: 0.62, y: 0.21, width: 0.08, height: 0.07 },
+    },
+    monitor: {
+      name: "Indicador visual",
+      type: "visual_indicator",
+      debounce_seconds: 2,
+      sample_fps: 3,
+    },
+    states: [
+      stateDraft("Verde", "Operando", "#31c46b", { h: 60, s: 190, v: 170 }, false),
+      stateDraft("Vermelho", "Parada", "#ef5b5b", { h: 0, s: 190, v: 170 }, true),
+      stateDraft("Amarelo", "Aguardando", "#e2b245", { h: 30, s: 170, v: 180 }, false),
+      stateDraft("Apagado", "Desligada", "#222222", { h: 0, s: 0, v: 35 }, true),
+    ],
+    outputs: {
+      dashboard: true,
+      create_event: true,
+      daily_report: true,
+      telegram: false,
+      email: false,
+    },
+    validation: null,
+    connection: {
+      state: "idle",
+      message: "Nenhum teste executado ainda",
+      latency_ms: null,
+    },
+  };
+}
+
+function stateDraft(name, meaning, color, hsv, isStop) {
+  return {
+    name,
+    operational_meaning: meaning,
+    color,
+    hsv_target: hsv,
+    tolerance: { h: 14, s: 90, v: 90 },
+    is_stop_state: isStop,
+  };
+}
+
+function cameraWizardSteps() {
+  return ["Câmera", "Cena", "Áreas", "Monitores", "Regras", "Saídas", "Validar"];
+}
+
+function renderCameraWizard() {
+  if (!cameraWizard) return;
+  const steps = cameraWizardSteps();
+  document.querySelector("#wizard-step-count").textContent = `Etapa ${cameraWizard.step + 1} de ${steps.length}`;
+  document.querySelector("#wizard-steps").innerHTML = steps.map((step, index) => `
+    <button type="button" class="${index === cameraWizard.step ? "is-active" : ""} ${index < cameraWizard.step ? "is-done" : ""}" data-wizard-step="${index}" ${index > cameraWizard.step ? "disabled" : ""}>
+      <span>${index < cameraWizard.step ? "✓" : index + 1}</span><strong>${step}</strong>
+    </button>
+  `).join("");
+  document.querySelectorAll("[data-wizard-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      syncWizardFields();
+      const step = Number(button.dataset.wizardStep);
+      if (step > cameraWizard.step) return;
+      cameraWizard.step = step;
+      renderCameraWizard();
+    });
+  });
+  const body = document.querySelector("#wizard-body");
+  body.innerHTML = [
+    renderWizardCameraStep,
+    renderWizardSceneStep,
+    renderWizardRoiStep,
+    renderWizardMonitorStep,
+    renderWizardRulesStep,
+    renderWizardOutputsStep,
+    renderWizardValidateStep,
+  ][cameraWizard.step]();
+  bindWizardStep();
+  document.querySelector("#wizard-back").disabled = cameraWizard.step === 0;
+  document.querySelector("#wizard-next").textContent = cameraWizard.step === steps.length - 1 ? "Ativar monitoramento" : "Avançar";
+  refreshIcons();
+}
+
+function renderWizardCameraStep() {
+  const c = cameraWizard.camera;
+  const connection = cameraWizard.connection || {};
+  const isRtsp = c.source_type === "rtsp" || c.source_type === "ip_camera";
+  return `
+    <section class="wizard-panel">
+      ${wizardIntro("Qual câmera estamos configurando?", "Informe o essencial para identificar a câmera e conectar a fonte de vídeo.")}
+      <div class="wizard-two-column">
+        <section class="wizard-section wizard-section-flat">
+          <div class="wizard-section-head">
+            <span><i data-lucide="building-2" aria-hidden="true"></i></span>
+            <div>
+              <h3>Informações básicas</h3>
+              <p>Organização, local e identificação operacional.</p>
+            </div>
+          </div>
+          <div class="wizard-form-grid wizard-form-grid-two">
+            ${wizardInput("Nome da câmera", "name", c.name, "Produção 01")}
+            ${wizardInput("Empresa", "organization", c.organization, "RBA Elevadores")}
+            ${wizardInput("Unidade", "site", c.site, "Fábrica 01")}
+            ${wizardInput("Setor", "sector", c.sector, "Usinagem")}
+            ${wizardInput("Descrição opcional", "description", c.description, "Ex.: visão geral da CNC 01")}
+          </div>
+        </section>
+
+        <section class="wizard-section wizard-section-flat">
+          <div class="wizard-section-head">
+            <span><i data-lucide="radio" aria-hidden="true"></i></span>
+            <div>
+              <h3>Fonte da câmera</h3>
+              <p>Escolha como a CAMPEX deve acessar o vídeo.</p>
+            </div>
+          </div>
+          <div class="wizard-source-options">
+            ${wizardSourceOption("rtsp", "RTSP / IP", "Câmeras industriais, NVR e streams de rede.", c.source_type)}
+            ${wizardSourceOption("video_file", "Arquivo / vídeo", "Use MP4 para teste sem câmera física.", c.source_type)}
+            ${wizardSourceOption("webcam", "Outra fonte", "Webcam local ou fonte simples.", c.source_type)}
+          </div>
+          <div class="wizard-form-grid ${isRtsp ? "wizard-form-grid-two" : ""}">
+            ${wizardInput(isRtsp ? "URL RTSP / Fonte principal" : "Fonte", "source_uri", c.source_uri, isRtsp ? "rtsp://usuario:senha@ip/stream" : "0 ou caminho/video.mp4")}
+            ${isRtsp ? wizardInput("Endereço IP", "ip", c.ip, "192.168.0.10") : ""}
+            ${isRtsp ? wizardInput("Porta", "port", c.port, "554") : ""}
+            ${isRtsp ? wizardInput("Usuário", "username", c.username, "Opcional") : ""}
+            ${isRtsp ? wizardInput("Senha", "password", c.password, "Não será exibida após salvar", "password") : ""}
+          </div>
+          <details class="wizard-advanced">
+            <summary>Configurações de vídeo</summary>
+            <div class="wizard-form-grid wizard-form-grid-three">
+              ${wizardInput("Resolução esperada", "resolution", c.resolution, "1920x1080")}
+              ${wizardInput("FPS esperado", "fps", c.fps, "5")}
+              <label>Status inicial<select data-wizard-field="enabled">
+                <option value="true" ${c.enabled ? "selected" : ""}>Ativa</option>
+                <option value="false" ${!c.enabled ? "selected" : ""}>Inativa</option>
+              </select></label>
+            </div>
+          </details>
+        </section>
+      </div>
+
+      <section class="wizard-connection-card" data-state="${connection.state || "idle"}">
+        <div>
+          <span class="wizard-status-dot"></span>
+          <div>
+            <strong>${connection.state === "success" ? "Câmera conectada" : connection.state === "error" ? "Não foi possível conectar" : connection.state === "loading" ? "Testando conexão..." : "Teste de conexão"}</strong>
+            <p>${connection.message || "Verifique se a câmera está acessível antes de avançar."}</p>
+          </div>
+        </div>
+        <dl>
+          <div><dt>Resolução</dt><dd>${c.resolution || "-"}</dd></div>
+          <div><dt>Latência</dt><dd>${connection.latency_ms ? `${connection.latency_ms} ms` : "-"}</dd></div>
+          <div><dt>FPS</dt><dd>${c.fps || "5"}</dd></div>
+        </dl>
+        <button type="button" id="wizard-test-camera"><i data-lucide="radio"></i><span>${connection.state === "loading" ? "Testando..." : connection.state === "error" ? "Tentar novamente" : "Testar conexão"}</span></button>
+      </section>
+    </section>
+  `;
+}
+
+function renderWizardSceneStep() {
+  const options = [
+    ["Máquina / equipamento", "factory", "Estados, produção, paradas e operação."],
+    ["Linha de produção", "workflow", "Fluxo contínuo, gargalos e atividades."],
+    ["Entrada / saída", "log-in", "Passagens, acessos e contagem."],
+    ["Pessoas", "users", "Presença, permanência e segurança."],
+    ["Estoque", "boxes", "Áreas de armazenagem e disponibilidade."],
+    ["Doca", "warehouse", "Carga, descarga e ocupação."],
+    ["Veículos", "truck", "Movimentação e presença de veículos."],
+    ["Área de carga", "package-check", "Operações logísticas e filas."],
+    ["Área de segurança", "shield-alert", "Risco, invasão e permanência."],
+    ["Outro", "more-horizontal", "Configuração personalizada."],
+  ];
+  return `
+    <section class="wizard-panel">
+      ${wizardIntro("O que esta câmera observa?", "Isso ajuda a CAMPEX a recomendar os melhores monitores para esta câmera.")}
+      <div class="wizard-scene-layout">
+        <div class="wizard-selection-grid">
+          ${options.map(([name, icon, description]) => `
+            <label class="wizard-select-card ${cameraWizard.scene.observes.includes(name) ? "is-selected" : ""}">
+              <input type="checkbox" data-scene-option value="${name}" ${cameraWizard.scene.observes.includes(name) ? "checked" : ""} />
+              <i data-lucide="${icon}" aria-hidden="true"></i>
+              <strong>${name}</strong>
+              <span>${description}</span>
+            </label>
+          `).join("")}
+        </div>
+        <aside class="wizard-preview-panel">
+          ${cameraWizard.previewDataUrl ? `<img src="${cameraWizard.previewDataUrl}" alt="Preview da câmera" />` : `<div><i data-lucide="image"></i><span>O preview aparecerá depois do teste de conexão.</span></div>`}
+          <label>Template recomendado<select data-wizard-field="template">
+            ${["machine:Monitorar máquina", "entry:Monitorar entrada", "people_flow:Fluxo de pessoas", "stock:Monitorar estoque", "dock_vehicle:Doca e veículos", "custom:Configuração personalizada"].map((raw) => {
+              const [value, label] = raw.split(":");
+              return `<option value="${value}" ${cameraWizard.scene.template === value ? "selected" : ""}>${label}</option>`;
+            }).join("")}
+          </select></label>
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+function renderWizardRoiStep() {
+  const r = cameraWizard.roi;
+  return `
+    <section class="wizard-panel">
+      ${wizardIntro("Onde devemos observar?", "Desenhe uma área de interesse sobre o frame. A CAMPEX usa essa região para processar apenas o que importa.")}
+      <div class="wizard-roi-layout">
+        <div class="wizard-frame-shell">
+          <div class="wizard-toolstrip" aria-label="Ferramentas de desenho">
+            <button type="button" class="is-active"><i data-lucide="mouse-pointer-2"></i><span>Selecionar</span></button>
+            <button type="button" class="is-active"><i data-lucide="square"></i><span>Retângulo</span></button>
+            <button type="button" disabled><i data-lucide="pentagon"></i><span>Polígono</span></button>
+            <button type="button" disabled><i data-lucide="trash-2"></i><span>Excluir</span></button>
+          </div>
+          <div class="wizard-frame-host" id="wizard-roi-frame">
+          ${cameraWizard.previewDataUrl ? `<img src="${cameraWizard.previewDataUrl}" alt="Frame da câmera" />` : `<span>Teste a conexão para capturar um frame.</span>`}
+            <div class="wizard-roi-box" style="${roiBoxStyle(r.coordinates)}"><span>${escapeHtml(r.name)}</span></div>
+          </div>
+        </div>
+        <aside class="wizard-side-form wizard-side-panel">
+          <h3>Área selecionada</h3>
+          ${wizardInput("Nome", "roi_name", r.name, "LED Máquina 01")}
+          ${wizardInput("Tipo", "roi_type", r.type, "Indicador visual")}
+          ${wizardInput("Descrição", "roi_description", r.description, "Opcional")}
+          <details class="wizard-advanced">
+            <summary>Configurações avançadas</summary>
+            <p class="wizard-muted">Coordenadas normalizadas usadas internamente pela CAMPEX.</p>
+            <pre>${JSON.stringify(r.coordinates, null, 2)}</pre>
+          </details>
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+function renderWizardMonitorStep() {
+  const m = cameraWizard.monitor;
+  const monitorTypes = [
+    ["visual_indicator", "Indicador visual / LED", "Detecta estados através de cores e luzes.", "traffic-cone"],
+    ["motion", "Movimento", "Detecta atividade ou ausência de movimento.", "activity"],
+    ["presence", "Pessoas", "Presença, contagem e permanência.", "users"],
+    ["entry_exit", "Entrada e saída", "Fluxo através de uma linha virtual.", "arrow-left-right"],
+    ["vehicle", "Veículos", "Detecção e acompanhamento.", "truck"],
+    ["object", "Objetos", "Detecta objetos específicos.", "box"],
+    ["custom", "Monitor personalizado", "Configuração avançada para casos especiais.", "sliders-horizontal"],
+  ];
+  return `
+    <section class="wizard-panel">
+      ${wizardIntro("O que você deseja monitorar nesta área?", "Escolha o tipo de inteligência visual. Para LED, configure o significado de cada cor.")}
+      <div class="wizard-monitor-layout">
+        <div class="wizard-selection-grid wizard-monitor-grid">
+          ${monitorTypes.map(([value, name, description, icon]) => `
+            <label class="wizard-select-card ${m.type === value ? "is-selected" : ""}">
+              <input type="radio" name="monitor_type_choice" data-monitor-type value="${value}" ${m.type === value ? "checked" : ""} />
+              <i data-lucide="${icon}" aria-hidden="true"></i>
+              <strong>${name}</strong>
+              <span>${description}</span>
+            </label>
+          `).join("")}
+        </div>
+        <aside class="wizard-side-panel">
+          <h3>Estados do indicador</h3>
+          <p class="wizard-muted">Diga à CAMPEX o que cada cor significa na operação.</p>
+          <div class="wizard-state-list">
+            ${cameraWizard.states.map((state, index) => `
+              <article class="wizard-state-card">
+                <span class="wizard-color-dot" style="background:${state.color}"></span>
+                <div>
+                  <input data-state-field="name" data-state-index="${index}" value="${state.name}" aria-label="Cor do estado" />
+                  <input data-state-field="operational_meaning" data-state-index="${index}" value="${state.operational_meaning}" aria-label="Significado operacional" />
+                </div>
+                <label><input type="checkbox" data-state-field="is_stop_state" data-state-index="${index}" ${state.is_stop_state ? "checked" : ""} />Estado de parada</label>
+              </article>
+            `).join("")}
+          </div>
+          <button type="button" class="wizard-secondary" disabled><i data-lucide="plus"></i><span>Adicionar estado</span></button>
+          <details class="wizard-advanced">
+            <summary>Configurações avançadas</summary>
+            <div class="wizard-form-grid">
+              ${wizardInput("Tempo para confirmar mudança (segundos)", "debounce_seconds", m.debounce_seconds, "2", "number")}
+              ${wizardInput("Frequência de análise (vezes por segundo)", "sample_fps", m.sample_fps, "3", "number")}
+            </div>
+          </details>
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
+function renderWizardRulesStep() {
+  return `
+    <section class="wizard-panel">
+      ${wizardIntro("O que fazer quando algo acontecer?", "As regras ficam em forma de frases para representar decisões operacionais sem termos técnicos.")}
+      <div class="wizard-rule-builder">
+        <article>
+          <div class="wizard-rule-line"><strong>Quando</strong><span>Máquina</span><span>mudar para</span><b>PARADA</b></div>
+          <div class="wizard-rule-actions">
+            <label><input type="checkbox" checked disabled />Registrar evento</label>
+            <label><input type="checkbox" checked disabled />Iniciar cronômetro</label>
+            <label><input type="checkbox" ${cameraWizard.outputs.telegram ? "checked" : ""} disabled />Enviar Telegram</label>
+            <label><input type="checkbox" ${cameraWizard.outputs.email ? "checked" : ""} disabled />Enviar e-mail</label>
+          </div>
+        </article>
+        <article>
+          <div class="wizard-rule-line"><strong>Quando</strong><b>PARADA</b><span>durar mais de</span><b>15 minutos</b></div>
+          <div class="wizard-rule-actions">
+            <label><input type="checkbox" checked disabled />Criar alerta</label>
+            <label><input type="checkbox" ${cameraWizard.outputs.telegram ? "checked" : ""} disabled />Enviar Telegram</label>
+          </div>
+        </article>
+      </div>
+      <button type="button" class="wizard-secondary" disabled><i data-lucide="plus"></i><span>Adicionar regra</span></button>
+    </section>
+  `;
+}
+
+function renderWizardOutputsStep() {
+  const groups = [
+    ["Registro", [["dashboard", "Dashboard"], ["create_event", "Eventos"], ["timeline", "Timeline"]]],
+    ["Relatórios", [["daily_report", "Relatório diário"], ["weekly_report", "Relatório semanal"], ["monthly_report", "Relatório mensal"]]],
+    ["Notificações", [["telegram", "Telegram imediato"], ["email", "E-mail imediato"]]],
+  ];
+  return `
+    <section class="wizard-panel">
+      ${wizardIntro("O que a CAMPEX deve fazer com essas informações?", "Escolha onde os dados devem aparecer e quais canais devem receber alertas.")}
+      <div class="wizard-output-grid">
+        ${groups.map(([title, items]) => `
+          <section class="wizard-section wizard-section-flat">
+            <h3>${title}</h3>
+            <div class="wizard-toggle-list">
+              ${items.map(([key, label]) => `
+                <label>
+                  <span>${label}</span>
+                  <input type="checkbox" data-output-key="${key}" ${cameraWizard.outputs[key] ? "checked" : ""} />
+                </label>
+              `).join("")}
+            </div>
+          </section>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderWizardValidateStep() {
+  const status = cameraWizard.validation;
+  return `
+    <section class="wizard-panel">
+      ${wizardIntro("Tudo pronto para começar", "Revise a configuração e execute um teste antes de ativar o monitoramento.")}
+      <div class="wizard-validation-layout">
+        <section class="wizard-section wizard-section-flat">
+          <div class="wizard-summary-grid">
+            ${wizardSummaryItem("Câmera", cameraWizard.createdCamera?.name || cameraWizard.camera.name || "-")}
+            ${wizardSummaryItem("Local", `${cameraWizard.camera.site || "-"} / ${cameraWizard.camera.sector || "-"}`)}
+            ${wizardSummaryItem("Conexão", cameraWizard.connection?.state === "success" ? "Online" : "Pendente")}
+            ${wizardSummaryItem("Áreas", cameraWizard.createdRoi ? "1 configurada" : "Pendente")}
+            ${wizardSummaryItem("Monitores", cameraWizard.createdMonitor ? "1 ativo" : "Pendente")}
+            ${wizardSummaryItem("Saídas", activeOutputsLabel())}
+          </div>
+        </section>
+        <section class="wizard-live-test">
+          <div class="wizard-frame-host">${cameraWizard.createdCamera ? `<img src="${cameraSnapshotUrl(cameraWizard.createdCamera.id)}" alt="Validação da câmera" />` : "Salve a câmera para validar."}<div class="wizard-roi-box" style="${roiBoxStyle(cameraWizard.roi.coordinates)}"><span>${escapeHtml(cameraWizard.roi.name)}</span></div></div>
+          <aside class="wizard-side-panel">
+            <h3>Teste ao vivo</h3>
+            <button type="button" id="wizard-run-validation">Executar teste</button>
+            <dl class="wizard-status">
+              <dt>Área</dt><dd>${cameraWizard.createdRoi?.name || cameraWizard.roi.name}</dd>
+              <dt>Estado</dt><dd>${status?.detected_state?.operational_meaning || "Aguardando teste"}</dd>
+              <dt>Indicador</dt><dd>${status?.detected_state?.name || "-"}</dd>
+              <dt>Confiança</dt><dd>${status?.confidence ? `${Math.round(status.confidence * 100)}%` : "-"}</dd>
+              <dt>Estável</dt><dd>${status?.stable ? "Sim" : "Não"}</dd>
+            </dl>
+            <div class="wizard-checklist">
+              ${["Câmera", "Áreas", "Monitor", "Estados", "Regras", "Saídas"].map((item) => `<span><i data-lucide="check"></i>${item}</span>`).join("")}
+            </div>
+          </aside>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+function wizardInput(label, field, value, placeholder = "", type = "text") {
+  return `<label>${label}<input data-wizard-field="${field}" type="${type}" value="${escapeHtml(value ?? "")}" placeholder="${placeholder}" /></label>`;
+}
+
+function wizardIntro(title, description) {
+  return `<header class="wizard-intro"><h3>${title}</h3><p>${description}</p></header>`;
+}
+
+function wizardSourceOption(value, title, description, current) {
+  return `
+    <label class="wizard-select-card wizard-source-card ${current === value || (value === "rtsp" && current === "ip_camera") ? "is-selected" : ""}">
+      <input type="radio" name="source_type_choice" data-source-type value="${value}" ${current === value || (value === "rtsp" && current === "ip_camera") ? "checked" : ""} />
+      <strong>${title}</strong>
+      <span>${description}</span>
+    </label>
+  `;
+}
+
+function wizardSummaryItem(label, value) {
+  return `<article><span>${label}</span><strong>${escapeHtml(value)}</strong></article>`;
+}
+
+function activeOutputsLabel() {
+  const labels = [];
+  if (cameraWizard.outputs.dashboard) labels.push("Dashboard");
+  if (cameraWizard.outputs.create_event) labels.push("Eventos");
+  if (cameraWizard.outputs.daily_report) labels.push("Relatório diário");
+  if (cameraWizard.outputs.telegram) labels.push("Telegram");
+  if (cameraWizard.outputs.email) labels.push("E-mail");
+  return labels.join(", ") || "Nenhuma saída";
+}
+
+function bindWizardStep() {
+  document.querySelectorAll("[data-wizard-field]").forEach((input) => {
+    input.addEventListener("input", syncWizardFields);
+    input.addEventListener("change", syncWizardFields);
+  });
+  document.querySelectorAll("[data-scene-option]").forEach((input) => input.addEventListener("change", syncWizardFields));
+  document.querySelectorAll("[data-source-type]").forEach((input) => input.addEventListener("change", syncWizardFields));
+  document.querySelectorAll("[data-monitor-type]").forEach((input) => input.addEventListener("change", syncWizardFields));
+  document.querySelectorAll("[data-output-key]").forEach((input) => input.addEventListener("change", syncWizardFields));
+  document.querySelectorAll("[data-state-field]").forEach((input) => input.addEventListener("input", syncWizardFields));
+  document.querySelectorAll("[data-state-field][type='checkbox']").forEach((input) => input.addEventListener("change", syncWizardFields));
+  document.querySelector("#wizard-test-camera")?.addEventListener("click", wizardTestCamera);
+  document.querySelector("#wizard-run-validation")?.addEventListener("click", wizardRunValidation);
+  bindRoiDrawing();
+}
+
+function syncWizardFields() {
+  if (!cameraWizard) return;
+  document.querySelectorAll("[data-wizard-field]").forEach((input) => {
+    const key = input.dataset.wizardField;
+    if (key.startsWith("roi_")) cameraWizard.roi[key.replace("roi_", "")] = input.value;
+    else if (key.startsWith("monitor_")) cameraWizard.monitor[key.replace("monitor_", "")] = input.value;
+    else if (key in cameraWizard.scene) cameraWizard.scene[key] = input.value;
+    else if (key in cameraWizard.monitor) cameraWizard.monitor[key] = input.value;
+    else if (key === "enabled") cameraWizard.camera[key] = input.value === "true" || input.checked;
+    else cameraWizard.camera[key] = input.type === "checkbox" ? input.checked : input.value;
+  });
+  cameraWizard.scene.observes = Array.from(document.querySelectorAll("[data-scene-option]:checked")).map((item) => item.value);
+  const selectedSource = document.querySelector("[data-source-type]:checked");
+  if (selectedSource) cameraWizard.camera.source_type = selectedSource.value;
+  const selectedMonitorType = document.querySelector("[data-monitor-type]:checked");
+  if (selectedMonitorType) cameraWizard.monitor.type = selectedMonitorType.value;
+  document.querySelectorAll("[data-output-key]").forEach((input) => {
+    cameraWizard.outputs[input.dataset.outputKey] = input.checked;
+  });
+  document.querySelectorAll("[data-state-field]").forEach((input) => {
+    const state = cameraWizard.states[Number(input.dataset.stateIndex)];
+    state[input.dataset.stateField] = input.type === "checkbox" ? input.checked : input.value;
+  });
+}
+
+async function moveCameraWizard(direction) {
+  syncWizardFields();
+  if (direction > 0) {
+    const ok = await persistWizardStep();
+    if (!ok) return;
+  }
+  cameraWizard.step = Math.max(0, Math.min(cameraWizardSteps().length - 1, cameraWizard.step + direction));
+  renderCameraWizard();
+}
+
+async function persistWizardStep() {
+  try {
+    if (cameraWizard.step === 0 && !cameraWizard.createdCamera) {
+      const payload = {
+        name: cameraWizard.camera.name || "Câmera sem nome",
+        area_id: cameraWizard.camera.sector || cameraWizard.camera.area_id || null,
+        source_type: cameraWizard.camera.source_type,
+        source_uri: cameraWizard.camera.source_uri || "0",
+        enabled: true,
+        vision_enabled: false,
+      };
+      cameraWizard.createdCamera = await createCamera(payload);
+      await loadCameras();
+    }
+    if (cameraWizard.step === 2 && cameraWizard.createdCamera && !cameraWizard.createdRoi) {
+      cameraWizard.createdRoi = await createCameraRoi(cameraWizard.createdCamera.id, {
+        name: cameraWizard.roi.name,
+        type: cameraWizard.roi.type,
+        shape: "rect",
+        coordinates: cameraWizard.roi.coordinates,
+        description: cameraWizard.roi.description,
+        enabled: true,
+      });
+    }
+    if (cameraWizard.step === 3 && cameraWizard.createdCamera && cameraWizard.createdRoi && !cameraWizard.createdMonitor) {
+      cameraWizard.createdMonitor = await createMonitor({
+        camera_id: cameraWizard.createdCamera.id,
+        roi_id: cameraWizard.createdRoi.id,
+        type: cameraWizard.monitor.type,
+        name: cameraWizard.monitor.name,
+        configuration: {
+          debounce_seconds: Number(cameraWizard.monitor.debounce_seconds || 2),
+          sample_fps: Number(cameraWizard.monitor.sample_fps || 3),
+          outputs: cameraWizard.outputs,
+        },
+        enabled: true,
+        states: cameraWizard.states,
+      });
+    }
+    if (cameraWizard.step === 6) {
+      notify("Monitoramento ativado", "Configuração operacional salva para a câmera.", "success");
+      closeCameraModal();
+      await loadCameras();
+      return false;
+    }
+    return true;
+  } catch (error) {
+    notifyError("Falha no wizard", error);
+    return false;
+  }
+}
+
+async function wizardTestCamera() {
+  syncWizardFields();
+  cameraWizard.connection = {
+    state: "loading",
+    message: "Aguardando um frame válido da fonte de vídeo...",
+    latency_ms: null,
+  };
+  renderCameraWizard();
+  const startedAt = performance.now();
+  try {
+    const response = await testCameraSource({
+      name: cameraWizard.camera.name || "Teste de câmera",
+      area_id: cameraWizard.camera.sector || null,
+      source_type: cameraWizard.camera.source_type,
+      source_uri: cameraWizard.camera.source_uri || "0",
+      enabled: false,
+      vision_enabled: false,
+    });
+    if (!response.success) throw new Error(response.error || "Falha na conexão.");
+    cameraWizard.previewDataUrl = response.preview_data_url || "";
+    if (response.resolution) cameraWizard.camera.resolution = `${response.resolution.width}x${response.resolution.height}`;
+    cameraWizard.connection = {
+      state: "success",
+      message: "Conexão funcionando. A CAMPEX recebeu um frame da câmera.",
+      latency_ms: Math.max(1, Math.round(performance.now() - startedAt)),
+    };
+    renderCameraWizard();
+  } catch (error) {
+    cameraWizard.connection = {
+      state: "error",
+      message: error.message,
+      latency_ms: null,
+    };
+    renderCameraWizard();
+  }
+}
+
+async function wizardRunValidation() {
+  if (!cameraWizard.createdMonitor?.id) {
+    notify("Validação pendente", "Avance pelas etapas para salvar ROI e monitor antes de validar.", "warning");
+    return;
+  }
+  try {
+    cameraWizard.validation = await getMonitorStatus(cameraWizard.createdMonitor.id);
+    renderCameraWizard();
+  } catch (error) {
+    notifyError("Falha na validação", error);
+  }
+}
+
+function saveCameraWizardDraft() {
+  syncWizardFields();
+  localStorage.setItem("campex.camera_wizard_draft", JSON.stringify(cameraWizard));
+  notify("Rascunho salvo", "Você pode continuar a configuração posteriormente.", "success");
+}
+
+function loadCameraWizardDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem("campex.camera_wizard_draft") || "null");
+    if (draft?.camera && !cameraWizard.createdCamera) cameraWizard = { ...cameraWizard, ...draft, step: draft.step || 0 };
+  } catch {
+    return;
+  }
+}
+
+function bindRoiDrawing() {
+  const host = document.querySelector("#wizard-roi-frame");
+  if (!host) return;
+  let start = null;
+  host.addEventListener("pointerdown", (event) => {
+    const rect = host.getBoundingClientRect();
+    start = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
+  });
+  host.addEventListener("pointerup", (event) => {
+    if (!start) return;
+    const rect = host.getBoundingClientRect();
+    const end = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height };
+    const x = Math.max(0, Math.min(start.x, end.x));
+    const y = Math.max(0, Math.min(start.y, end.y));
+    const width = Math.min(1 - x, Math.abs(end.x - start.x));
+    const height = Math.min(1 - y, Math.abs(end.y - start.y));
+    if (width > 0.01 && height > 0.01) {
+      cameraWizard.roi.coordinates = { x: Number(x.toFixed(4)), y: Number(y.toFixed(4)), width: Number(width.toFixed(4)), height: Number(height.toFixed(4)) };
+      renderCameraWizard();
+    }
+    start = null;
+  });
+}
+
+function roiBoxStyle(rect) {
+  return `left:${rect.x * 100}%;top:${rect.y * 100}%;width:${rect.width * 100}%;height:${rect.height * 100}%;`;
 }
 
 async function handleEnabledChange(event) {

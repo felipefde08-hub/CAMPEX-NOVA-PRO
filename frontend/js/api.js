@@ -196,6 +196,37 @@ export function testCameraSource(payload) {
   });
 }
 
+export function listCameraTemplates() {
+  return requestJson("/camera-templates");
+}
+
+export function createCameraRoi(cameraId, payload) {
+  return requestJson(`/cameras/${cameraId}/rois`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listCameraRois(cameraId) {
+  return requestJson(`/cameras/${cameraId}/rois`);
+}
+
+export function createMonitor(payload) {
+  return requestJson("/monitors", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listMonitors(cameraId = "") {
+  const query = cameraId ? `?camera_id=${encodeURIComponent(cameraId)}` : "";
+  return requestJson(`/monitors${query}`);
+}
+
+export function getMonitorStatus(monitorId) {
+  return requestJson(`/monitors/${monitorId}/status`);
+}
+
 export function listEvents(params = {}) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {

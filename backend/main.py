@@ -13,6 +13,7 @@ from backend.api.analysis import router as analysis_router
 from backend.api.health import router as health_router
 from backend.api.intelligence import router as intelligence_router
 from backend.api.machines import router as machines_router
+from backend.api.monitoring import router as monitoring_router
 from backend.api.notifications import router as notifications_router
 from backend.api.operations import router as operations_router
 from backend.api.vision import router as vision_router
@@ -219,6 +220,7 @@ app.include_router(events_router)
 app.include_router(operations_router)
 app.include_router(intelligence_router)
 app.include_router(notifications_router)
+app.include_router(monitoring_router)
 
 
 def _warn_security_posture(settings) -> None:
