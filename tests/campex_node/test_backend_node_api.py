@@ -160,6 +160,47 @@ def test_node_list_marks_stale_heartbeat_offline(monkeypatch, tmp_path):
     assert nodes.json()[0]["status"] == "offline"
 
 
+def test_node_sync_events_and_metrics_are_idempotent(monkeypatch, tmp_path):
+    _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        code = client.post("/api/v1/nodes/pair/request", headers=headers, json={}).json()["code"]
+        claim = client.post(
+            "/api/v1/nodes/pair/claim",
+            json={"code": code, "node_name": "Node Sync"},
+        ).json()
+        node_headers = {"Authorization": f"Bearer {claim['node_token']}"}
+        event_payload = [{
+            "event_id": "node_event_1",
+            "camera_id": "cam_1",
+            "event_type": "person_stationary",
+            "severity": "attention",
+            "status": "CLOSED",
+            "timestamp": "2026-09-23T18:00:00+00:00",
+            "duration": 12.5,
+            "metadata": {"zone": "A"},
+        }]
+        metric_payload = [{
+            "metric_id": "node_metric_1",
+            "metric_type": "camera_fps",
+            "camera_id": "cam_1",
+            "captured_at": "2026-09-23T18:00:00+00:00",
+            "value": 8.0,
+            "payload": {"frames": 80},
+        }]
+
+        first_events = client.post("/api/v1/node-sync/events", headers=node_headers, json=event_payload)
+        duplicate_events = client.post("/api/v1/node-sync/events", headers=node_headers, json=event_payload)
+        first_metrics = client.post("/api/v1/node-sync/metrics", headers=node_headers, json=metric_payload)
+        duplicate_metrics = client.post("/api/v1/node-sync/metrics", headers=node_headers, json=metric_payload)
+
+    assert first_events.json() == {"ok": True, "accepted": 1, "duplicates": 0}
+    assert duplicate_events.json() == {"ok": True, "accepted": 0, "duplicates": 1}
+    assert first_metrics.json() == {"ok": True, "accepted": 1, "duplicates": 0}
+    assert duplicate_metrics.json() == {"ok": True, "accepted": 0, "duplicates": 1}
+
+
 def _settings(monkeypatch, tmp_path) -> Settings:
     database_path = tmp_path / "node-api.sqlite3"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")

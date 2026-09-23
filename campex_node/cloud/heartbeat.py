@@ -61,6 +61,7 @@ class HeartbeatService:
             "version": self.settings.version,
             "cameras_total": summary["cameras_total"],
             "cameras_online": summary["cameras_online"],
+            "queue_size": self.store.outbound_queue_size(),
         }
 
     def _run(self) -> None:

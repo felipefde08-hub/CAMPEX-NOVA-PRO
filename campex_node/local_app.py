@@ -69,6 +69,7 @@ class LocalNodeRuntime:
             "organization_id": settings.organization_id,
             "paired": bool(settings.cloud_token and settings.node_id),
             "cloud_configured": bool(settings.cloud_url),
+            "queue_size": self.lifecycle.store.outbound_queue_size(),
             "cameras_total": summary["cameras_total"],
             "cameras_online": summary["cameras_online"],
             "cameras": summary["cameras"],
@@ -168,6 +169,7 @@ NODE_HTML = """<!doctype html>
           <div class="stat"><strong id="total">0</strong><span>Câmeras</span></div>
           <div class="stat"><strong id="online">0</strong><span>Online</span></div>
           <div class="stat"><strong id="node">-</strong><span>Node</span></div>
+          <div class="stat"><strong id="queue">0</strong><span>Fila</span></div>
         </div><p>Node ID: <code id="node-id">-</code></p></section>
       </div>
       <section class="panel" style="margin-top:16px"><h2>Câmeras sincronizadas</h2><div id="cameras"></div></section>
@@ -181,6 +183,7 @@ NODE_HTML = """<!doctype html>
       document.querySelector('#total').textContent=data.cameras_total;
       document.querySelector('#online').textContent=data.cameras_online;
       document.querySelector('#node').textContent=data.node_id.slice(5,9);
+      document.querySelector('#queue').textContent=data.queue_size||0;
       document.querySelector('#node-id').textContent=data.node_id;
       document.querySelector('[name=cloud_url]').value=data.cloud_url||'';
       document.querySelector('#cameras').innerHTML=(data.cameras||[]).map(cam=>`<div class="camera ${cam.status}"><span><span class="dot"></span>${cam.name}</span><span>${cam.status}</span></div>`).join('')||'<p class="status">Nenhuma câmera sincronizada ainda.</p>';

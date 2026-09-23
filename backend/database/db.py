@@ -61,6 +61,7 @@ SCHEMA_STATEMENTS = (
         ended_at TEXT,
         duration REAL,
         metadata TEXT,
+        node_id TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -298,6 +299,28 @@ SCHEMA_STATEMENTS = (
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS node_sync_items (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS node_metrics (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        camera_id TEXT,
+        metric_type TEXT NOT NULL,
+        value REAL,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        captured_at TEXT NOT NULL,
+        received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_camera_started ON events(camera_id, started_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_events_zone_started ON events(zone_id, started_at DESC)",
@@ -316,6 +339,7 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_state_transitions_org_monitor_time ON state_transitions(organization_id, monitor_id, occurred_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_campex_nodes_org_status ON campex_nodes(organization_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_node_pairing_codes_org_expires ON node_pairing_codes(organization_id, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_node_metrics_org_node_time ON node_metrics(organization_id, node_id, captured_at DESC)",
 )
 
 
@@ -342,6 +366,7 @@ def initialize_database(settings: Settings) -> Path:
         _migrate_organization_scope(connection, settings.intelligence_default_organization_id)
         _migrate_video_analysis_debug_columns(connection)
         _migrate_node_columns(connection)
+        _migrate_node_sync_columns(connection)
         _ensure_default_organization(connection, settings.intelligence_default_organization_id)
         connection.execute(
             """
@@ -462,6 +487,18 @@ def _migrate_node_columns(connection: sqlite3.Connection) -> None:
     for column, statement in node_migrations.items():
         if column not in node_columns:
             connection.execute(statement)
+
+
+def _migrate_node_sync_columns(connection: sqlite3.Connection) -> None:
+    event_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(events)").fetchall()
+    }
+    if "node_id" not in event_columns:
+        connection.execute("ALTER TABLE events ADD COLUMN node_id TEXT")
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_org_node_started ON events(organization_id, node_id, started_at DESC)"
+    )
 
 
 def _ensure_default_organization(

@@ -75,6 +75,21 @@ class CloudClient:
             include_node_token=False,
         )
 
+    def send_events(self, events: list[dict[str, Any]]) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send("POST", "/node-sync/events", payload=events)
+
+    def send_metrics(self, metrics: list[dict[str, Any]]) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send("POST", "/node-sync/metrics", payload=metrics)
+
+    def send_batch(self, *, events: list[dict[str, Any]], metrics: list[dict[str, Any]]) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send("POST", "/node-sync/batch", payload={"events": events, "metrics": metrics})
+
     def _send(
         self,
         method: str,

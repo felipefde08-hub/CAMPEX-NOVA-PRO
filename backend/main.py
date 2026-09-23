@@ -18,6 +18,7 @@ from backend.api.monitoring import router as monitoring_router
 from backend.api.notifications import router as notifications_router
 from backend.api.nodes import legacy_router as legacy_node_router
 from backend.api.nodes import router as nodes_router
+from backend.api.node_sync import router as node_sync_router
 from backend.api.operations import router as operations_router
 from backend.api.vision import router as vision_router
 from backend.api.videos import router as videos_router
@@ -196,6 +197,7 @@ async def api_token_guard(request: Request, call_next):
     has_node_bearer = (
         (
             path.startswith("/api/v1/node/")
+            or path.startswith("/api/v1/node-sync/")
             or (
                 path.startswith("/api/v1/nodes/")
                 and (path.endswith("/heartbeat") or path.endswith("/config"))
@@ -249,6 +251,7 @@ app.include_router(notifications_router)
 app.include_router(monitoring_router)
 app.include_router(nodes_router)
 app.include_router(legacy_node_router)
+app.include_router(node_sync_router)
 
 
 def _warn_security_posture(settings) -> None:

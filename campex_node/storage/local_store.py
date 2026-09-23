@@ -23,6 +23,9 @@ SCHEMA = (
         payload_json TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending',
         attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        synced_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
@@ -43,6 +46,7 @@ class LocalStore:
         with self._connect() as connection:
             for statement in SCHEMA:
                 connection.execute(statement)
+            self._migrate_outbound_events(connection)
             connection.commit()
 
     def get_meta(self, key: str) -> str | None:
@@ -73,21 +77,99 @@ class LocalStore:
             rows = connection.execute("SELECT key, value FROM node_meta").fetchall()
         return {str(row["key"]): str(row["value"]) for row in rows}
 
-    def enqueue_event(self, event_type: str, payload: dict[str, Any]) -> str:
-        event_id = f"evt_{uuid.uuid4().hex}"
+    def enqueue_event(self, event_type: str, payload: dict[str, Any], event_id: str | None = None) -> str:
+        event_id = event_id or str(payload.get("event_id") or payload.get("metric_id") or f"evt_{uuid.uuid4().hex}")
         now = _utc_now()
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO outbound_events (
-                    id, type, payload_json, status, attempts, created_at, updated_at
+                    id, type, payload_json, status, attempts, next_attempt_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, 'pending', 0, ?, ?)
+                VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
                 """,
-                (event_id, event_type, json.dumps(payload, separators=(",", ":")), now, now),
+                (
+                    event_id,
+                    event_type,
+                    json.dumps(payload, separators=(",", ":")),
+                    now,
+                    now,
+                    now,
+                ),
             )
             connection.commit()
         return event_id
+
+    def pending_outbound(self, limit: int = 50) -> list[dict[str, Any]]:
+        now = _utc_now()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM outbound_events
+                WHERE status = 'pending'
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+        return [_row_to_outbound_item(row) for row in rows]
+
+    def mark_outbound_synced(self, item_id: str) -> None:
+        now = _utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE outbound_events
+                SET status = 'synced', synced_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, item_id),
+            )
+            connection.commit()
+
+    def mark_outbound_failed(self, item_id: str, error: str, *, retry_seconds: float) -> None:
+        now_dt = datetime.now(timezone.utc)
+        next_attempt = datetime.fromtimestamp(
+            now_dt.timestamp() + max(0.0, retry_seconds),
+            tz=timezone.utc,
+        ).isoformat()
+        now = now_dt.isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE outbound_events
+                SET attempts = attempts + 1,
+                    last_error = ?,
+                    next_attempt_at = ?,
+                    updated_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (error[:1000], next_attempt, now, item_id),
+            )
+            connection.commit()
+
+    def outbound_queue_size(self) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS total FROM outbound_events WHERE status = 'pending'"
+            ).fetchone()
+        return int(row["total"] if row else 0)
+
+    def _migrate_outbound_events(self, connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(outbound_events)").fetchall()
+        }
+        migrations = {
+            "next_attempt_at": "ALTER TABLE outbound_events ADD COLUMN next_attempt_at TEXT",
+            "last_error": "ALTER TABLE outbound_events ADD COLUMN last_error TEXT",
+            "synced_at": "ALTER TABLE outbound_events ADD COLUMN synced_at TEXT",
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                connection.execute(statement)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=5.0)
@@ -99,3 +181,14 @@ class LocalStore:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _row_to_outbound_item(row) -> dict[str, Any]:
+    payload = json.loads(row["payload_json"])
+    return {
+        "id": row["id"],
+        "type": row["type"],
+        "payload": payload,
+        "attempts": int(row["attempts"] or 0),
+        "last_error": row["last_error"],
+    }

@@ -54,4 +54,5 @@ def test_heartbeat_payload_is_queued_when_cloud_is_unavailable(tmp_path):
         "version": "0.1.0",
         "cameras_total": 0,
         "cameras_online": 0,
+        "queue_size": 0,
     }
