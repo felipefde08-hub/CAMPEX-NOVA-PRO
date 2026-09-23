@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -204,11 +205,33 @@ async def api_token_guard(request: Request, call_next):
         and request.url.path != "/api/v1/health"
         and request.headers.get("X-CAMPEX-Token") != token
     ):
-        return JSONResponse(
+        response = JSONResponse(
             {"detail": "Token de API ausente ou inválido."},
             status_code=401,
         )
+        _apply_cors_headers(request, response, settings)
+        return response
     return await call_next(request)
+
+
+def _apply_cors_headers(request: Request, response: JSONResponse, settings) -> None:
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    allowed = origin in settings.frontend_origins
+    origin_regex = settings.frontend_origin_regex
+    if not allowed and origin_regex:
+        try:
+            allowed = re.match(origin_regex, origin) is not None
+        except re.error:
+            allowed = False
+    if not allowed:
+        return
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Vary"] = "Origin"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+
 
 app.include_router(health_router)
 app.include_router(analysis_router)

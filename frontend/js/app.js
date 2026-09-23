@@ -4312,8 +4312,10 @@ async function hydrateSettingsTab(tabId) {
     return;
   }
   if (tabId === "notifications") {
-    await loadNotificationSettings();
-    await loadNotificationDeliveries();
+    const loaded = await loadNotificationSettings();
+    if (loaded) {
+      await loadNotificationDeliveries();
+    }
     return;
   }
   if (tabId === "integrations") {
@@ -4614,10 +4616,12 @@ async function loadNotificationSettings() {
         notificationStatusLine("Relatórios", `${prefs.report_frequency || "DAILY"} às ${prefs.report_time || "18:00"}`, prefs.reports_enabled ? "Ativo" : "Inativo"),
       ].join("");
     }
+    return true;
   } catch (error) {
     if (status) {
       status.innerHTML = emptyState("Falha ao carregar notificações", error.message);
     }
+    return false;
   }
 }
 
@@ -4675,7 +4679,7 @@ async function testTelegramSettings() {
     await loadNotificationDeliveries();
   } catch (error) {
     notify("Falha no Telegram", error.message, "error");
-    await loadNotificationDeliveries();
+    if (!isApiAuthError(error)) await loadNotificationDeliveries();
   }
 }
 
@@ -4686,7 +4690,7 @@ async function testEmailSettings() {
     await loadNotificationDeliveries();
   } catch (error) {
     notify("Falha no e-mail", error.message, "error");
-    await loadNotificationDeliveries();
+    if (!isApiAuthError(error)) await loadNotificationDeliveries();
   }
 }
 
@@ -4697,8 +4701,12 @@ async function sendReportNow() {
     await loadNotificationDeliveries();
   } catch (error) {
     notify("Falha ao enviar relatório", error.message, "error");
-    await loadNotificationDeliveries();
+    if (!isApiAuthError(error)) await loadNotificationDeliveries();
   }
+}
+
+function isApiAuthError(error) {
+  return String(error?.message || "").toLowerCase().includes("token de api");
 }
 
 async function loadNotificationDeliveries() {
