@@ -7,6 +7,7 @@ import uuid
 
 from campex_node.cameras.manager import CameraManager
 from campex_node.cloud.client import CloudClient
+from campex_node.cloud.config_sync import ConfigSyncService
 from campex_node.cloud.heartbeat import HeartbeatService
 from campex_node.core.config import NodeSettings
 from campex_node.storage.local_store import LocalStore
@@ -30,6 +31,7 @@ class NodeLifecycle:
         self.camera_manager = camera_manager
         self.node_id = ""
         self.heartbeat: HeartbeatService | None = None
+        self.config_sync: ConfigSyncService | None = None
         self._running = False
 
     def initialize(self) -> None:
@@ -50,7 +52,16 @@ class NodeLifecycle:
     def start(self) -> None:
         if self._running:
             return
+        self.config_sync = ConfigSyncService(
+            settings=self.settings,
+            cloud_client=self.cloud_client,
+            camera_manager=self.camera_manager,
+        )
+        if self.cloud_client.is_configured():
+            self.config_sync.sync_once()
         self.camera_manager.start()
+        if self.cloud_client.is_configured():
+            self.config_sync.start()
         self.heartbeat = HeartbeatService(
             settings=self.settings,
             node_id=self.node_id,
@@ -82,6 +93,8 @@ class NodeLifecycle:
             self.stop()
 
     def stop(self) -> None:
+        if self.config_sync is not None:
+            self.config_sync.stop()
         if self.heartbeat is not None:
             self.heartbeat.stop()
         self.camera_manager.stop()
@@ -89,6 +102,12 @@ class NodeLifecycle:
         logger.info("CAMPEX Node stopped")
 
     def run_once(self) -> dict:
+        if self.cloud_client.is_configured():
+            ConfigSyncService(
+                settings=self.settings,
+                cloud_client=self.cloud_client,
+                camera_manager=self.camera_manager,
+            ).sync_once()
         self.camera_manager.start()
         try:
             heartbeat = HeartbeatService(

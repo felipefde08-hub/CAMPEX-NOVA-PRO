@@ -32,7 +32,25 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Initialize, send one heartbeat and stop. Useful for validation.",
     )
+    parser.add_argument(
+        "--app",
+        action="store_true",
+        help="Run the lightweight local CAMPEX Node app.",
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args(argv)
+
+    if args.app:
+        import uvicorn
+
+        uvicorn.run(
+            "campex_node.local_app:create_app",
+            host=args.host,
+            port=args.port,
+            factory=True,
+        )
+        return 0
 
     lifecycle = build_lifecycle()
     lifecycle.initialize()

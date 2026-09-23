@@ -68,6 +68,11 @@ class LocalStore:
             )
             connection.commit()
 
+    def meta_dict(self) -> dict[str, str]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT key, value FROM node_meta").fetchall()
+        return {str(row["key"]): str(row["value"]) for row in rows}
+
     def enqueue_event(self, event_type: str, payload: dict[str, Any]) -> str:
         event_id = f"evt_{uuid.uuid4().hex}"
         now = _utc_now()

@@ -32,6 +32,8 @@ Optional Cloud settings:
 ```bash
 export CAMPEX_NODE_CLOUD_URL="https://campexback.vercel.app/api/v1"
 export CAMPEX_NODE_TOKEN="token_privado_do_node"
+export CAMPEX_NODE_CLOUD_API_TOKEN="token_privado_do_backend"
+export CAMPEX_NODE_ORGANIZATION_ID="default"
 ```
 
 Local runtime settings:
@@ -49,10 +51,12 @@ From the repository root:
 ```bash
 python -m campex_node.main --once
 python -m campex_node.main
+python -m campex_node.main --app
 ```
 
 `--once` initializes the node, sends one heartbeat attempt, prints the payload,
 and stops. Running without `--once` keeps the service alive for 24/7 operation.
+`--app` opens the lightweight local app at `http://127.0.0.1:8787`.
 
 ## Cloud Behavior
 

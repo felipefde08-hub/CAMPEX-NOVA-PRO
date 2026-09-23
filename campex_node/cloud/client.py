@@ -20,6 +20,7 @@ class CloudResult:
     ok: bool
     status_code: int | None = None
     error: str | None = None
+    data: Any | None = None
 
 
 class CloudClient:
@@ -40,6 +41,11 @@ class CloudClient:
             return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
         return self._send("POST", "/node/heartbeat", payload=payload)
 
+    def fetch_config(self) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send("GET", "/node/config")
+
     def _send(
         self,
         method: str,
@@ -55,10 +61,20 @@ class CloudClient:
             headers["Content-Type"] = "application/json"
         if self.settings.cloud_token:
             headers["Authorization"] = f"Bearer {self.settings.cloud_token}"
+        if self.settings.cloud_api_token:
+            headers["X-CAMPEX-Token"] = self.settings.cloud_api_token
+        if self.settings.organization_id:
+            headers["X-CAMPEX-Organization-Id"] = self.settings.organization_id
         request = Request(url, data=body, headers=headers, method=method)
         try:
             with urlopen(request, timeout=self.settings.cloud_timeout_seconds) as response:
-                return CloudResult(ok=200 <= response.status < 300, status_code=response.status)
+                response_body = response.read()
+                data = json.loads(response_body.decode("utf-8")) if response_body else None
+                return CloudResult(
+                    ok=200 <= response.status < 300,
+                    status_code=response.status,
+                    data=data,
+                )
         except HTTPError as exc:
             return CloudResult(
                 ok=False,

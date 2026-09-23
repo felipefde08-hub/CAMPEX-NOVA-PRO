@@ -88,14 +88,17 @@ class NodeSettings:
     data_dir: Path
     database_path: Path
     node_id_file: Path
-    cloud_url: str | None
-    cloud_token: str | None
-    cloud_timeout_seconds: float
-    heartbeat_interval_seconds: float
-    camera_reconnect_seconds: float
-    camera_read_failure_limit: int
-    camera_open_timeout_ms: int
-    camera_read_timeout_ms: int
+    cloud_url: str | None = None
+    cloud_token: str | None = None
+    cloud_api_token: str | None = None
+    organization_id: str | None = None
+    cloud_timeout_seconds: float = 10.0
+    config_sync_interval_seconds: float = 15.0
+    heartbeat_interval_seconds: float = 30.0
+    camera_reconnect_seconds: float = 5.0
+    camera_read_failure_limit: int = 3
+    camera_open_timeout_ms: int = 3000
+    camera_read_timeout_ms: int = 3000
     cameras: tuple[NodeCameraConfig, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -116,7 +119,15 @@ class NodeSettings:
             node_id_file=node_id_file,
             cloud_url=(os.getenv("CAMPEX_NODE_CLOUD_URL") or "").rstrip("/") or None,
             cloud_token=os.getenv("CAMPEX_NODE_TOKEN") or None,
+            cloud_api_token=(
+                os.getenv("CAMPEX_NODE_CLOUD_API_TOKEN")
+                or os.getenv("CAMPEXTOKEN")
+                or os.getenv("CAMPEX_API_TOKEN")
+                or None
+            ),
+            organization_id=os.getenv("CAMPEX_NODE_ORGANIZATION_ID") or None,
             cloud_timeout_seconds=_env_float("CAMPEX_NODE_CLOUD_TIMEOUT_SECONDS", 10.0),
+            config_sync_interval_seconds=_env_float("CAMPEX_NODE_CONFIG_SYNC_SECONDS", 15.0),
             heartbeat_interval_seconds=_env_float("CAMPEX_NODE_HEARTBEAT_SECONDS", 30.0),
             camera_reconnect_seconds=_env_float("CAMPEX_NODE_CAMERA_RECONNECT_SECONDS", 5.0),
             camera_read_failure_limit=_env_int("CAMPEX_NODE_CAMERA_READ_FAILURE_LIMIT", 3),
@@ -128,6 +139,8 @@ class NodeSettings:
     def __post_init__(self) -> None:
         if self.heartbeat_interval_seconds <= 0:
             raise ValueError("CAMPEX_NODE_HEARTBEAT_SECONDS must be greater than zero.")
+        if self.config_sync_interval_seconds <= 0:
+            raise ValueError("CAMPEX_NODE_CONFIG_SYNC_SECONDS must be greater than zero.")
         if self.camera_reconnect_seconds < 0:
             raise ValueError("CAMPEX_NODE_CAMERA_RECONNECT_SECONDS must be non-negative.")
         if self.camera_read_failure_limit < 1:

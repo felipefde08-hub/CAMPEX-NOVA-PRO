@@ -266,6 +266,21 @@ SCHEMA_STATEMENTS = (
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS campex_nodes (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'offline'
+            CHECK(status IN ('online', 'offline', 'degraded')),
+        version TEXT NOT NULL DEFAULT '0.1.0',
+        cameras_total INTEGER NOT NULL DEFAULT 0,
+        cameras_online INTEGER NOT NULL DEFAULT 0,
+        last_seen_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_camera_started ON events(camera_id, started_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_events_zone_started ON events(zone_id, started_at DESC)",
@@ -282,6 +297,7 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_monitor_states_org_monitor ON monitor_states(organization_id, monitor_id)",
     "CREATE INDEX IF NOT EXISTS idx_automation_rules_org_monitor ON automation_rules(organization_id, monitor_id)",
     "CREATE INDEX IF NOT EXISTS idx_state_transitions_org_monitor_time ON state_transitions(organization_id, monitor_id, occurred_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_campex_nodes_org_status ON campex_nodes(organization_id, status)",
 )
 
 

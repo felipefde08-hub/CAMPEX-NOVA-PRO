@@ -23,6 +23,29 @@ class CameraManager:
             if camera.enabled:
                 self.start_camera(camera.id)
 
+    def apply_configs(self, cameras: list[NodeCameraConfig]) -> None:
+        desired = {camera.id: camera for camera in cameras}
+        with self._lock:
+            existing_ids = set(self._cameras)
+        for camera_id in existing_ids - set(desired):
+            self.stop_camera(camera_id)
+        with self._lock:
+            current = dict(self._cameras)
+        for camera_id, camera in desired.items():
+            previous = current.get(camera_id)
+            changed = previous != camera
+            with self._lock:
+                self._cameras[camera_id] = camera
+            if not camera.enabled:
+                self.stop_camera(camera_id)
+            elif changed:
+                self.stop_camera(camera_id)
+                self.start_camera(camera_id)
+            elif camera_id not in self._workers:
+                self.start_camera(camera_id)
+        with self._lock:
+            self._cameras = desired
+
     def start_camera(self, camera_id: str) -> None:
         with self._lock:
             camera = self._cameras[camera_id]
