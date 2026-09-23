@@ -26,7 +26,12 @@ class LocalNodeRuntime:
         self.lifecycle.initialize()
         self.lifecycle.start()
 
-    def reconfigure(self, payload: CloudConnectionPayload) -> None:
+    def reconfigure(self, payload: CloudConnectionPayload) -> dict | None:
+        current_status = self.status()
+        if current_status.get("paired"):
+            if self.lifecycle.config_sync is not None:
+                self.lifecycle.config_sync.sync_once()
+            return {"already_paired": True}
         self.lifecycle.stop()
         settings = replace(
             NodeSettings.from_env(),
@@ -62,6 +67,7 @@ class LocalNodeRuntime:
         self.lifecycle.store.set_meta("node_token", paired_settings.cloud_token or "")
         self.lifecycle.store.set_meta("organization_id", paired_settings.organization_id or "")
         self.lifecycle.start()
+        return None
 
     def status(self) -> dict:
         settings = self.lifecycle.settings
@@ -150,7 +156,13 @@ def create_app() -> FastAPI:
     @app.post("/api/connect")
     def connect(payload: CloudConnectionPayload) -> dict:
         try:
-            runtime.reconfigure(payload)
+            result = runtime.reconfigure(payload)
+            if result and result.get("already_paired"):
+                return {
+                    "ok": True,
+                    "message": "Este Node já está pareado. Use Sincronizar agora para carregar câmeras.",
+                    **runtime.status(),
+                }
             return {"ok": True, **runtime.status()}
         except ValueError as exc:
             return {"ok": False, "error": str(exc), **runtime.status()}
@@ -226,7 +238,7 @@ NODE_HTML = """<!doctype html>
       const body={cloud_url:form.cloud_url.value,pairing_code:form.pairing_code.value,node_name:form.node_name.value};
       const res=await fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const data=await res.json();
-      statusEl.textContent=data.ok?'Pareado. Sincronizando câmeras cadastradas.':(data.error||'Falha ao parear.');
+      statusEl.textContent=data.ok?(data.message||'Pareado. Sincronizando câmeras cadastradas.'):(data.error||'Falha ao parear.');
       await load();
     });
     document.querySelector('#sync-button').addEventListener('click',async()=>{statusEl.textContent='Sincronizando...';const res=await fetch('/api/sync',{method:'POST'});const data=await res.json();statusEl.textContent=data.ok?`Sincronizadas: ${data.cameras_loaded}`:(data.error||'Falha na sincronização');await load();});

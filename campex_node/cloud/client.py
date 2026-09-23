@@ -121,10 +121,19 @@ class CloudClient:
                     data=data,
                 )
         except HTTPError as exc:
+            error = str(exc)
+            try:
+                body = exc.read().decode("utf-8")
+                payload = json.loads(body) if body else {}
+                detail = payload.get("detail") if isinstance(payload, dict) else None
+                if detail:
+                    error = str(detail)
+            except Exception:
+                pass
             return CloudResult(
                 ok=False,
                 status_code=exc.code,
-                error=sanitize_error_message(str(exc)),
+                error=sanitize_error_message(error),
             )
         except URLError as exc:
             return CloudResult(ok=False, error=sanitize_error_message(str(exc.reason)))
