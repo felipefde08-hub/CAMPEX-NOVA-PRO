@@ -43,6 +43,10 @@ export const routes = {
     title: "Regras",
     message: "Regras operacionais que transformam observacoes em eventos.",
   },
+  nodes: {
+    title: "Central de Nodes",
+    message: "Saúde dos softwares locais, câmeras conectadas e sincronização com a Cloud.",
+  },
   settings: {
     title: "Configurações",
     message: "Configuracoes de runtime e preferencias locais.",

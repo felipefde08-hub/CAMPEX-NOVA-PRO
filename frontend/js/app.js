@@ -403,6 +403,11 @@ function renderRoute() {
     return;
   }
 
+  if (routeKey === "nodes") {
+    renderNodesPage();
+    return;
+  }
+
   if (routeKey === "settings") {
     renderSettingsPage();
     return;
@@ -3918,6 +3923,173 @@ async function simulateRule(event) {
     : emptyState("Nenhuma regra disparada", "Essa combinação não gera evento no motor atual.");
 }
 
+async function renderNodesPage() {
+  appView.innerHTML = `
+    <div class="ops-page nodes-page">
+      <section class="hero-card nodes-hero">
+        <div>
+          <p class="eyebrow">CAMPEX Cloud + Node</p>
+          <h2>Central de Nodes</h2>
+          <p>Acompanhe os softwares locais que ficam dentro da rede do cliente, suas câmeras RTSP e a fila de sincronização com a Cloud.</p>
+        </div>
+        <div class="hero-actions">
+          <button type="button" class="secondary-action" id="nodes-refresh"><i data-lucide="refresh-cw"></i>Atualizar</button>
+          <button type="button" class="primary-action" id="nodes-create-code"><i data-lucide="key-round"></i>Parear Node</button>
+        </div>
+      </section>
+
+      <section class="metric-grid" id="nodes-summary">
+        ${metricItem("Nodes", "-", "Carregando")}
+        ${metricItem("Câmeras", "-", "Carregando")}
+        ${metricItem("Fila", "-", "Carregando")}
+        ${metricItem("Eventos", "-", "Carregando")}
+      </section>
+
+      <section class="ops-panel">
+        <div class="panel-head">
+          <div>
+            <h3>Instalações locais</h3>
+            <p>Detalhe operacional de cada CAMPEX Node pareado.</p>
+          </div>
+        </div>
+        <div id="nodes-page-list" class="node-dashboard-list">${emptyState("Carregando Nodes", "Buscando instalações pareadas.")}</div>
+      </section>
+
+      <section class="ops-panel">
+        <div class="panel-head">
+          <div>
+            <h3>Pareamento rápido</h3>
+            <p>Gere um código temporário e digite no aplicativo local CAMPEX Node.</p>
+          </div>
+        </div>
+        <div id="nodes-page-pairing" class="settings-info-callout">
+          <i data-lucide="info"></i>
+          <div><strong>Nenhum código gerado.</strong><span>Clique em Parear Node para conectar uma instalação local.</span></div>
+        </div>
+      </section>
+    </div>
+  `;
+  document.querySelector("#nodes-refresh")?.addEventListener("click", loadNodesDashboard);
+  document.querySelector("#nodes-create-code")?.addEventListener("click", createNodesPagePairingCode);
+  refreshIcons();
+  await loadNodesDashboard();
+}
+
+async function loadNodesDashboard() {
+  const listHost = document.querySelector("#nodes-page-list");
+  const summaryHost = document.querySelector("#nodes-summary");
+  if (!listHost) return;
+  listHost.innerHTML = emptyState("Carregando Nodes", "Atualizando telemetria da Cloud.");
+  try {
+    const nodes = await listNodes();
+    const telemetryResults = await Promise.allSettled(nodes.map((node) => getNodeTelemetry(node.id)));
+    const telemetryByNode = new Map();
+    telemetryResults.forEach((result, index) => {
+      if (result.status === "fulfilled") telemetryByNode.set(nodes[index].id, result.value);
+    });
+    if (summaryHost) summaryHost.innerHTML = nodesDashboardSummary(nodes, [...telemetryByNode.values()]);
+    listHost.innerHTML = nodes.length
+      ? nodes.map((node) => nodesDashboardCard(node, telemetryByNode.get(node.id))).join("")
+      : emptyState("Nenhum Node pareado", "Gere um código e conecte o CAMPEX Node instalado no cliente.");
+    document.querySelectorAll("[data-node-action]").forEach((button) => {
+      button.addEventListener("click", handleSettingsNodeAction);
+    });
+    refreshIcons();
+  } catch (error) {
+    listHost.innerHTML = emptyState("Falha ao carregar Nodes", error.message);
+    if (summaryHost) summaryHost.innerHTML = nodesDashboardSummary([], []);
+  }
+}
+
+function nodesDashboardSummary(nodes, telemetryItems) {
+  const onlineNodes = nodes.filter((node) => node.status === "online").length;
+  const camerasTotal = nodes.reduce((total, node) => total + Number(node.cameras_total || 0), 0);
+  const camerasOnline = nodes.reduce((total, node) => total + Number(node.cameras_online || 0), 0);
+  const queueSize = nodes.reduce((total, node) => total + Number(node.queue_size || 0), 0);
+  const events = telemetryItems.reduce((total, item) => total + Number(item.summary?.events_count || 0), 0);
+  return [
+    metricItem("Nodes", `${onlineNodes}/${nodes.length} online`, "Instalações pareadas"),
+    metricItem("Câmeras", `${camerasOnline}/${camerasTotal} online`, "Reportadas por heartbeat"),
+    metricItem("Fila", `${queueSize} pendente(s)`, "Outbox local dos Nodes"),
+    metricItem("Eventos", `${events} recentes`, "Sincronizados pelos Nodes"),
+  ].join("");
+}
+
+function nodesDashboardCard(node, telemetry) {
+  const status = node.status || "offline";
+  const connected = status === "online";
+  const cameras = telemetry?.cameras || [];
+  const events = telemetry?.events || [];
+  const lastMetric = telemetry?.summary?.latest_metric_at;
+  const cameraRows = cameras.length
+    ? cameras.map(nodesDashboardCameraRow).join("")
+    : `<div class="muted">Sem telemetria de câmera recebida ainda.</div>`;
+  const eventRows = events.length
+    ? events.slice(0, 5).map((event) => `<span class="node-event-chip" data-severity="${escapeHtml(event.severity || "info")}">${escapeHtml(event.camera_id || "camera")} · ${escapeHtml(event.type || "evento")} · ${escapeHtml(formatDate(event.started_at))}</span>`).join("")
+    : `<span class="muted">Nenhum evento recente sincronizado.</span>`;
+  return `
+    <article class="node-dashboard-card" data-node-id="${escapeHtml(node.id)}">
+      <header>
+        <div>
+          <h3>${escapeHtml(node.name || node.id)}</h3>
+          <p>${escapeHtml(node.hostname || "hostname não informado")} · ${escapeHtml(node.platform || "plataforma não informada")} · v${escapeHtml(node.version || "0.1.0")}</p>
+        </div>
+        <span class="health-badge" data-status="${connected ? "ONLINE" : "OFFLINE"}">${status.toUpperCase()}</span>
+      </header>
+      <div class="node-dashboard-metrics">
+        ${metricItem("Heartbeat", formatDate(node.last_seen_at), `${node.cameras_online || 0}/${node.cameras_total || 0} câmeras`)}
+        ${metricItem("Fila local", `${node.queue_size || 0}`, "Itens aguardando sync")}
+        ${metricItem("Última métrica", formatDate(lastMetric), `${telemetry?.summary?.metrics_count || 0} métricas`)}
+      </div>
+      <div class="node-dashboard-section">
+        <strong>Câmeras do Node</strong>
+        <div class="node-camera-telemetry-list">${cameraRows}</div>
+      </div>
+      <div class="node-dashboard-section">
+        <strong>Eventos recentes</strong>
+        <div class="node-event-list">${eventRows}</div>
+      </div>
+      <footer>
+        <button type="button" data-node-action="rename">Renomear</button>
+        <button type="button" data-node-action="revoke">Revogar</button>
+      </footer>
+    </article>
+  `;
+}
+
+function nodesDashboardCameraRow(camera) {
+  const status = camera.status || (camera.online ? "ONLINE" : "OFFLINE");
+  return `
+    <div class="node-camera-telemetry-line">
+      <strong>${escapeHtml(camera.name || camera.camera_id)}</strong>
+      <span class="health-badge" data-status="${camera.online ? "ONLINE" : "OFFLINE"}">${escapeHtml(status)}</span>
+      <span>${Number(camera.frames_received || 0).toLocaleString("pt-BR")} frames</span>
+      <span>${Number(camera.reconnect_attempts || 0).toLocaleString("pt-BR")} reconexões</span>
+      <span>${Number(camera.consecutive_failures || 0).toLocaleString("pt-BR")} falhas</span>
+    </div>
+  `;
+}
+
+async function createNodesPagePairingCode() {
+  const host = document.querySelector("#nodes-page-pairing");
+  try {
+    const pairing = await requestNodePairingCode();
+    if (host) {
+      host.innerHTML = `
+        <i data-lucide="key-round"></i>
+        <div>
+          <strong>${escapeHtml(pairing.code)}</strong>
+          <span>Digite este código no CAMPEX Node local. Expira em ${formatDate(pairing.expires_at)}.</span>
+        </div>
+      `;
+    }
+    notify("Código gerado", "Use o código no aplicativo local do CAMPEX Node.", "success");
+    refreshIcons();
+  } catch (error) {
+    notify("Falha ao gerar código", error.message, "error");
+  }
+}
+
 async function renderSettingsPage() {
   appView.innerHTML = `
     <div class="ops-page settings-page settings-reference">
@@ -4637,7 +4809,11 @@ async function handleSettingsNodeAction(event) {
       await revokeNode(nodeId);
       notify("Node revogado", "O token deste Node foi invalidado.", "success");
     }
-    await loadSettingsNodes();
+    if (currentRoute() === "nodes") {
+      await loadNodesDashboard();
+    } else {
+      await loadSettingsNodes();
+    }
   } catch (error) {
     notify("Falha no Node", error.message, "error");
   }
