@@ -1,7 +1,8 @@
 """Run the camera backend on this computer; the frontend may stay on Vercel.
 
 Usage: python scripts/run_local_connector.py
-The private API token is read from CAMPEX_API_TOKEN or the project's .env.
+The private API token is read from CAMPEXTOKEN, CAMPEX_API_TOKEN or the
+project's .env.
 """
 from pathlib import Path
 import os
@@ -25,7 +26,7 @@ def main():
         os.environ["CAMPEX_API_TOKEN"] = token
     print("CAMPEX local: http://127.0.0.1:8000")
     print("Na interface da Vercel: Configurações → Conexão com as câmeras.")
-    print("Selecione Neste computador e use o CAMPEX_API_TOKEN do .env local.")
+    print("Selecione Neste computador e use CAMPEXTOKEN ou CAMPEX_API_TOKEN do .env local.")
     import uvicorn
     uvicorn.run("backend.main:app", host="127.0.0.1", port=8000)
 

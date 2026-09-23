@@ -230,6 +230,24 @@ def test_api_token_guard_enforced(monkeypatch, tmp_path):
         )
 
 
+def test_campextoken_alias_is_accepted(monkeypatch, tmp_path):
+    database_path = tmp_path / "api-token-alias.sqlite3"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.delenv("CAMPEX_API_TOKEN", raising=False)
+    monkeypatch.setenv("CAMPEXTOKEN", "alias-secret-token")
+    initialize_database(Settings.from_env())
+
+    with TestClient(app) as client:
+        assert client.get("/api/v1/cameras").status_code == 401
+        assert (
+            client.get(
+                "/api/v1/cameras",
+                headers={"X-CAMPEX-Token": "alias-secret-token"},
+            ).status_code
+            == 200
+        )
+
+
 def test_api_token_value_not_leaked_in_response(monkeypatch, tmp_path):
     _configure_db(monkeypatch, tmp_path, api_token="leaked-token-marker-12345")
 

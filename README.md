@@ -93,8 +93,9 @@ node --check frontend/js/api.js
 
 ### Autenticação da API no navegador
 
-Configure `CAMPEX_API_TOKEN` no ambiente do backend (ou no `.env` local,
-ignorado pelo Git) e reinicie o serviço. Em Configurações do frontend,
+Configure `CAMPEXTOKEN` no ambiente do backend. O nome antigo
+`CAMPEX_API_TOKEN` continua aceito para compatibilidade. No `.env` local,
+que é ignorado pelo Git, use o mesmo valor e reinicie o serviço. Em Configurações do frontend,
 preencha **Token API (somente nesta aba)** com o mesmo valor e salve.
 As requisições JSON, exclusões e uploads enviam `X-CAMPEX-Token`.
 O token fica no `sessionStorage` da aba e é removido ao sair da conta;
@@ -106,7 +107,7 @@ públicas de build. Use HTTPS em produção. Configure `CAMPEX_FRONTEND_ORIGINS`
 com a origem exata do frontend. O preflight CORS não exige token; as chamadas
 protegidas continuam retornando 401 quando o token está ausente ou incorreto.
 `/api/v1/health` permanece público e a autenticação continua opcional quando
-`CAMPEX_API_TOKEN` não está definido. Tokens de organização são independentes.
+nenhum dos dois nomes de token está definido. Tokens de organização são independentes.
 
 ### Interface na Vercel com câmeras da rede local
 
@@ -119,8 +120,8 @@ python scripts/run_local_connector.py
 ```
 
 Use o Python do ambiente virtual com as dependências de `requirements.txt`.
-O conector escuta somente em `127.0.0.1:8000` e utiliza `CAMPEX_API_TOKEN` do
-ambiente ou `.env`. Se estiver ausente, gera um segredo e salva no `.env`
+O conector escuta somente em `127.0.0.1:8000` e utiliza `CAMPEXTOKEN` ou
+`CAMPEX_API_TOKEN` do ambiente ou `.env`. Se estiver ausente, gera um segredo e salva no `.env`
 ignorado pelo Git, sem mostrá-lo nos logs.
 
 Na interface da Vercel, abra **Configurações → Conexão com as câmeras**,

@@ -237,7 +237,7 @@ def _warn_security_posture(settings) -> None:
     if settings.environment.lower() in {"production", "prod"}:
         if not settings.api_token:
             logger.warning(
-                "SECURITY POSTURE: CAMPEX_API_TOKEN is not configured in production. "
+                "SECURITY POSTURE: CAMPEXTOKEN/CAMPEX_API_TOKEN is not configured in production. "
                 "All /api/v1 endpoints are accessible without authentication."
             )
         if not settings.intelligence_organization_tokens and not settings.nvidia_api_key:

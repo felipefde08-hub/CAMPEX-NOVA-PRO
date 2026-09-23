@@ -270,7 +270,7 @@ class Settings:
             vision_input_size=int(os.getenv("VISION_INPUT_SIZE", "960")),
             vision_video_loop=os.getenv("VISION_VIDEO_LOOP", "true").lower()
             in {"1", "true", "yes", "on"},
-            api_token=os.getenv("CAMPEX_API_TOKEN") or None,
+            api_token=os.getenv("CAMPEXTOKEN") or os.getenv("CAMPEX_API_TOKEN") or None,
             vision_full_scan_seconds=float(
                 os.getenv("VISION_FULL_SCAN_SECONDS", "6")
             ),
