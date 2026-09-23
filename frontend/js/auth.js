@@ -1,3 +1,4 @@
+import { setApiToken } from "./api-token.js";
 const USERS_KEY = "campex.auth.users";
 const SESSION_KEY = "campex.auth.session";
 
@@ -112,5 +113,6 @@ export async function signInLocal({ email, password }) {
 }
 
 export function signOutLocal() {
+  setApiToken("");
   localStorage.removeItem(SESSION_KEY);
 }

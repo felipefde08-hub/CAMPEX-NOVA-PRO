@@ -222,3 +222,34 @@ def test_optional_api_token_protects_api(monkeypatch, tmp_path):
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
     assert health.status_code == 200
+
+
+def test_browser_camera_auth_and_preflight(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'cors.sqlite3'}")
+    monkeypatch.setenv("CAMPEX_API_TOKEN", "test-browser-token")
+    initialize_database(Settings.from_env())
+    origin = "http://localhost:5500"
+    with TestClient(app) as client:
+        for path, method in [("/api/v1/cameras", "GET"), ("/api/v1/cameras/test-source", "POST")]:
+            preflight = client.options(path, headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": method,
+                "Access-Control-Request-Headers": "content-type,x-campex-token",
+            })
+            assert preflight.status_code == 200
+            assert preflight.headers["access-control-allow-origin"] == origin
+            for token in [None, "wrong-token"]:
+                headers = {"Origin": origin}
+                if token:
+                    headers["X-CAMPEX-Token"] = token
+                response = client.request(method, path, headers=headers)
+                assert response.status_code == 401
+                assert response.headers["access-control-allow-origin"] == origin
+        headers = {"Origin": origin, "X-CAMPEX-Token": "test-browser-token"}
+        assert client.get("/api/v1/cameras", headers=headers).status_code == 200
+        response = client.post("/api/v1/cameras/test-source", headers=headers, json={
+            "source_type": "video_file", "source_uri": str(tmp_path / "missing.mp4"),
+        })
+        assert response.status_code == 200
+        assert response.json()["success"] is False
+        assert client.get("/api/v1/health").status_code == 200

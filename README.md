@@ -90,3 +90,20 @@ node --check frontend/js/api.js
 - O primeiro uso de modelos de IA pode baixar pesos e demorar.
 - `VISION_VIDEO_LOOP=true` e videos locais são úteis para desenvolvimento.
 - Evidências ficam em `storage/evidence/`.
+
+### Autenticação da API no navegador
+
+Configure `CAMPEX_API_TOKEN` no ambiente do backend (ou no `.env` local,
+ignorado pelo Git) e reinicie o serviço. Em Configurações do frontend,
+preencha **Token API (somente nesta aba)** com o mesmo valor e salve.
+As requisições JSON, exclusões e uploads enviam `X-CAMPEX-Token`.
+O token fica no `sessionStorage` da aba e é removido ao sair da conta;
+credenciais antigas no `localStorage` são migradas e apagadas.
+O login local do frontend não substitui a autenticação da API.
+
+Não coloque o segredo em JavaScript público, parâmetros de URL ou variáveis
+públicas de build. Use HTTPS em produção. Configure `CAMPEX_FRONTEND_ORIGINS`
+com a origem exata do frontend. O preflight CORS não exige token; as chamadas
+protegidas continuam retornando 401 quando o token está ausente ou incorreto.
+`/api/v1/health` permanece público e a autenticação continua opcional quando
+`CAMPEX_API_TOKEN` não está definido. Tokens de organização são independentes.

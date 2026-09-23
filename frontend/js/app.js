@@ -1,3 +1,4 @@
+import { getApiToken, setApiToken } from "./api-token.js";
 ﻿import {
   createCamera,
   createInvestigation,
@@ -3988,7 +3989,7 @@ function securitySettings() {
   return readStoredSettings("campex.security", {
     session_timeout: "8",
     audit_log: true,
-    strict_token: Boolean(localStorage.getItem("campex.api_token")),
+    strict_token: Boolean(getApiToken()),
     evidence_retention_days: "7",
   });
 }
@@ -4205,7 +4206,7 @@ function securitySettingsMarkup() {
           <span><strong>Exigir token local</strong><small>Salva o token usado nas chamadas protegidas do backend.</small></span>
           <span class="settings-switch-control"><input name="strict_token" type="checkbox" ${settings.strict_token ? "checked" : ""} /><span>Ativo</span></span>
         </label>
-        <label class="settings-split-row"><span><strong>Token API</strong><small>X-CAMPEX-Token do ambiente.</small></span><input name="api_token" type="password" value="${escapeHtml(localStorage.getItem("campex.api_token") || "")}" /></label>
+        <label class="settings-split-row"><span><strong>Token API</strong><small>X-CAMPEX-Token do ambiente (somente nesta aba).</small></span><input name="api_token" type="password" value="${escapeHtml(getApiToken() || "")}" /></label>
         <label class="settings-split-row"><span><strong>Tempo de sessão</strong><small>Preferência local para auditoria operacional.</small></span><select name="session_timeout"><option value="4">4 horas</option><option value="8">8 horas</option><option value="12">12 horas</option></select></label>
         <label class="settings-split-row"><span><strong>Retenção de evidências</strong><small>Executa limpeza pelo backend quando solicitado.</small></span><select name="evidence_retention_days"><option value="7">7 dias</option><option value="15">15 dias</option><option value="30">30 dias</option></select></label>
         <label class="settings-switch-row">
@@ -4468,9 +4469,9 @@ function saveSecuritySettings(event) {
   };
   const token = form.elements.api_token.value.trim();
   if (payload.strict_token && token) {
-    localStorage.setItem("campex.api_token", token);
+    setApiToken(token);
   } else if (!payload.strict_token) {
-    localStorage.removeItem("campex.api_token");
+    setApiToken("");
   }
   writeStoredSettings("campex.security", payload);
   appendSettingsAudit("Segurança atualizada");
@@ -4822,9 +4823,7 @@ function applyLocalSettings() {
   document.body.dataset.operatorMode = settings.operator_mode || "standard";
   document.body.dataset.accent = appearance.accent;
   document.body.dataset.motion = appearance.motion;
-  if (settings.api_token) {
-    localStorage.setItem("campex.api_token", settings.api_token);
-  }
+  getApiToken();
 }
 
 function fillLocalSettings() {
@@ -4834,7 +4833,7 @@ function fillLocalSettings() {
   form.elements.refresh_ms.value = settings.refresh_ms;
   form.elements.operator_mode.value = settings.operator_mode;
   form.elements.dense_lists.checked = Boolean(settings.dense_lists);
-  form.elements.api_token.value = settings.api_token || localStorage.getItem("campex.api_token") || "";
+  form.elements.api_token.value = getApiToken();
   if (form.elements.api_token_visible) {
     form.elements.api_token_visible.value = form.elements.api_token.value;
   }
@@ -4847,14 +4846,9 @@ function saveLocalSettings(event) {
     refresh_ms: Number(form.elements.refresh_ms.value || 2000),
     operator_mode: form.elements.operator_mode.value,
     dense_lists: form.elements.dense_lists.checked,
-    api_token: (form.elements.api_token_visible?.value || form.elements.api_token.value || "").trim(),
   };
   localStorage.setItem("campex.settings", JSON.stringify(settings));
-  if (settings.api_token) {
-    localStorage.setItem("campex.api_token", settings.api_token);
-  } else {
-    localStorage.removeItem("campex.api_token");
-  }
+  setApiToken(form.elements.api_token_visible?.value ?? form.elements.api_token.value);
   applyLocalSettings();
   notify("Configurações salvas", "Preferências locais atualizadas.", "success");
 }

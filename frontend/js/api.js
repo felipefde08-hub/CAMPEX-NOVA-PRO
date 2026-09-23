@@ -1,3 +1,4 @@
+import { getApiToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
 const localApiBaseUrl = "http://127.0.0.1:8000/api/v1";
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
@@ -13,29 +14,29 @@ function assertApiBaseUrl() {
 }
 
 function apiHeaders(extra = {}) {
-  const apiToken = localStorage.getItem("campex.api_token") || "";
+  const apiToken = getApiToken();
   return {
     Accept: "application/json",
     "Content-Type": "application/json",
     ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
-    ...extra,
+    ...Object.fromEntries(new Headers(extra)),
   };
 }
 
 function uploadHeaders(extra = {}) {
-  const apiToken = localStorage.getItem("campex.api_token") || "";
+  const apiToken = getApiToken();
   return {
     Accept: "application/json",
     ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
-    ...extra,
+    ...Object.fromEntries(new Headers(extra)),
   };
 }
 
 async function requestJson(path, options = {}) {
   assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: apiHeaders(options.headers || {}),
     ...options,
+    headers: apiHeaders(options.headers || {}),
   });
 
   if (!response.ok) {

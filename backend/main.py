@@ -1,8 +1,8 @@
 ﻿from __future__ import annotations
 
+import hmac
 import logging
 import os
-import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -175,14 +175,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=startup_settings.frontend_origins,
-    allow_origin_regex=startup_settings.frontend_origin_regex,
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
-)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     RateLimitMiddleware,
@@ -203,36 +195,28 @@ async def api_token_guard(request: Request, call_next):
         token
         and request.url.path.startswith("/api/v1")
         and request.url.path != "/api/v1/health"
-        and request.headers.get("X-CAMPEX-Token") != token
+        and not hmac.compare_digest(
+            request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),
+            token.encode("utf-8"),
+        )
     ):
         response = JSONResponse(
             {"detail": "Token de API ausente ou inválido."},
             status_code=401,
         )
-        _apply_cors_headers(request, response, settings)
         return response
     return await call_next(request)
 
 
-def _apply_cors_headers(request: Request, response: JSONResponse, settings) -> None:
-    origin = request.headers.get("origin")
-    if not origin:
-        return
-    allowed = origin in settings.frontend_origins
-    origin_regex = settings.frontend_origin_regex
-    if not allowed and origin_regex:
-        try:
-            allowed = re.match(origin_regex, origin) is not None
-        except re.error:
-            allowed = False
-    if not allowed:
-        return
-    response.headers["Access-Control-Allow-Origin"] = origin
-    response.headers["Vary"] = "Origin"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-
-
+# CORS wraps authentication, including preflight and error responses.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=startup_settings.frontend_origins,
+    allow_origin_regex=startup_settings.frontend_origin_regex,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
 app.include_router(health_router)
 app.include_router(analysis_router)
 app.include_router(cameras_router)
