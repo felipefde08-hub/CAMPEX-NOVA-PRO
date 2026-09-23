@@ -4028,3 +4028,69 @@ body[data-motion="reduced"] *::after {
     flex: 1 1 8rem;
   }
 }
+
+.node-telemetry {
+  width: 100%;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+  color: var(--color-muted);
+}
+
+.node-telemetry-grid {
+  margin-bottom: 10px;
+}
+
+.node-camera-telemetry-list,
+.node-event-list {
+  display: grid;
+  gap: 8px;
+}
+
+.node-camera-telemetry-line {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.node-camera-telemetry-line span:not(.health-badge),
+.node-event-chip,
+.muted {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.node-event-list {
+  margin-top: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.node-event-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.16);
+}
+
+.node-event-chip[data-severity="critical"] {
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.node-event-chip[data-severity="attention"] {
+  color: #fde68a;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+@media (max-width: 820px) {
+  .node-camera-telemetry-line {
+    grid-template-columns: 1fr;
+  }
+}

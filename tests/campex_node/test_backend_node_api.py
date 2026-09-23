@@ -160,6 +160,63 @@ def test_node_list_marks_stale_heartbeat_offline(monkeypatch, tmp_path):
     assert nodes.json()[0]["status"] == "offline"
 
 
+def test_node_telemetry_endpoint_returns_metrics_events_and_camera_summary(monkeypatch, tmp_path):
+    _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        code = client.post("/api/v1/nodes/pair/request", headers=headers, json={}).json()["code"]
+        claim = client.post(
+            "/api/v1/nodes/pair/claim",
+            json={"code": code, "node_name": "Telemetry Node"},
+        ).json()
+        node_headers = {"Authorization": f"Bearer {claim['node_token']}"}
+        client.post(
+            "/api/v1/node-sync/metrics",
+            headers=node_headers,
+            json=[
+                {
+                    "metric_id": "metric_online",
+                    "metric_type": "camera_online",
+                    "camera_id": "cam_1",
+                    "captured_at": "2026-09-23T18:00:00+00:00",
+                    "value": 1,
+                    "payload": {"camera_name": "Entrada", "status": "ONLINE"},
+                },
+                {
+                    "metric_id": "metric_frames",
+                    "metric_type": "camera_frames_received",
+                    "camera_id": "cam_1",
+                    "captured_at": "2026-09-23T18:00:01+00:00",
+                    "value": 42,
+                    "payload": {"camera_name": "Entrada", "status": "ONLINE"},
+                },
+            ],
+        )
+        client.post(
+            "/api/v1/node-sync/events",
+            headers=node_headers,
+            json=[{
+                "event_id": "event_status",
+                "camera_id": "cam_1",
+                "event_type": "camera_status_changed",
+                "severity": "info",
+                "status": "CLOSED",
+                "timestamp": "2026-09-23T18:00:00+00:00",
+                "metadata": {"camera_name": "Entrada", "current_status": "ONLINE"},
+            }],
+        )
+        telemetry = client.get(f"/api/v1/nodes/{claim['node_id']}/telemetry", headers=headers)
+
+    assert telemetry.status_code == 200
+    body = telemetry.json()
+    assert body["summary"]["metrics_count"] == 2
+    assert body["summary"]["events_count"] == 1
+    assert body["summary"]["cameras_online"] == 1
+    assert body["cameras"][0]["name"] == "Entrada"
+    assert body["cameras"][0]["frames_received"] == 42
+
+
 def test_node_sync_events_and_metrics_are_idempotent(monkeypatch, tmp_path):
     _settings(monkeypatch, tmp_path)
     headers = {"X-CAMPEX-Token": "cloud-secret"}

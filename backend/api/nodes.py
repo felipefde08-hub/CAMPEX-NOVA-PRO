@@ -3,6 +3,7 @@ from __future__ import annotations
 import platform as platform_module
 import socket
 from datetime import datetime, timezone
+import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field
 from backend.cameras.repository import CameraRepository
 from backend.cloud.nodes import NodeIdentity, NodeRepository, get_node_identity
 from backend.config import get_settings
+from backend.database.db import connect
 from backend.security import OrganizationScope, get_organization_scope
 
 
@@ -113,6 +115,47 @@ def get_node(
     if node is None:
         raise HTTPException(status_code=404, detail="Node not found.")
     return _serialize_node(node)
+
+
+@router.get("/{node_id}/telemetry")
+def get_node_telemetry(
+    node_id: str,
+    scope: OrganizationScope = Depends(get_organization_scope),
+    repository: NodeRepository = Depends(get_node_repository),
+) -> dict:
+    node = repository.get_node(node_id, scope.organization_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Node not found.")
+    settings = get_settings()
+    with connect(settings.sqlite_path) as connection:
+        metric_rows = connection.execute(
+            """
+            SELECT * FROM node_metrics
+            WHERE organization_id = ? AND node_id = ?
+            ORDER BY captured_at DESC
+            LIMIT 200
+            """,
+            (scope.organization_id, node_id),
+        ).fetchall()
+        event_rows = connection.execute(
+            """
+            SELECT id, type, camera_id, severity, status, started_at, metadata
+            FROM events
+            WHERE organization_id = ? AND node_id = ?
+            ORDER BY started_at DESC
+            LIMIT 50
+            """,
+            (scope.organization_id, node_id),
+        ).fetchall()
+    metrics = [_serialize_metric(row) for row in metric_rows]
+    events = [_serialize_node_event(row) for row in event_rows]
+    return {
+        "node": _serialize_node(node),
+        "summary": _telemetry_summary(metrics, events),
+        "cameras": _camera_telemetry(metrics, events),
+        "metrics": metrics[:50],
+        "events": events,
+    }
 
 
 @router.patch("/{node_id}")
@@ -228,3 +271,95 @@ def _serialize_node(node: dict) -> dict:
         "created_at": node.get("created_at"),
         "updated_at": node.get("updated_at"),
     }
+
+
+def _serialize_metric(row) -> dict:
+    payload = _loads_json(row["payload_json"])
+    return {
+        "id": row["id"],
+        "node_id": row["node_id"],
+        "camera_id": row["camera_id"],
+        "metric_type": row["metric_type"],
+        "value": row["value"],
+        "payload": payload,
+        "captured_at": row["captured_at"],
+        "received_at": row["received_at"],
+    }
+
+
+def _serialize_node_event(row) -> dict:
+    return {
+        "id": row["id"],
+        "type": row["type"],
+        "camera_id": row["camera_id"],
+        "severity": row["severity"],
+        "status": row["status"],
+        "started_at": row["started_at"],
+        "metadata": _loads_json(row["metadata"]),
+    }
+
+
+def _telemetry_summary(metrics: list[dict], events: list[dict]) -> dict:
+    latest_by_type: dict[str, dict] = {}
+    for metric in metrics:
+        key = metric["metric_type"]
+        if key not in latest_by_type:
+            latest_by_type[key] = metric
+    cameras = _camera_telemetry(metrics, events)
+    return {
+        "metrics_count": len(metrics),
+        "events_count": len(events),
+        "cameras_reported": len(cameras),
+        "cameras_online": sum(1 for camera in cameras if camera.get("online")),
+        "latest_metric_at": metrics[0]["captured_at"] if metrics else None,
+        "latest_event_at": events[0]["started_at"] if events else None,
+        "latest": latest_by_type,
+    }
+
+
+def _camera_telemetry(metrics: list[dict], events: list[dict]) -> list[dict]:
+    cameras: dict[str, dict] = {}
+    for metric in metrics:
+        camera_id = metric.get("camera_id") or "unknown"
+        camera = cameras.setdefault(camera_id, {"camera_id": camera_id, "metrics": {}, "events": []})
+        metric_type = metric["metric_type"]
+        if metric_type not in camera["metrics"]:
+            camera["metrics"][metric_type] = metric
+        payload = metric.get("payload") or {}
+        if payload.get("camera_name") and not camera.get("name"):
+            camera["name"] = payload.get("camera_name")
+        if payload.get("status") and not camera.get("status"):
+            camera["status"] = payload.get("status")
+    for event in events:
+        camera_id = event.get("camera_id") or "unknown"
+        camera = cameras.setdefault(camera_id, {"camera_id": camera_id, "metrics": {}, "events": []})
+        if len(camera["events"]) < 5:
+            camera["events"].append(event)
+        metadata = event.get("metadata") or {}
+        if metadata.get("camera_name") and not camera.get("name"):
+            camera["name"] = metadata.get("camera_name")
+        if metadata.get("current_status") and not camera.get("status"):
+            camera["status"] = metadata.get("current_status")
+    for camera in cameras.values():
+        online_metric = camera["metrics"].get("camera_online")
+        camera["online"] = bool(online_metric and online_metric.get("value") == 1)
+        camera["frames_received"] = _metric_value(camera, "camera_frames_received")
+        camera["reconnect_attempts"] = _metric_value(camera, "camera_reconnect_attempts")
+        camera["consecutive_failures"] = _metric_value(camera, "camera_consecutive_failures")
+        camera["last_metric_at"] = max((m["captured_at"] for m in camera["metrics"].values()), default=None)
+    return sorted(cameras.values(), key=lambda item: item.get("name") or item["camera_id"])
+
+
+def _metric_value(camera: dict, metric_type: str) -> float | None:
+    metric = camera["metrics"].get(metric_type)
+    return metric.get("value") if metric else None
+
+
+def _loads_json(value) -> dict:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, json.JSONDecodeError):
+        return {}

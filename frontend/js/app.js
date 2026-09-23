@@ -1,6 +1,6 @@
 import { connectBackend, getBackendUrl } from "./api.js";
 import { getApiToken, setApiToken } from "./api-token.js";
-﻿import {
+import {
   createCamera,
   createInvestigation,
   createMachine,
@@ -37,6 +37,7 @@ import { getApiToken, setApiToken } from "./api-token.js";
   getNotificationPreferences,
   listNotificationDeliveries,
   listNodes,
+  getNodeTelemetry,
   listEvents,
   listEvidence,
   listInvestigations,
@@ -4510,6 +4511,7 @@ async function loadSettingsNodes() {
     document.querySelectorAll("[data-node-action]").forEach((button) => {
       button.addEventListener("click", handleSettingsNodeAction);
     });
+    await loadSettingsNodeTelemetry(nodes);
   } catch (error) {
     listHost.innerHTML = emptyState("Falha ao carregar Nodes", error.message);
   }
@@ -4530,7 +4532,8 @@ function settingsNodeLine(node) {
       <div>
         <strong>${escapeHtml(node.name || node.id)}</strong>
         <span>${escapeHtml(details)}</span>
-        <span>Último heartbeat: ${escapeHtml(lastSeen)}</span>
+        <span>Último heartbeat: ${escapeHtml(lastSeen)} · Fila local: ${Number(node.queue_size || 0)}</span>
+        <div class="node-telemetry" data-node-telemetry="${escapeHtml(node.id)}">Carregando telemetria...</div>
       </div>
       <small data-state="${connected ? "connected" : "pending"}">${status.toUpperCase()}</small>
       <div class="settings-row-actions">
@@ -4539,6 +4542,60 @@ function settingsNodeLine(node) {
       </div>
     </article>
   `;
+}
+
+async function loadSettingsNodeTelemetry(nodes) {
+  await Promise.allSettled((nodes || []).map(async (node) => {
+    const host = document.querySelector(`[data-node-telemetry="${cssEscape(node.id)}"]`);
+    if (!host) return;
+    try {
+      const telemetry = await getNodeTelemetry(node.id);
+      host.innerHTML = settingsNodeTelemetryMarkup(telemetry);
+    } catch (error) {
+      host.innerHTML = `<span class="muted">Telemetria indisponível: ${escapeHtml(error.message)}</span>`;
+    }
+  }));
+}
+
+function settingsNodeTelemetryMarkup(telemetry) {
+  const summary = telemetry.summary || {};
+  const cameras = telemetry.cameras || [];
+  const events = telemetry.events || [];
+  const stats = [
+    metricItem("Telemetria", `${summary.metrics_count || 0} métricas`, formatDate(summary.latest_metric_at) || "sem leitura"),
+    metricItem("Câmeras reportadas", `${summary.cameras_online || 0}/${summary.cameras_reported || 0} online`, `${events.length} eventos recentes`),
+  ].join("");
+  const cameraRows = cameras.length
+    ? cameras.slice(0, 6).map(settingsNodeCameraTelemetryLine).join("")
+    : `<p class="muted">Sem telemetria de câmera sincronizada ainda.</p>`;
+  const eventRows = events.length
+    ? events.slice(0, 4).map((event) => `<span class="node-event-chip" data-severity="${escapeHtml(event.severity || "info")}">${escapeHtml(event.camera_id || "camera")} · ${escapeHtml(event.type || "evento")} · ${escapeHtml(formatDate(event.started_at))}</span>`).join("")
+    : `<span class="muted">Nenhum evento recente.</span>`;
+  return `
+    <div class="settings-runtime-grid node-telemetry-grid">${stats}</div>
+    <div class="node-camera-telemetry-list">${cameraRows}</div>
+    <div class="node-event-list">${eventRows}</div>
+  `;
+}
+
+function settingsNodeCameraTelemetryLine(camera) {
+  const status = camera.status || (camera.online ? "ONLINE" : "OFFLINE");
+  const failures = Number(camera.consecutive_failures || 0);
+  const reconnects = Number(camera.reconnect_attempts || 0);
+  const frames = Number(camera.frames_received || 0);
+  return `
+    <div class="node-camera-telemetry-line">
+      <strong>${escapeHtml(camera.name || camera.camera_id)}</strong>
+      <span class="health-badge" data-status="${camera.online ? "ONLINE" : "OFFLINE"}">${escapeHtml(status)}</span>
+      <span>${frames.toLocaleString("pt-BR")} frames</span>
+      <span>${reconnects.toLocaleString("pt-BR")} reconexões</span>
+      <span>${failures.toLocaleString("pt-BR")} falhas seguidas</span>
+    </div>
+  `;
+}
+
+function cssEscape(value) {
+  return window.CSS?.escape ? window.CSS.escape(String(value)) : String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
 }
 
 async function createNodePairingCode() {

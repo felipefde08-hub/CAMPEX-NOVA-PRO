@@ -491,6 +491,10 @@ export function listNodes() {
   return requestJson("/nodes");
 }
 
+export function getNodeTelemetry(nodeId) {
+  return requestJson(`/nodes/${nodeId}/telemetry`);
+}
+
 export function requestNodePairingCode() {
   return requestJson("/nodes/pair/request", {
     method: "POST",
