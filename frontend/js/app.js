@@ -4624,25 +4624,48 @@ async function loadNotificationSettings() {
 async function saveNotificationSettings(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  const alertTypes = notificationAlertTypes()
-    .filter((name) => form.elements[name].checked);
-  const payload = {
-    enabled: form.elements.enabled.checked,
-    telegram_enabled: form.elements.telegram_enabled.checked,
-    telegram_chat_id: form.elements.telegram_chat_id.value.trim() || null,
-    email_enabled: form.elements.email_enabled.checked,
-    email_recipients: form.elements.email_recipients.value.split(",").map((item) => item.trim()).filter(Boolean),
-    reports_enabled: form.elements.reports_enabled.checked,
-    report_frequency: form.elements.report_frequency.value,
-    report_time: form.elements.report_time.value || "18:00",
-    timezone: form.elements.timezone.value || "America/Sao_Paulo",
-    immediate_alerts_enabled: form.elements.immediate_alerts_enabled.checked,
-    alert_types: alertTypes,
-  };
-  await updateNotificationPreferences(payload);
-  notify("Notificações salvas", "Preferências de entrega atualizadas.", "success");
-  await loadNotificationSettings();
-  await loadNotificationDeliveries();
+  const submitButton = event.submitter || form.querySelector('button[type="submit"]');
+  const originalText = submitButton?.textContent;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Salvando...";
+  }
+  try {
+    const alertTypes = notificationAlertTypes()
+      .filter((name) => form.elements[name]?.checked);
+    const payload = {
+      enabled: form.elements.enabled.checked,
+      telegram_enabled: form.elements.telegram_enabled.checked,
+      telegram_chat_id: form.elements.telegram_chat_id.value.trim() || null,
+      email_enabled: form.elements.email_enabled.checked,
+      email_recipients: form.elements.email_recipients.value.split(",").map((item) => item.trim()).filter(Boolean),
+      reports_enabled: form.elements.reports_enabled.checked,
+      report_frequency: form.elements.report_frequency.value,
+      report_time: form.elements.report_time.value || "18:00",
+      timezone: form.elements.timezone.value || "America/Sao_Paulo",
+      immediate_alerts_enabled: form.elements.immediate_alerts_enabled.checked,
+      alert_types: alertTypes,
+    };
+    await updateNotificationPreferences(payload);
+    notify("Notificações salvas", "Preferências de entrega atualizadas.", "success");
+    await loadNotificationSettings();
+    await loadNotificationDeliveries();
+  } catch (error) {
+    notify("Falha ao salvar notificações", notificationErrorMessage(error), "error", 8000);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = originalText || "Salvar alterações";
+    }
+  }
+}
+
+function notificationErrorMessage(error) {
+  const message = error?.message || "Não foi possível salvar as preferências.";
+  if (message.toLowerCase().includes("token de api")) {
+    return `${message} Configure o Token API nas configurações gerais antes de salvar.`;
+  }
+  return message;
 }
 
 async function testTelegramSettings() {
