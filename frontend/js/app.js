@@ -910,6 +910,7 @@ async function renderLivePage() {
         </label>
         <div class="row-actions">
           <button type="button" id="live-toggle-vision" class="mode-toggle" data-active="false">Vision: OFF</button>
+          <button type="button" id="live-toggle-detections" class="mode-toggle" data-active="false">Detecção: OFF</button>
           <button type="button" id="live-toggle-mapping" class="mode-toggle" data-active="false">Mapeamento: OFF</button>
           <button type="button" id="live-restart-vision">Reiniciar Vision</button>
           <button type="button" id="live-refresh">Atualizar</button>
@@ -944,6 +945,7 @@ async function renderLivePage() {
 
   document.querySelector("#live-camera-select").addEventListener("change", selectLiveCamera);
   document.querySelector("#live-toggle-vision").addEventListener("click", handleToggleVision);
+  document.querySelector("#live-toggle-detections").addEventListener("click", handleToggleDetections);
   document.querySelector("#live-toggle-mapping").addEventListener("click", handleToggleMapping);
   document.querySelector("#live-restart-vision").addEventListener("click", handleRestartVision);
   document.querySelector("#live-refresh").addEventListener("click", refreshLiveStatus);
@@ -995,7 +997,7 @@ async function selectLiveCamera() {
       if (statusElement.dataset.status !== status) statusElement.dataset.status = status;
     }
     const visionStatus = await refreshLiveStatus();
-    await renderLiveMedia(camera, visionStatus?.status === "RUNNING");
+    await renderLiveMedia(camera);
   } catch (error) {
     const nameElement = document.querySelector("#live-camera-name");
     if (nameElement && nameElement.textContent !== "Backend indisponivel") {
@@ -1021,7 +1023,7 @@ async function selectedCamera() {
   return cameras.find((item) => item.id === cameraId) || null;
 }
 
-async function renderLiveMedia(camera, visionEnabled = false) {
+async function renderLiveMedia(camera) {
   activeMediaCameraId = camera?.id || null;
   if (!camera?.id) {
     renderMediaPlaceholder("Selecione uma camera");
@@ -1029,11 +1031,6 @@ async function renderLiveMedia(camera, visionEnabled = false) {
   }
 
   renderMediaPlaceholder("Abrindo stream...");
-
-  if (visionEnabled) {
-    renderMjpegElement(camera);
-    return;
-  }
 
   if (camera.source_type === "video_file") {
     renderVideoElement(camera);
@@ -1094,7 +1091,7 @@ function renderVideoElement(camera) {
 
 function renderMjpegElement(camera) {
   const mediaHost = document.querySelector("#live-media-host");
-  const streamUrl = `${cameraStreamUrl(camera.id)}?t=${Date.now()}`;
+  const streamUrl = `${cameraStreamUrl(camera.id, { overlay: liveDetectionsVisible() })}${liveDetectionsVisible() ? "&" : "?"}t=${Date.now()}`;
   mediaHost.innerHTML = `
     <img
       id="live-stream"
@@ -1152,6 +1149,17 @@ async function handleStartVision() {
   await refreshLiveStatus();
 }
 
+async function handleToggleDetections() {
+  const nextVisible = !liveDetectionsVisible();
+  localStorage.setItem("campex.live_detections_visible", String(nextVisible));
+  updateDetectionToggle();
+  const camera = await selectedCamera();
+  if (camera) {
+    await renderLiveMedia(camera);
+  }
+  await refreshLiveStatus();
+}
+
 async function handleStopVision() {
   const cameraId = document.querySelector("#live-camera-select").value;
   if (!cameraId) {
@@ -1161,7 +1169,7 @@ async function handleStopVision() {
     await stopVision(cameraId);
     notify("Vision desligada", "A análise da câmera foi pausada.", "warning");
     const camera = await selectedCamera();
-    await renderLiveMedia(camera, false);
+    await renderLiveMedia(camera);
     await refreshLiveStatus();
   } catch (error) {
     notifyError("Falha ao desligar Vision", error);
@@ -1252,12 +1260,14 @@ async function refreshLiveStatus() {
   liveStatusRefreshInFlight = true;
 
   try {
-    const [health, visionStatus, objects, poses] = await Promise.all([
+    const [health, visionStatus] = await Promise.all([
       getCameraHealth(cameraId),
       getVisionStatus(cameraId),
-      getVisionObjects(cameraId),
-      getMappingPoses(cameraId),
     ]);
+    const showDetections = liveDetectionsVisible();
+    const [objects, poses] = showDetections
+      ? await Promise.all([getVisionObjects(cameraId), getMappingPoses(cameraId)])
+      : [[], []];
     // Apenas atualiza os elementos de status, nunca re-renderiza a mídia
     updateVisionStatusOnly(visionStatus, objects, health, poses);
     return visionStatus;
@@ -1270,6 +1280,7 @@ async function refreshLiveStatus() {
 }
 
 function renderVisionStatus(visionStatus, objects, health, poses = []) {
+  updateDetectionToggle();
   const metrics = visionStatus?.metrics || {};
   const status = visionStatus?.status || "STOPPED";
   const mapping = visionStatus?.components?.mapping || {};
@@ -1287,7 +1298,9 @@ function renderVisionStatus(visionStatus, objects, health, poses = []) {
     }
   }
   if (detectionSummary) {
-    const newSummary = `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`;
+    const newSummary = liveDetectionsVisible()
+      ? `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`
+      : `${status} · visualização de detecção OFF`;
     if (detectionSummary.textContent !== newSummary) {
       detectionSummary.textContent = newSummary;
     }
@@ -1311,6 +1324,7 @@ function renderVisionStatus(visionStatus, objects, health, poses = []) {
 }
 
 function updateVisionStatusOnly(visionStatus, objects, health, poses = []) {
+  updateDetectionToggle();
   // Apenas atualiza o status, nunca toca na mídia ou re-renderiza
   const metrics = visionStatus?.metrics || {};
   const status = visionStatus?.status || "STOPPED";
@@ -1329,7 +1343,9 @@ function updateVisionStatusOnly(visionStatus, objects, health, poses = []) {
     }
   }
   if (detectionSummary) {
-    const newSummary = `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`;
+    const newSummary = liveDetectionsVisible()
+      ? `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`
+      : `${status} · visualização de detecção OFF`;
     if (detectionSummary.textContent !== newSummary) {
       detectionSummary.textContent = newSummary;
     }
@@ -3143,6 +3159,20 @@ async function renderSettingsPage() {
   `;
   setupSettingsInteractions();
   await renderSettingsTab("general");
+}
+
+function liveDetectionsVisible() {
+  return localStorage.getItem("campex.live_detections_visible") === "true";
+}
+
+function updateDetectionToggle() {
+  const button = document.querySelector("#live-toggle-detections");
+  if (!button) {
+    return;
+  }
+  const visible = liveDetectionsVisible();
+  button.dataset.active = String(visible);
+  button.textContent = `Detecção: ${visible ? "ON" : "OFF"}`;
 }
 
 function settingsTabs() {

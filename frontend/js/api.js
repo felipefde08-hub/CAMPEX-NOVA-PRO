@@ -365,9 +365,10 @@ export function getStreamInfo(cameraId) {
   return requestJson(`/cameras/${cameraId}/stream/info`);
 }
 
-export function cameraStreamUrl(cameraId) {
+export function cameraStreamUrl(cameraId, options = {}) {
   assertApiBaseUrl();
-  return `${API_BASE_URL}/cameras/${cameraId}/stream`;
+  const query = options.overlay ? "?overlay=true" : "";
+  return `${API_BASE_URL}/cameras/${cameraId}/stream${query}`;
 }
 
 export function cameraVideoUrl(cameraId) {
@@ -375,9 +376,13 @@ export function cameraVideoUrl(cameraId) {
   return `${API_BASE_URL}/cameras/${cameraId}/video`;
 }
 
-export function cameraSnapshotUrl(cameraId) {
+export function cameraSnapshotUrl(cameraId, options = {}) {
   assertApiBaseUrl();
-  return `${API_BASE_URL}/cameras/${cameraId}/snapshot?t=${Date.now()}`;
+  const params = new URLSearchParams({ t: String(Date.now()) });
+  if (options.overlay) {
+    params.set("overlay", "true");
+  }
+  return `${API_BASE_URL}/cameras/${cameraId}/snapshot?${params}`;
 }
 
 export async function analyzeVideo(file) {

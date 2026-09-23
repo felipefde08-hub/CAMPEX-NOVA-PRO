@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 import cv2
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from backend.cameras.manager import CameraManager
@@ -233,6 +233,7 @@ def camera_video(
 @router.get("/{camera_id}/snapshot")
 def camera_snapshot(
     camera_id: str,
+    overlay: bool = Query(False),
     scope: OrganizationScope = Depends(get_organization_scope),
     repository: CameraRepository = Depends(get_repository),
     manager: CameraManager = Depends(get_camera_manager),
@@ -242,7 +243,7 @@ def camera_snapshot(
     frame, _ = manager.latest_frame(camera_id)
     if frame is None:
         frame = _blank_frame("Sem preview disponivel")
-    else:
+    elif overlay:
         objects = engine.objects(camera_id)
         poses = engine.poses(camera_id)
         if objects or poses:
@@ -306,6 +307,7 @@ def resolve_video_path(source_uri: str) -> Path:
 async def camera_stream(
     request: Request,
     camera_id: str,
+    overlay: bool = Query(False),
     scope: OrganizationScope = Depends(get_organization_scope),
     repository: CameraRepository = Depends(get_repository),
     manager: CameraManager = Depends(get_camera_manager),
@@ -323,8 +325,12 @@ async def camera_stream(
                 frame, _ = manager.latest_frame(camera_id)
                 if frame is None:
                     frame = _blank_frame("Aguardando frame da camera")
-                objects = engine.objects(camera_id)
-                poses = engine.poses(camera_id)
+                if overlay:
+                    objects = engine.objects(camera_id)
+                    poses = engine.poses(camera_id)
+                else:
+                    objects = []
+                    poses = []
                 if objects or poses:
                     try:
                         frame = overlay_renderer.render(frame, objects, poses)
