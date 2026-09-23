@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import platform
+import sys
 from dataclasses import replace
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -81,6 +84,31 @@ class LocalNodeRuntime:
         cameras = self.lifecycle.config_sync.sync_once()
         return {"ok": True, "cameras_loaded": len(cameras), **self.status()}
 
+    def diagnostics(self) -> dict:
+        settings = self.lifecycle.settings
+        return {
+            "ok": True,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "node_id": self.lifecycle.node_id,
+            "version": settings.version,
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "data_dir": str(settings.data_dir),
+            "database_path": str(settings.database_path),
+            "database_exists": settings.database_path.exists(),
+            "cloud_configured": bool(settings.cloud_url),
+            "paired": bool(settings.node_id and settings.cloud_token),
+            "queue_size": self.lifecycle.store.outbound_queue_size(),
+            "services": {
+                "camera_manager": True,
+                "config_sync": self.lifecycle.config_sync is not None,
+                "sync": self.lifecycle.sync is not None,
+                "telemetry": self.lifecycle.telemetry is not None,
+                "heartbeat": self.lifecycle.heartbeat is not None,
+            },
+            "cameras": self.lifecycle.camera_manager.summary(),
+        }
+
     def _build_from_persisted_connection(self):
         lifecycle = build_lifecycle()
         lifecycle.settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -131,6 +159,10 @@ def create_app() -> FastAPI:
     def sync() -> dict:
         return runtime.sync_now()
 
+    @app.get("/api/diagnostics")
+    def diagnostics() -> dict:
+        return runtime.diagnostics()
+
     return app
 
 
@@ -162,7 +194,7 @@ NODE_HTML = """<!doctype html>
           <label>Backend Cloud</label><input name="cloud_url" placeholder="https://campexback.vercel.app/api/v1" />
           <label>Código de pareamento</label><input name="pairing_code" autocomplete="off" placeholder="CXP-7KQ2-N91P" />
           <label>Nome deste Node</label><input name="node_name" placeholder="RBA-NODE-01" />
-          <div class="actions"><button type="submit">Parear Node</button><button class="secondary" type="button" id="sync-button">Sincronizar agora</button></div>
+          <div class="actions"><button type="submit">Parear Node</button><button class="secondary" type="button" id="sync-button">Sincronizar agora</button><button class="secondary" type="button" id="diagnostics-button">Diagnóstico</button></div>
           <p class="status" id="form-status"></p>
         </form></section>
         <section class="panel"><h2>Status</h2><div class="stats">
@@ -198,6 +230,7 @@ NODE_HTML = """<!doctype html>
       await load();
     });
     document.querySelector('#sync-button').addEventListener('click',async()=>{statusEl.textContent='Sincronizando...';const res=await fetch('/api/sync',{method:'POST'});const data=await res.json();statusEl.textContent=data.ok?`Sincronizadas: ${data.cameras_loaded}`:(data.error||'Falha na sincronização');await load();});
+    document.querySelector('#diagnostics-button').addEventListener('click',async()=>{const data=await fetch('/api/diagnostics').then(r=>r.json());statusEl.textContent=`Diagnóstico OK · fila ${data.queue_size} · câmeras ${data.cameras.cameras_total}`;});
     load(); setInterval(load,5000);
   </script>
 </body>

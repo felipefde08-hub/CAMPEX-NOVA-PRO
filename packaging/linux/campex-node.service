@@ -1,0 +1,22 @@
+[Unit]
+Description=CAMPEX Node local service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/campex
+Environment=CAMPEX_NODE_DATA_DIR=/var/lib/campex-node
+ExecStart=/opt/campex/.venv/bin/python -m campex_node.main --app --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=5
+User=campex
+Group=campex
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/campex-node /opt/campex/storage
+
+[Install]
+WantedBy=multi-user.target

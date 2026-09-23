@@ -106,11 +106,25 @@ The Node also emits `camera_status_changed` events when a camera changes state.
 Logs sanitize RTSP credentials and error messages before writing them. The Node
 never prints camera credentials, API keys or tokens intentionally.
 
-## Service Readiness
+## Run as a Local Service
 
-The process is structured for future service wrappers:
+Service-ready packaging files are available in `packaging/`:
 
-- Linux: systemd unit running `python -m campex_node.main`
-- Windows: Windows Service wrapper running the same module
+- macOS LaunchAgent: `packaging/macos/install_launch_agent.sh`
+- Linux systemd: `packaging/linux/install_systemd.sh`
+- Windows Scheduled Task: `packaging/windows/install_task.ps1`
 
-Installers are intentionally outside this first version.
+These scripts do not include tokens or camera credentials. Pair the Node through
+the local app at `http://127.0.0.1:8787` or provide secrets through local
+environment variables. Full instructions are in `docs/CAMPEX_NODE_SERVICE.md`.
+
+## Diagnostics
+
+With the local app running, use:
+
+```text
+GET http://127.0.0.1:8787/api/diagnostics
+```
+
+The diagnostics response includes runtime health, queue size, service state and
+camera summary. It intentionally excludes tokens, API keys and RTSP credentials.
