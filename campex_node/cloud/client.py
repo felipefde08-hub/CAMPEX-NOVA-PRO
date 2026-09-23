@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
+import socket
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -39,12 +41,39 @@ class CloudClient:
         if not self.settings.cloud_url:
             logger.info("Cloud URL not configured; heartbeat kept local.")
             return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
-        return self._send("POST", "/node/heartbeat", payload=payload)
+        node_id = payload.get("node_id") or self.settings.node_id
+        if not node_id:
+            return CloudResult(ok=False, error="Node is not paired.")
+        heartbeat_payload = dict(payload)
+        heartbeat_payload.pop("node_id", None)
+        heartbeat_payload.setdefault("platform", platform.system().lower())
+        heartbeat_payload.setdefault("hostname", socket.gethostname())
+        heartbeat_payload.setdefault("vision_status", "idle")
+        heartbeat_payload.setdefault("queue_size", 0)
+        return self._send("POST", f"/nodes/{node_id}/heartbeat", payload=heartbeat_payload)
 
     def fetch_config(self) -> CloudResult:
         if not self.settings.cloud_url:
             return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
-        return self._send("GET", "/node/config")
+        if not self.settings.node_id:
+            return CloudResult(ok=False, error="Node is not paired.")
+        return self._send("GET", f"/nodes/{self.settings.node_id}/config")
+
+    def claim_pairing_code(self, *, code: str, node_name: str, version: str) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send(
+            "POST",
+            "/nodes/pair/claim",
+            payload={
+                "code": code,
+                "node_name": node_name,
+                "platform": platform.system().lower(),
+                "hostname": socket.gethostname(),
+                "version": version,
+            },
+            include_node_token=False,
+        )
 
     def _send(
         self,
@@ -52,6 +81,7 @@ class CloudClient:
         path: str,
         *,
         payload: dict[str, Any] | None = None,
+        include_node_token: bool = True,
     ) -> CloudResult:
         assert self.settings.cloud_url is not None
         url = f"{self.settings.cloud_url}{path}"
@@ -59,7 +89,7 @@ class CloudClient:
         headers = {"Accept": "application/json"}
         if body is not None:
             headers["Content-Type"] = "application/json"
-        if self.settings.cloud_token:
+        if include_node_token and self.settings.cloud_token:
             headers["Authorization"] = f"Bearer {self.settings.cloud_token}"
         if self.settings.cloud_api_token:
             headers["X-CAMPEX-Token"] = self.settings.cloud_api_token

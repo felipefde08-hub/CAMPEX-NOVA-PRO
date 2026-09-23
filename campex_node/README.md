@@ -31,10 +31,15 @@ Optional Cloud settings:
 
 ```bash
 export CAMPEX_NODE_CLOUD_URL="https://campexback.vercel.app/api/v1"
+export CAMPEX_NODE_ID="node_a81f28"
 export CAMPEX_NODE_TOKEN="token_privado_do_node"
-export CAMPEX_NODE_CLOUD_API_TOKEN="token_privado_do_backend"
 export CAMPEX_NODE_ORGANIZATION_ID="default"
 ```
+
+In the product flow, `CAMPEX_NODE_ID` and `CAMPEX_NODE_TOKEN` are returned by
+Cloud after the user enters a temporary pairing code in the local Node app.
+Do not use user passwords or the backend administrative API token as Node
+credentials.
 
 Local runtime settings:
 

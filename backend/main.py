@@ -16,7 +16,8 @@ from backend.api.intelligence import router as intelligence_router
 from backend.api.machines import router as machines_router
 from backend.api.monitoring import router as monitoring_router
 from backend.api.notifications import router as notifications_router
-from backend.api.node import router as node_router
+from backend.api.nodes import legacy_router as legacy_node_router
+from backend.api.nodes import router as nodes_router
 from backend.api.operations import router as operations_router
 from backend.api.vision import router as vision_router
 from backend.api.videos import router as videos_router
@@ -190,12 +191,26 @@ app.add_middleware(
 async def api_token_guard(request: Request, call_next):
     settings = getattr(request.app.state, "settings", startup_settings)
     token = settings.api_token
+    path = request.url.path
+    auth_header = request.headers.get("authorization", "")
+    has_node_bearer = (
+        (
+            path.startswith("/api/v1/node/")
+            or (
+                path.startswith("/api/v1/nodes/")
+                and (path.endswith("/heartbeat") or path.endswith("/config"))
+            )
+        )
+        and not path.startswith("/api/v1/nodes/pair/")
+    ) and auth_header.lower().startswith("bearer ")
     if request.method == "OPTIONS":
         return await call_next(request)
     if (
         token
-        and request.url.path.startswith("/api/v1")
-        and request.url.path != "/api/v1/health"
+        and path.startswith("/api/v1")
+        and path != "/api/v1/health"
+        and path != "/api/v1/nodes/pair/claim"
+        and not has_node_bearer
         and not hmac.compare_digest(
             request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),
             token.encode("utf-8"),
@@ -232,7 +247,8 @@ app.include_router(operations_router)
 app.include_router(intelligence_router)
 app.include_router(notifications_router)
 app.include_router(monitoring_router)
-app.include_router(node_router)
+app.include_router(nodes_router)
+app.include_router(legacy_node_router)
 
 
 def _warn_security_posture(settings) -> None:

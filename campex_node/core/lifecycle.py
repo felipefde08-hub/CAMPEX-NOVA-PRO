@@ -122,6 +122,9 @@ class NodeLifecycle:
             self.camera_manager.stop()
 
     def _get_or_create_node_id(self) -> str:
+        if self.settings.node_id:
+            self.store.set_meta("node_id", self.settings.node_id)
+            return self.settings.node_id
         existing = self.store.get_meta("node_id")
         if existing:
             return existing

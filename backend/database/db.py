@@ -271,14 +271,31 @@ SCHEMA_STATEMENTS = (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL,
         name TEXT NOT NULL,
+        token_hash TEXT,
         status TEXT NOT NULL DEFAULT 'offline'
             CHECK(status IN ('online', 'offline', 'degraded')),
         version TEXT NOT NULL DEFAULT '0.1.0',
+        platform TEXT,
+        hostname TEXT,
         cameras_total INTEGER NOT NULL DEFAULT 0,
         cameras_online INTEGER NOT NULL DEFAULT 0,
+        vision_status TEXT,
+        queue_size INTEGER NOT NULL DEFAULT 0,
         last_seen_at TEXT,
+        revoked_at TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS node_pairing_codes (
+        code TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        requested_by TEXT,
+        expires_at TEXT NOT NULL,
+        claimed_at TEXT,
+        claimed_node_id TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id)",
@@ -298,6 +315,7 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_automation_rules_org_monitor ON automation_rules(organization_id, monitor_id)",
     "CREATE INDEX IF NOT EXISTS idx_state_transitions_org_monitor_time ON state_transitions(organization_id, monitor_id, occurred_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_campex_nodes_org_status ON campex_nodes(organization_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_node_pairing_codes_org_expires ON node_pairing_codes(organization_id, expires_at)",
 )
 
 
@@ -323,6 +341,7 @@ def initialize_database(settings: Settings) -> Path:
         _migrate_camera_runtime_state(connection)
         _migrate_organization_scope(connection, settings.intelligence_default_organization_id)
         _migrate_video_analysis_debug_columns(connection)
+        _migrate_node_columns(connection)
         _ensure_default_organization(connection, settings.intelligence_default_organization_id)
         connection.execute(
             """
@@ -424,6 +443,24 @@ def _migrate_video_analysis_debug_columns(connection: sqlite3.Connection) -> Non
     }
     for column, statement in migrations.items():
         if column not in columns:
+            connection.execute(statement)
+
+
+def _migrate_node_columns(connection: sqlite3.Connection) -> None:
+    node_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(campex_nodes)").fetchall()
+    }
+    node_migrations = {
+        "token_hash": "ALTER TABLE campex_nodes ADD COLUMN token_hash TEXT",
+        "platform": "ALTER TABLE campex_nodes ADD COLUMN platform TEXT",
+        "hostname": "ALTER TABLE campex_nodes ADD COLUMN hostname TEXT",
+        "vision_status": "ALTER TABLE campex_nodes ADD COLUMN vision_status TEXT",
+        "queue_size": "ALTER TABLE campex_nodes ADD COLUMN queue_size INTEGER NOT NULL DEFAULT 0",
+        "revoked_at": "ALTER TABLE campex_nodes ADD COLUMN revoked_at TEXT",
+    }
+    for column, statement in node_migrations.items():
+        if column not in node_columns:
             connection.execute(statement)
 
 

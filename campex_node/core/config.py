@@ -88,6 +88,7 @@ class NodeSettings:
     data_dir: Path
     database_path: Path
     node_id_file: Path
+    node_id: str | None = None
     cloud_url: str | None = None
     cloud_token: str | None = None
     cloud_api_token: str | None = None
@@ -117,6 +118,7 @@ class NodeSettings:
             data_dir=data_dir,
             database_path=database_path,
             node_id_file=node_id_file,
+            node_id=os.getenv("CAMPEX_NODE_ID") or None,
             cloud_url=(os.getenv("CAMPEX_NODE_CLOUD_URL") or "").rstrip("/") or None,
             cloud_token=os.getenv("CAMPEX_NODE_TOKEN") or None,
             cloud_api_token=(
