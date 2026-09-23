@@ -34,6 +34,61 @@ configure_logging(startup_settings)
 logger = logging.getLogger("campex")
 
 
+class ServerlessVisionEngine:
+    def __init__(self, settings) -> None:
+        self.settings = settings
+
+    def shutdown(self) -> None:
+        return None
+
+    @staticmethod
+    def _status(camera_id: str) -> dict:
+        return {
+            "camera_id": camera_id,
+            "status": "UNAVAILABLE",
+            "error": "Vision runtime is available only in local CAMPEX mode.",
+            "metrics": None,
+        }
+
+    def start_session(self, camera_id: str) -> dict:
+        return self._status(camera_id)
+
+    def restart_session(self, camera_id: str) -> dict:
+        return self._status(camera_id)
+
+    def stop_session(self, camera_id: str) -> dict:
+        return {"camera_id": camera_id, "status": "STOPPED", "error": None, "metrics": None}
+
+    def start_mapping(self, camera_id: str) -> dict:
+        return self._status(camera_id)
+
+    def stop_mapping(self, camera_id: str) -> dict:
+        return {"camera_id": camera_id, "status": "STOPPED", "mapping": "STOPPED"}
+
+    def status(self, camera_id: str) -> dict:
+        return self._status(camera_id)
+
+    def objects(self, camera_id: str) -> list:
+        return []
+
+    def poses(self, camera_id: str) -> list:
+        return []
+
+    def events(self, camera_id: str) -> list:
+        return []
+
+    def productivity(self, camera_id: str) -> dict:
+        return {
+            "camera_id": camera_id,
+            "score": 100,
+            "counts": {"people": 0, "active_people": 0, "idle_people": 0, "machines": 0, "phones": 0},
+            "signals": [],
+            "machines": [],
+            "people": [],
+            "limitations": ["Vision precisa do runtime local CAMPEX."],
+        }
+
+
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     settings = get_settings()
@@ -93,6 +148,10 @@ async def lifespan(app_instance: FastAPI):
             raise
     else:
         # Serverless mode: minimal initialization
+        repository = CameraRepository(settings)
+        manager = CameraManager(settings, repository)
+        app_instance.state.camera_manager = manager
+        app_instance.state.vision_engine = ServerlessVisionEngine(settings)
         logger.info(
             "CAMPEX started (serverless mode)",
             extra={

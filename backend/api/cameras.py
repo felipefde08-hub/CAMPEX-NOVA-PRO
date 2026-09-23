@@ -103,7 +103,7 @@ def create_camera(
         "Camera registered",
         extra={"camera_id": camera.id, "source_type": camera.source_type},
     )
-    if camera.enabled:
+    if camera.enabled and manager.settings.runtime != "serverless":
         manager.start_camera(camera)
     return serialize_camera(camera, manager.health(camera).as_dict())
 
@@ -168,7 +168,8 @@ def update_camera(
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found.")
 
-    manager.restart_camera(camera)
+    if manager.settings.runtime != "serverless":
+        manager.restart_camera(camera)
     return serialize_camera(camera, manager.health(camera).as_dict())
 
 
