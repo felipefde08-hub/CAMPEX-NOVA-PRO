@@ -487,6 +487,33 @@ export function listNotificationDeliveries() {
   return requestJson("/notifications/deliveries");
 }
 
+export function listNodes() {
+  return requestJson("/nodes");
+}
+
+export function requestNodePairingCode() {
+  return requestJson("/nodes/pair/request", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export function renameNode(nodeId, name) {
+  return requestJson(`/nodes/${nodeId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function revokeNode(nodeId) {
+  assertApiBaseUrl();
+  const response = await fetch(`${API_BASE_URL}/nodes/${nodeId}`, {
+    method: "DELETE",
+    headers: apiHeaders(),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+}
+
 export function getBackendUrl() { return API_BASE_URL; }
 
 export async function connectBackend(mode, token) {

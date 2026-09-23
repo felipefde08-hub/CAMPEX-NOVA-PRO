@@ -131,6 +131,35 @@ def test_pairing_code_expires(monkeypatch, tmp_path):
     assert claim.status_code == 400
 
 
+def test_node_list_marks_stale_heartbeat_offline(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path)
+    stale = datetime.now(timezone.utc) - timedelta(minutes=10)
+    with connect(settings.sqlite_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO campex_nodes (
+                id, organization_id, name, token_hash, status, version,
+                cameras_total, cameras_online, last_seen_at, created_at, updated_at
+            )
+            VALUES (
+                'node_stale', 'default', 'Node parado', 'hash', 'online', '0.1.0',
+                2, 2, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+            """,
+            (stale.isoformat(),),
+        )
+        connection.commit()
+
+    with TestClient(app) as client:
+        nodes = client.get(
+            "/api/v1/nodes",
+            headers={"X-CAMPEX-Token": "cloud-secret"},
+        )
+
+    assert nodes.status_code == 200
+    assert nodes.json()[0]["status"] == "offline"
+
+
 def _settings(monkeypatch, tmp_path) -> Settings:
     database_path = tmp_path / "node-api.sqlite3"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")

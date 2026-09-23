@@ -138,7 +138,7 @@ class NodeRepository:
                 """,
                 (organization_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [_with_computed_status(dict(row)) for row in rows]
 
     def get_node(self, node_id: str, organization_id: str | None = None) -> dict | None:
         with connect(self.database_path) as connection:
@@ -152,7 +152,7 @@ class NodeRepository:
                     "SELECT * FROM campex_nodes WHERE id = ? AND organization_id = ?",
                     (node_id, organization_id),
                 ).fetchone()
-        return dict(row) if row else None
+        return _with_computed_status(dict(row)) if row else None
 
     def update_heartbeat(
         self,
@@ -237,3 +237,23 @@ def _hash_token(token: str) -> str:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _with_computed_status(node: dict) -> dict:
+    if node.get("revoked_at"):
+        node["status"] = "offline"
+        return node
+    last_seen_at = node.get("last_seen_at")
+    if not last_seen_at:
+        node["status"] = "offline"
+        return node
+    try:
+        parsed = datetime.fromisoformat(str(last_seen_at))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        node["status"] = "offline"
+        return node
+    if (_utc_now() - parsed).total_seconds() > NODE_OFFLINE_AFTER_SECONDS:
+        node["status"] = "offline"
+    return node

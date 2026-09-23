@@ -36,6 +36,7 @@ import { getApiToken, setApiToken } from "./api-token.js";
   getVideoAnalysisStatus,
   getNotificationPreferences,
   listNotificationDeliveries,
+  listNodes,
   listEvents,
   listEvidence,
   listInvestigations,
@@ -46,8 +47,11 @@ import { getApiToken, setApiToken } from "./api-token.js";
   listZones,
   listVideoAnalyses,
   sendNotificationReportNow,
+  requestNodePairingCode,
   operationsStreamUrl,
   restartVision,
+  renameNode,
+  revokeNode,
   setupDemo,
   startMapping,
   startVision,
@@ -3999,6 +4003,7 @@ function updateDetectionToggle() {
 function settingsTabs() {
   return [
     { id: "general", label: "Geral", icon: "settings" },
+    { id: "nodes", label: "Nodes", icon: "server" },
     { id: "cameras", label: "Câmeras", icon: "camera" },
     { id: "notifications", label: "Notificações", icon: "bell" },
     { id: "integrations", label: "Integrações", icon: "wrench" },
@@ -4082,6 +4087,7 @@ async function renderSettingsTab(tabId) {
 }
 
 function settingsTabMarkup(tabId) {
+  if (tabId === "nodes") return nodesSettingsMarkup();
   if (tabId === "cameras") return camerasSettingsMarkup();
   if (tabId === "notifications") return notificationsSettingsMarkup();
   if (tabId === "integrations") return integrationsSettingsMarkup();
@@ -4151,6 +4157,26 @@ function camerasSettingsMarkup() {
     `, `<button type="button" class="secondary-action" data-settings-action="refresh-cameras"><i data-lucide="refresh-cw"></i>Atualizar</button>`)}
     ${settingsCard("Operação visual", "Resumo operacional calculado a partir do backend.", "activity", `
       <div id="settings-camera-summary" class="settings-runtime-grid"></div>
+    `)}
+  `;
+}
+
+function nodesSettingsMarkup() {
+  return `
+    ${settingsCard("CAMPEX Nodes", "Softwares locais pareados com esta organização.", "server", `
+      <div id="settings-node-list" class="settings-integration-list">${emptyState("Carregando Nodes", "Buscando instalações pareadas.")}</div>
+    `, `
+      <button type="button" class="secondary-action" data-settings-action="refresh-nodes"><i data-lucide="refresh-cw"></i>Atualizar</button>
+      <button type="button" class="primary-action" data-settings-action="create-node-code"><i data-lucide="plus"></i>Adicionar Node</button>
+    `)}
+    ${settingsCard("Código de pareamento", "Gere um código temporário e digite no CAMPEX Node local.", "key-round", `
+      <div id="settings-node-pairing" class="settings-info-callout">
+        <i data-lucide="info"></i>
+        <div>
+          <strong>Nenhum código gerado.</strong>
+          <span>Use Adicionar Node para criar um código temporário.</span>
+        </div>
+      </div>
     `)}
   `;
 }
@@ -4347,11 +4373,18 @@ function wireSettingsTab(tabId) {
   document.querySelectorAll("[data-camera-action]").forEach((button) => {
     button.addEventListener("click", handleSettingsCameraAction);
   });
+  document.querySelectorAll("[data-node-action]").forEach((button) => {
+    button.addEventListener("click", handleSettingsNodeAction);
+  });
 }
 
 async function hydrateSettingsTab(tabId) {
   if (tabId === "general") {
     fillLocalSettings();
+    return;
+  }
+  if (tabId === "nodes") {
+    await loadSettingsNodes();
     return;
   }
   if (tabId === "cameras") {
@@ -4465,6 +4498,94 @@ function settingsCameraLine(camera) {
   `;
 }
 
+async function loadSettingsNodes() {
+  const listHost = document.querySelector("#settings-node-list");
+  if (!listHost) return;
+  try {
+    const nodes = await listNodes();
+    listHost.innerHTML = nodes.length
+      ? nodes.map(settingsNodeLine).join("")
+      : emptyState("Nenhum Node pareado", "Gere um código e conecte o CAMPEX Node instalado no cliente.");
+    refreshIcons();
+    document.querySelectorAll("[data-node-action]").forEach((button) => {
+      button.addEventListener("click", handleSettingsNodeAction);
+    });
+  } catch (error) {
+    listHost.innerHTML = emptyState("Falha ao carregar Nodes", error.message);
+  }
+}
+
+function settingsNodeLine(node) {
+  const status = node.status || "offline";
+  const connected = status === "online";
+  const lastSeen = node.last_seen_at ? new Date(node.last_seen_at).toLocaleString("pt-BR") : "sem heartbeat";
+  const details = [
+    node.hostname || "hostname não informado",
+    node.platform || "plataforma não informada",
+    `v${node.version || "0.1.0"}`,
+    `${node.cameras_online || 0}/${node.cameras_total || 0} câmeras`,
+  ].join(" · ");
+  return `
+    <article class="settings-integration-line" data-node-id="${escapeHtml(node.id)}">
+      <div>
+        <strong>${escapeHtml(node.name || node.id)}</strong>
+        <span>${escapeHtml(details)}</span>
+        <span>Último heartbeat: ${escapeHtml(lastSeen)}</span>
+      </div>
+      <small data-state="${connected ? "connected" : "pending"}">${status.toUpperCase()}</small>
+      <div class="settings-row-actions">
+        <button type="button" data-node-action="rename">Renomear</button>
+        <button type="button" data-node-action="revoke">Revogar</button>
+      </div>
+    </article>
+  `;
+}
+
+async function createNodePairingCode() {
+  const host = document.querySelector("#settings-node-pairing");
+  try {
+    const pairing = await requestNodePairingCode();
+    if (host) {
+      host.innerHTML = `
+        <i data-lucide="key-round"></i>
+        <div>
+          <strong>${escapeHtml(pairing.code)}</strong>
+          <span>Digite este código no CAMPEX Node. Expira em ${new Date(pairing.expires_at).toLocaleString("pt-BR")}.</span>
+        </div>
+      `;
+    }
+    notify("Código gerado", "Use o código no CAMPEX Node local para parear.", "success");
+    refreshIcons();
+  } catch (error) {
+    notify("Falha ao gerar código", error.message, "error");
+  }
+}
+
+async function handleSettingsNodeAction(event) {
+  const row = event.currentTarget.closest("[data-node-id]");
+  const nodeId = row?.dataset.nodeId;
+  if (!nodeId) return;
+  const action = event.currentTarget.dataset.nodeAction;
+  try {
+    if (action === "rename") {
+      const currentName = row.querySelector("strong")?.textContent || "";
+      const name = window.prompt("Nome do Node", currentName);
+      if (!name || !name.trim()) return;
+      await renameNode(nodeId, name.trim());
+      notify("Node renomeado", "Nome atualizado na Cloud.", "success");
+    }
+    if (action === "revoke") {
+      const confirmed = window.confirm("Revogar este Node? Ele precisará ser pareado novamente.");
+      if (!confirmed) return;
+      await revokeNode(nodeId);
+      notify("Node revogado", "O token deste Node foi invalidado.", "success");
+    }
+    await loadSettingsNodes();
+  } catch (error) {
+    notify("Falha no Node", error.message, "error");
+  }
+}
+
 async function handleSettingsCameraAction(event) {
   const row = event.currentTarget.closest("[data-camera-id]");
   const cameraId = row?.dataset.cameraId;
@@ -4488,6 +4609,14 @@ async function handleSettingsCameraAction(event) {
 
 async function handleSettingsAction(event) {
   const action = event.currentTarget.dataset.settingsAction;
+  if (action === "refresh-nodes") {
+    await loadSettingsNodes();
+    return;
+  }
+  if (action === "create-node-code") {
+    await createNodePairingCode();
+    return;
+  }
   if (action === "refresh-cameras") {
     await loadSettingsCameras();
     return;
