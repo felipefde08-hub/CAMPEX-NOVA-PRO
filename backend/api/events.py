@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from backend.config import get_settings
 from backend.config import ROOT_DIR
+from backend.config import get_data_dir
 from backend.events.models import Event
 from backend.events.repository import EventRepository
 from backend.security import OrganizationScope, get_organization_scope
@@ -140,9 +141,11 @@ def get_event_evidence(
     if not relative_path:
         raise HTTPException(status_code=404, detail="Evidence not found.")
 
-    file_path = (ROOT_DIR / Path(relative_path)).resolve()
-    evidence_root = (ROOT_DIR / "storage" / "evidence").resolve()
-    if evidence_root not in file_path.parents:
+    raw_path = Path(relative_path)
+    file_path = raw_path.resolve() if raw_path.is_absolute() else (ROOT_DIR / raw_path).resolve()
+    evidence_root = (get_data_dir() / "evidence").resolve()
+    legacy_evidence_root = (ROOT_DIR / "storage" / "evidence").resolve()
+    if evidence_root not in file_path.parents and legacy_evidence_root not in file_path.parents:
         raise HTTPException(status_code=400, detail="Invalid evidence path.")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Evidence file not found.")

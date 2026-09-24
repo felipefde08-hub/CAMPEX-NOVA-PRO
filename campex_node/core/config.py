@@ -2,12 +2,31 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+
+
+def _is_desktop_runtime() -> bool:
+    return os.getenv("CAMPEX_DESKTOP_MODE", "").lower() in {"1", "true", "yes", "on"} or bool(
+        getattr(sys, "frozen", False)
+    )
+
+
+def _default_data_dir() -> Path:
+    configured = os.getenv("CAMPEX_NODE_DATA_DIR") or os.getenv("CAMPEX_DATA_DIR")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if _is_desktop_runtime():
+        if os.name == "nt":
+            base = os.getenv("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+            return (Path(base) / "CAMPEX" / "node").resolve()
+        return (Path.home() / ".local" / "share" / "campex" / "node").resolve()
+    return (ROOT_DIR / "storage" / "campex_node").resolve()
 
 
 def _load_dotenv() -> None:
@@ -106,7 +125,7 @@ class NodeSettings:
 
     @classmethod
     def from_env(cls) -> "NodeSettings":
-        data_dir = Path(os.getenv("CAMPEX_NODE_DATA_DIR", "./storage/campex_node")).resolve()
+        data_dir = _default_data_dir()
         database_path = Path(
             os.getenv("CAMPEX_NODE_DATABASE", str(data_dir / "node.sqlite3"))
         ).resolve()

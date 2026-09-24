@@ -300,6 +300,27 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS node_pairing_sessions (
+        id TEXT PRIMARY KEY,
+        pairing_code_hash TEXT NOT NULL UNIQUE,
+        node_public_id TEXT NOT NULL,
+        node_name TEXT NOT NULL,
+        hostname TEXT,
+        platform TEXT,
+        architecture TEXT,
+        version TEXT NOT NULL DEFAULT '0.1.0',
+        status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'authorized', 'expired', 'cancelled')),
+        organization_id TEXT,
+        authorized_node_id TEXT,
+        node_token_once TEXT,
+        authorized_at TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS node_sync_items (
         id TEXT PRIMARY KEY,
         organization_id TEXT NOT NULL,
@@ -339,6 +360,8 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_state_transitions_org_monitor_time ON state_transitions(organization_id, monitor_id, occurred_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_campex_nodes_org_status ON campex_nodes(organization_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_node_pairing_codes_org_expires ON node_pairing_codes(organization_id, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_node_pairing_sessions_status_expires ON node_pairing_sessions(status, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_node_pairing_sessions_node ON node_pairing_sessions(node_public_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_node_metrics_org_node_time ON node_metrics(organization_id, node_id, captured_at DESC)",
 )
 
@@ -366,6 +389,7 @@ def initialize_database(settings: Settings) -> Path:
         _migrate_organization_scope(connection, settings.intelligence_default_organization_id)
         _migrate_video_analysis_debug_columns(connection)
         _migrate_node_columns(connection)
+        _migrate_node_pairing_session_columns(connection)
         _migrate_node_sync_columns(connection)
         _ensure_default_organization(connection, settings.intelligence_default_organization_id)
         connection.execute(
@@ -486,6 +510,19 @@ def _migrate_node_columns(connection: sqlite3.Connection) -> None:
     }
     for column, statement in node_migrations.items():
         if column not in node_columns:
+            connection.execute(statement)
+
+
+def _migrate_node_pairing_session_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(node_pairing_sessions)").fetchall()
+    }
+    migrations = {
+        "node_token_once": "ALTER TABLE node_pairing_sessions ADD COLUMN node_token_once TEXT",
+    }
+    for column, statement in migrations.items():
+        if column not in columns:
             connection.execute(statement)
 
 

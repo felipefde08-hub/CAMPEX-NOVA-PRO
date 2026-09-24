@@ -75,6 +75,42 @@ class CloudClient:
             include_node_token=False,
         )
 
+    def start_pairing_session(
+        self,
+        *,
+        node_public_id: str,
+        node_name: str,
+        version: str,
+    ) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send(
+            "POST",
+            "/nodes/pairing/start",
+            payload={
+                "node_public_id": node_public_id,
+                "node_name": node_name,
+                "platform": platform.system().lower(),
+                "architecture": platform.machine(),
+                "hostname": socket.gethostname(),
+                "version": version,
+            },
+            include_node_token=False,
+        )
+
+    def check_pairing_session(self, *, session_id: str, node_public_id: str) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send(
+            "POST",
+            "/nodes/pairing/status",
+            payload={
+                "session_id": session_id,
+                "node_public_id": node_public_id,
+            },
+            include_node_token=False,
+        )
+
     def send_events(self, events: list[dict[str, Any]]) -> CloudResult:
         if not self.settings.cloud_url:
             return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")

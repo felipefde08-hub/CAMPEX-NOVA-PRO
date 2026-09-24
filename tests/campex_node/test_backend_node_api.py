@@ -83,6 +83,64 @@ def test_node_pairing_auth_config_and_heartbeat(monkeypatch, tmp_path):
     assert listed[0]["queue_size"] == 2
 
 
+def test_node_initiated_pairing_authorize_and_consume_once(monkeypatch, tmp_path):
+    _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        start = client.post(
+            "/api/v1/nodes/pairing/start",
+            json={
+                "node_public_id": "node_local_public",
+                "node_name": "SERVER-PRODUCAO-01",
+                "hostname": "SERVER-PRODUCAO-01",
+                "platform": "windows",
+                "architecture": "amd64",
+                "version": "1.0.0",
+            },
+        )
+        assert start.status_code == 201
+        started = start.json()
+        assert started["pairing_code"].replace(" ", "").isdigit()
+
+        lookup = client.post(
+            "/api/v1/nodes/pairing/lookup",
+            headers=headers,
+            json={"code": started["pairing_code"]},
+        )
+        assert lookup.status_code == 200
+        assert lookup.json()["hostname"] == "SERVER-PRODUCAO-01"
+
+        authorize = client.post(
+            "/api/v1/nodes/pairing/authorize",
+            headers=headers,
+            json={"code": started["pairing_code"], "node_name": "Node Produção"},
+        )
+        assert authorize.status_code == 200
+
+        status_once = client.post(
+            "/api/v1/nodes/pairing/status",
+            json={
+                "session_id": started["session_id"],
+                "node_public_id": "node_local_public",
+            },
+        )
+        assert status_once.status_code == 200
+        body = status_once.json()
+        assert body["status"] == "authorized"
+        assert body["node_token"]
+
+        status_twice = client.post(
+            "/api/v1/nodes/pairing/status",
+            json={
+                "session_id": started["session_id"],
+                "node_public_id": "node_local_public",
+            },
+        )
+        assert status_twice.status_code == 200
+        assert "node_token" not in status_twice.json()
+
+
 def test_node_auth_rejects_invalid_and_revoked_tokens(monkeypatch, tmp_path):
     _settings(monkeypatch, tmp_path)
     headers = {"X-CAMPEX-Token": "cloud-secret"}

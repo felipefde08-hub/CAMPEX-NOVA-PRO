@@ -502,6 +502,20 @@ export function requestNodePairingCode() {
   });
 }
 
+export function lookupNodePairingCode(code) {
+  return requestJson("/nodes/pairing/lookup", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function authorizeNodePairingCode(code, nodeName = "") {
+  return requestJson("/nodes/pairing/authorize", {
+    method: "POST",
+    body: JSON.stringify({ code, node_name: nodeName || null }),
+  });
+}
+
 export function renameNode(nodeId, name) {
   return requestJson(`/nodes/${nodeId}`, {
     method: "PATCH",

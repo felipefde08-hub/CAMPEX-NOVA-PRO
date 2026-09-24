@@ -12,9 +12,11 @@ from pydantic import BaseModel, Field
 
 from backend.config import get_settings
 from backend.config import ROOT_DIR
+from backend.config import get_data_dir
 from backend.database.db import connect
 from backend.events.taxonomy import list_operational_categories
 from backend.events.rules_repository import RuleRepository
+from backend.maintenance.local_archive import archive_month
 from backend.cameras.repository import CameraRepository
 from backend.machines.repository import MachineRepository
 from backend.operations import build_operational_intelligence
@@ -117,6 +119,12 @@ class RuleUpdate(BaseModel):
 
 class RetentionPayload(BaseModel):
     days: int = Field(default=7, ge=0, le=365)
+
+
+class MonthlyArchivePayload(BaseModel):
+    year: int = Field(ge=2020, le=2100)
+    month: int = Field(ge=1, le=12)
+    purge: bool = False
 
 
 def _settings():
@@ -263,7 +271,7 @@ def local_diagnostics(
 ) -> dict:
     settings = _settings()
     usage = shutil.disk_usage(settings.sqlite_path.parent)
-    evidence_root = ROOT_DIR / "storage" / "evidence"
+    evidence_root = get_data_dir() / "evidence"
     evidence_bytes = sum(path.stat().st_size for path in evidence_root.rglob("*") if path.is_file()) if evidence_root.exists() else 0
     with connect(settings.sqlite_path) as connection:
         cameras_online = connection.execute(
@@ -424,7 +432,7 @@ def list_evidence(
 
 @router.post("/operations/evidence/cleanup")
 def cleanup_evidence(payload: RetentionPayload) -> dict:
-    root = ROOT_DIR / "storage" / "evidence"
+    root = get_data_dir() / "evidence"
     if not root.exists():
         return {"deleted_files": 0, "deleted_bytes": 0}
     cutoff = datetime.now(timezone.utc) - timedelta(days=payload.days)
@@ -443,6 +451,17 @@ def cleanup_evidence(payload: RetentionPayload) -> dict:
             except OSError:
                 pass
     return {"deleted_files": deleted_files, "deleted_bytes": deleted_bytes}
+
+
+@router.post("/operations/archive/month")
+def archive_operations_month(payload: MonthlyArchivePayload) -> dict:
+    result = archive_month(
+        _settings(),
+        year=payload.year,
+        month=payload.month,
+        purge=payload.purge,
+    )
+    return result.as_dict()
 
 
 @router.post("/operations/demo/setup")

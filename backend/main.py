@@ -212,6 +212,8 @@ async def api_token_guard(request: Request, call_next):
         and path.startswith("/api/v1")
         and path != "/api/v1/health"
         and path != "/api/v1/nodes/pair/claim"
+        and path != "/api/v1/nodes/pairing/start"
+        and path != "/api/v1/nodes/pairing/status"
         and not has_node_bearer
         and not hmac.compare_digest(
             request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),

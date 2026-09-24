@@ -31,6 +31,25 @@ class PairClaim(BaseModel):
     version: str = Field(default="0.1.0", max_length=40)
 
 
+class NodePairingStart(BaseModel):
+    node_public_id: str = Field(min_length=1, max_length=120)
+    node_name: str = Field(default="CAMPEX Node", max_length=120)
+    hostname: str | None = Field(default=None, max_length=120)
+    platform: str | None = Field(default=None, max_length=80)
+    architecture: str | None = Field(default=None, max_length=80)
+    version: str = Field(default="0.1.0", max_length=40)
+
+
+class NodePairingStatusQuery(BaseModel):
+    session_id: str = Field(min_length=1, max_length=120)
+    node_public_id: str = Field(min_length=1, max_length=120)
+
+
+class NodePairingAuthorize(BaseModel):
+    code: str = Field(min_length=1, max_length=20)
+    node_name: str | None = Field(default=None, max_length=120)
+
+
 class NodeHeartbeat(BaseModel):
     status: str = Field(default="online", max_length=40)
     version: str = Field(default="0.1.0", max_length=40)
@@ -93,6 +112,95 @@ def claim_pairing_code(
         "node_id": claimed.node_id,
         "organization_id": claimed.organization_id,
         "node_token": claimed.node_token,
+        "name": claimed.name,
+    }
+
+
+@router.post("/pairing/start", status_code=status.HTTP_201_CREATED)
+def start_node_initiated_pairing(
+    payload: NodePairingStart,
+    repository: NodeRepository = Depends(get_node_repository),
+) -> dict:
+    session = repository.start_pairing_session(
+        node_public_id=payload.node_public_id,
+        node_name=payload.node_name.strip() or "CAMPEX Node",
+        hostname=payload.hostname,
+        platform=payload.platform,
+        architecture=payload.architecture,
+        version=payload.version,
+    )
+    return {
+        "session_id": session.id,
+        "pairing_code": f"{session.pairing_code[:3]} {session.pairing_code[3:]}",
+        "expires_at": session.expires_at,
+        "status": session.status,
+    }
+
+
+@router.post("/pairing/status")
+def node_pairing_status(
+    payload: NodePairingStatusQuery,
+    repository: NodeRepository = Depends(get_node_repository),
+) -> dict:
+    claimed = repository.consume_authorized_pairing_session(
+        payload.session_id,
+        payload.node_public_id,
+    )
+    if claimed is not None:
+        return {
+            "status": "authorized",
+            "node_id": claimed.node_id,
+            "organization_id": claimed.organization_id,
+            "node_token": claimed.node_token,
+            "name": claimed.name,
+        }
+    session = repository.get_pairing_session_status(payload.session_id, payload.node_public_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Pairing session not found.")
+    return {
+        "status": session["status"],
+        "expires_at": session["expires_at"],
+    }
+
+
+@router.post("/pairing/lookup")
+def lookup_node_pairing_session(
+    payload: NodePairingAuthorize,
+    scope: OrganizationScope = Depends(get_organization_scope),
+    repository: NodeRepository = Depends(get_node_repository),
+) -> dict:
+    session = repository.find_pending_pairing_session_by_code(payload.code)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Código inválido ou expirado.")
+    return {
+        "status": "pending",
+        "node_name": session["node_name"],
+        "hostname": session["hostname"],
+        "platform": session["platform"],
+        "architecture": session["architecture"],
+        "version": session["version"],
+        "expires_at": session["expires_at"],
+        "organization_id": scope.organization_id,
+    }
+
+
+@router.post("/pairing/authorize")
+def authorize_node_pairing_session(
+    payload: NodePairingAuthorize,
+    scope: OrganizationScope = Depends(get_organization_scope),
+    repository: NodeRepository = Depends(get_node_repository),
+) -> dict:
+    claimed = repository.authorize_pairing_session(
+        code=payload.code,
+        organization_id=scope.organization_id,
+        node_name=payload.node_name,
+    )
+    if claimed is None:
+        raise HTTPException(status_code=404, detail="Código inválido, expirado ou já utilizado.")
+    return {
+        "ok": True,
+        "node_id": claimed.node_id,
+        "organization_id": claimed.organization_id,
         "name": claimed.name,
     }
 

@@ -4,6 +4,16 @@ Esta fase prepara o CAMPEX Node para rodar 24/7 dentro da rede do cliente.
 
 O Node deve ficar ligado mesmo quando o painel web estiver fechado. O painel Cloud continua na Vercel, mas as câmeras RTSP privadas são acessadas pelo Node local.
 
+Arquitetura de rede alvo:
+
+```text
+Câmeras da empresa → CAMPEX Node (.exe/serviço local) → CAMPEX Cloud/API → Painel Web
+```
+
+O Painel Web conversa com a Cloud. Ele não precisa abrir conexão direta com o
+`.exe` dentro da rede do cliente. O Node faz conexões HTTPS de saída para
+buscar configurações e enviar eventos, métricas, alertas e snapshots pontuais.
+
 ## Fluxo de instalação alvo
 
 1. Baixar ou copiar o projeto CAMPEX Node para o computador/servidor local.

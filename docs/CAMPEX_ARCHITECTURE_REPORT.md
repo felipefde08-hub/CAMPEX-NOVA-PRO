@@ -14,6 +14,22 @@ O fluxo alvo é:
 Câmeras locais → CAMPEX Node → processamento local → eventos/métricas → CAMPEX Cloud → dashboards/notificações
 ```
 
+Em termos de rede, a direção principal deve ser:
+
+```text
+CAMPEX Node → API Cloud ← Frontend
+```
+
+O Painel Web não precisa acessar o `.exe` diretamente pela rede local. Isso
+evita portas abertas no servidor do cliente, funciona atrás de NAT/firewall e
+permite operar muitos Nodes em paralelo:
+
+```text
+Empresa A → Node A ┐
+Empresa B → Node B ┼→ CAMPEX Cloud → Banco/API → Dashboard
+Empresa C → Node C ┘
+```
+
 ## Por que essa arquitetura é necessária
 
 Câmeras RTSP com IP privado, como endereços `192.168.x.x`, normalmente não podem ser acessadas diretamente pela Vercel ou por outro backend cloud. A Cloud está fora da rede local do cliente. Por isso, o painel web não deve tentar abrir ou testar diretamente uma câmera privada.
@@ -21,6 +37,15 @@ Câmeras RTSP com IP privado, como endereços `192.168.x.x`, normalmente não po
 O CAMPEX Node resolve esse problema porque roda dentro da rede do cliente. Ele acessa o RTSP local, mantém conexão com as câmeras e envia dados para a Cloud por HTTPS usando autenticação própria de Node.
 
 Essa divisão também evita expor senhas RTSP no frontend público e reduz tráfego de vídeo para a internet. A Cloud passa a receber dados operacionais, não vídeo bruto contínuo.
+
+Exemplo de dado sincronizado:
+
+```text
+camera_07 → pessoa entrou → setor estoque → 09:42:17
+```
+
+O Node envia eventos, contagens, métricas, alertas e snapshots pontuais quando
+necessário. Ele não deve transmitir vídeo bruto continuamente para a Cloud.
 
 ## O que já foi construído
 
@@ -69,9 +94,9 @@ A Cloud agora possui fluxo de pareamento:
 
 O token administrativo do backend, configurado como `CAMPEXTOKEN` ou `CAMPEX_API_TOKEN`, permanece separado do token do Node.
 
-### Cadastro de câmeras pelo painel
+### Configuração pela Cloud
 
-O painel Cloud já pode cadastrar câmeras. O Node busca a configuração na Cloud e aplica localmente. Isso permite o modelo desejado: o cliente configura câmeras pelo frontend e o software local baixa essa configuração para operar dentro da rede.
+O painel Cloud já pode cadastrar câmeras. O Node busca a configuração na Cloud e aplica localmente. Isso permite o modelo desejado: o cliente configura câmeras pelo frontend, a Cloud registra essa configuração e o software local baixa essa configuração para operar dentro da rede.
 
 A Cloud entrega ao Node a URL RTSP real para uso local. Ao listar câmeras para o frontend, as credenciais RTSP são mascaradas.
 

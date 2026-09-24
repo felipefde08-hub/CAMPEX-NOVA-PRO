@@ -1,4 +1,3 @@
-import { connectBackend, getBackendUrl } from "./api.js";
 import { getApiToken, setApiToken } from "./api-token.js";
 import {
   createCamera,
@@ -49,6 +48,8 @@ import {
   listVideoAnalyses,
   sendNotificationReportNow,
   requestNodePairingCode,
+  lookupNodePairingCode,
+  authorizeNodePairingCode,
   operationsStreamUrl,
   restartVision,
   renameNode,
@@ -672,7 +673,7 @@ function renderVideoAnalysis(analysis) {
   const summary = metrics.summary || {};
   document.querySelector("#video-analysis-status").innerHTML = [
     objectLine(analysis.status, `${analysis.progress || 0}%`, analysis.error || analysis.original_filename),
-    objectLine("Fonte", source.duration_seconds ? `${source.duration_seconds.toFixed(1)}s · ${source.width}x${source.height}` : "Aguardando leitura", source.fps ? `${source.fps.toFixed(2)} FPS` : ""),
+    objectLine("Fonte", source.duration_seconds ? `${source.duration_seconds.toFixed(1)}s - ${source.width}x${source.height}` : "Aguardando leitura", source.fps ? `${source.fps.toFixed(2)} FPS` : ""),
   ].join("");
   const runtime = analysis.runtime || {};
   const ai = analysis.ai || {};
@@ -691,7 +692,7 @@ function renderVideoAnalysis(analysis) {
     metricItem("Stationary", `${metrics.activity?.stationary_seconds ?? 0}s`, `${metrics.activity?.stationary_events ?? 0} eventos`),
   ].join("");
   document.querySelector("#video-analysis-status").innerHTML += [
-    objectLine("Detector", runtime.detector || "-", `${runtime.model || "-"} · ${runtime.device || "cpu"}${runtime.fallback ? " · fallback" : ""}`),
+    objectLine("Detector", runtime.detector || "-", `${runtime.model || "-"} - ${runtime.device || "cpu"}${runtime.fallback ? " - fallback" : ""}`),
     objectLine("Tracker", runtime.tracker || "-", `FPS análise ${runtime.analysis_fps ?? "-"}`),
     objectLine("Entrada", runtime.input_resolution ? `${runtime.input_resolution}px` : "-", "Resolução de inferência"),
     objectLine("IA", ai.status || "pendente", ai.fallback_used ? `Fallback: ${ai.reason || ""}` : (ai.model || "")),
@@ -701,7 +702,7 @@ function renderVideoAnalysis(analysis) {
   document.querySelector("#video-analysis-events").innerHTML = events.length
     ? events.slice(0, 80).map((event) => `
       <article class="ops-row">
-        <div><strong>${event.event_type}</strong><span>${formatEventTime(event)} · track ${event.track_id ?? "-"}</span></div>
+        <div><strong>${event.event_type}</strong><span>${formatEventTime(event)} - track ${event.track_id ?? "-"}</span></div>
       </article>
     `).join("")
     : emptyState("Sem eventos", "Os eventos aparecem durante ou após o processamento.");
@@ -709,8 +710,8 @@ function renderVideoAnalysis(analysis) {
   document.querySelector("#video-analysis-tracks").innerHTML = tracks.length
     ? tracks.slice(0, 20).map((track) => objectLine(
         `${track.class} #${track.track_id}`,
-        `${track.total_visible_seconds ?? track.duration_seconds ?? 0}s observados · ${(track.confidence * 100).toFixed(0)}%`,
-        `${track.movement_state || track.state || "UNKNOWN"} · moving ${track.moving_seconds ?? 0}s · stationary ${track.stationary_seconds ?? 0}s`
+        `${track.total_visible_seconds ?? track.duration_seconds ?? 0}s observados - ${(track.confidence * 100).toFixed(0)}%`,
+        `${track.movement_state || track.state || "UNKNOWN"} - moving ${track.moving_seconds ?? 0}s - stationary ${track.stationary_seconds ?? 0}s`
       )).join("")
     : emptyState("Sem tracks", "O tracker ainda não confirmou objetos.");
   const insight = analysis.insight || {};
@@ -746,7 +747,7 @@ async function loadProductivity() {
     document.querySelector("#productivity-kpis").innerHTML = [
       metricItem("Atividade observada", payload.score == null ? "sem score" : `${payload.score}%`, "Sem calculo de produtividade real"),
       metricItem("Pessoas", payload.counts.people, `${payload.counts.signals} sinais ativos`),
-      metricItem("Máquinas", payload.counts.machines, `${payload.mapped_machines_total || 0} mapeadas · ${payload.counts.cameras} câmeras`),
+      metricItem("Máquinas", payload.counts.machines, `${payload.mapped_machines_total || 0} mapeadas - ${payload.counts.cameras} câmeras`),
     ].join("");
     document.querySelector("#productivity-signal-count").textContent = `${payload.counts.signals} sinais`;
     document.querySelector("#productivity-cameras").innerHTML = payload.cameras.length
@@ -761,14 +762,14 @@ async function loadProductivity() {
     document.querySelector("#productivity-machines").innerHTML = machines.length
       ? machines.map((machine) => objectLine(
           `${machine.class_name} #${machine.track_id}`,
-          `${machine.camera_name} · confiança ${(machine.confidence * 100).toFixed(0)}%`,
+          `${machine.camera_name} - confianca ${(machine.confidence * 100).toFixed(0)}%`,
           "Máquina/veículo reconhecido pelo detector"
         )).join("")
       : mappedMachines.length
         ? mappedMachines.map((machine) => objectLine(
             machine.name,
-            `${machine.camera_name} · ${machine.type}`,
-            `${machine.state || "UNKNOWN"} · ${machine.requires_operator ? "requer operador" : "operador opcional"} · ativo mapeado`
+            `${machine.camera_name} - ${machine.type}`,
+            `${machine.state || "UNKNOWN"} - ${machine.requires_operator ? "requer operador" : "operador opcional"} - ativo mapeado`
           )).join("")
         : emptyState("Nenhuma máquina mapeada", "Mapeie máquinas para contextualizar atividade e segurança.");
     document.querySelector("#productivity-limitations").innerHTML = [
@@ -788,8 +789,8 @@ function productivityCameraRow(camera) {
     <article class="ops-row">
       <div>
         <strong>${camera.camera_name}</strong>
-        <span>${camera.score == null ? "Sem score" : `Score ${camera.score}%`} · ${counts.people || 0} pessoas · ${counts.machines || 0} máquinas/ativos · ${(camera.mapped_machines || []).length} mapeadas · ${counts.phones || 0} celulares</span>
-        <small>${signals.length ? signals.map((signal) => signal.label).join(" · ") : "Sem sinais de atividade no momento"}</small>
+        <span>${camera.score == null ? "Sem score" : `Score ${camera.score}%`} - ${counts.people || 0} pessoas - ${counts.machines || 0} máquinas/ativos - ${(camera.mapped_machines || []).length} mapeadas - ${counts.phones || 0} celulares</span>
+        <small>${signals.length ? signals.map((signal) => signal.label).join(" - ") : "Sem sinais de atividade no momento"}</small>
       </div>
       <span class="health-badge" data-status="${signals.length ? "DEGRADED" : "ONLINE"}">${signals.length ? "ATENÇÃO" : "OK"}</span>
     </article>
@@ -804,7 +805,7 @@ function renderDashboardSummary(summary) {
   const kpiHost = document.querySelector("#dashboard-kpis");
   if (!kpiHost) return;
   kpiHost.innerHTML = [
-    metricItem("Câmeras online", `${kpis.cameras_online}/${kpis.cameras_total}`, `${kpis.cameras_active} ativas`),
+    metricItem("Cameras online", `${kpis.cameras_online}/${kpis.cameras_total}`, `${kpis.cameras_active} ativas`),
     metricItem("Eventos abertos", kpis.events_open, `${kpis.events_critical} críticos`),
     metricItem("Recorrências", triage.length, `${attention.length} para investigar`),
     metricItem("Investigações", kpis.investigations_open, "Casos em andamento"),
@@ -820,12 +821,12 @@ function renderDashboardInsights(summary) {
   const topImpact = (intelligence.impacts || [])[0];
   const comparison = intelligence.comparisons?.today_vs_yesterday;
   const normal = intelligence.comparisons?.normal_vs_current;
-  const areas = summary.areas.map((area) => `${area.area_id}: ${area.camera_count}`).join(" · ") || "sem áreas";
+  const areas = summary.areas.map((area) => `${area.area_id}: ${area.camera_count}`).join(" - ") || "sem áreas";
   const recurrence = topGroup
     ? `${topGroup.location_label}: ${topGroup.frequency}x, ${topGroup.total_duration_label}`
     : "sem recorrência confiável hoje";
   const triage = topTriage
-    ? `${topTriage.group.location_label}: ${topTriage.reasons.join(" · ")}`
+    ? `${topTriage.group.location_label}: ${topTriage.reasons.join(" - ")}`
     : "ruído baixo no momento";
   const finding = topFinding?.statement || "sem finding executivo hoje";
   const comparisonLabel = comparison
@@ -835,7 +836,7 @@ function renderDashboardInsights(summary) {
     ? `${normal.comparison.direction === "up" ? "+" : normal.comparison.direction === "down" ? "-" : ""}${normal.comparison.duration_delta_label}${normal.comparison.duration_delta_percent !== null ? ` (${normal.comparison.duration_delta_percent}%)` : ""}`
     : "sem baseline recente";
   const impact = topImpact
-    ? `${topImpact.lost_time_label} perdidos${topImpact.estimated_cost !== null ? ` · ${formatMoney(topImpact.estimated_cost, topImpact.currency)}` : ""}`
+    ? `${topImpact.lost_time_label} perdidos${topImpact.estimated_cost !== null ? ` - ${formatMoney(topImpact.estimated_cost, topImpact.currency)}` : ""}`
     : "sem impacto acumulado";
   document.querySelector("#dashboard-insights").innerHTML = [
     objectLine("Áreas", areas, "Distribuição das câmeras cadastradas"),
@@ -920,7 +921,7 @@ async function renderLivePage() {
           <div class="live-feed-header">
             <div>
               <strong id="live-camera-name">Nenhuma camera selecionada</strong>
-              <span id="live-detection-summary">Vision parada · 0 objetos</span>
+              <span id="live-detection-summary">Vision parada - 0 objetos</span>
             </div>
             <div class="live-status-badges">
               <span class="health-badge" id="live-camera-status" data-status="OFFLINE">OFFLINE</span>
@@ -1104,7 +1105,7 @@ function renderNodeMjpegElement(camera, fallbackMessage = "") {
       alt="Video ao vivo da câmera via CAMPEX Node local"
       src="${streamUrl}"
     />
-    <div class="node-stream-hint">Stream via CAMPEX Node local · ${escapeHtml(fallbackMessage || "backend de vídeo indisponível")}</div>
+    <div class="node-stream-hint">Stream via CAMPEX Node local - ${escapeHtml(fallbackMessage || "backend de vídeo indisponível")}</div>
   `;
   mediaHost.querySelector("img").addEventListener("error", () => {
     renderMediaPlaceholder("Aguardando frames do CAMPEX Node local. Verifique se o Node está aberto em http://127.0.0.1:8787 e se a câmera está online.");
@@ -1323,8 +1324,8 @@ function renderVisionStatus(visionStatus, objects, health, poses = []) {
   }
   if (detectionSummary) {
     const newSummary = liveDetectionsVisible()
-      ? `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`
-      : `${status} · visualização de detecção OFF`;
+      ? `${status} - ${objects.length} objeto(s) - ${poses.length} pose(s)`
+      : `${status} - visualização de detecção OFF`;
     if (detectionSummary.textContent !== newSummary) {
       detectionSummary.textContent = newSummary;
     }
@@ -1368,8 +1369,8 @@ function updateVisionStatusOnly(visionStatus, objects, health, poses = []) {
   }
   if (detectionSummary) {
     const newSummary = liveDetectionsVisible()
-      ? `${status} · ${objects.length} objeto(s) · ${poses.length} pose(s)`
-      : `${status} · visualização de detecção OFF`;
+      ? `${status} - ${objects.length} objeto(s) - ${poses.length} pose(s)`
+      : `${status} - visualização de detecção OFF`;
     if (detectionSummary.textContent !== newSummary) {
       detectionSummary.textContent = newSummary;
     }
@@ -1454,7 +1455,7 @@ function cameraMeta(camera) {
   const resolution = health.resolution ? `${health.resolution.width}x${health.resolution.height}` : "sem resolução";
   const fps = health.approximate_fps ? `${Number(health.approximate_fps).toFixed(1)} FPS` : "FPS indisponível";
   const lastFrame = health.last_successful_frame ? formatDate(health.last_successful_frame) : "sem frame";
-  return `${sourceTypeLabel(camera.source_type)} · ${fps} · ${resolution} · último frame ${lastFrame}`;
+  return `${sourceTypeLabel(camera.source_type)} - ${fps} - ${resolution} - último frame ${lastFrame}`;
 }
 
 function cameraRows(cameras) {
@@ -1475,7 +1476,7 @@ function cameraRows(cameras) {
           <div>
             <strong>${camera.name}</strong>
             <span>${cameraMeta(camera)}</span>
-            <small>${camera.source_uri}${camera.health?.last_error ? ` · ${camera.health.last_error}` : ""}</small>
+            <small>${camera.source_uri}${camera.health?.last_error ? ` - ${camera.health.last_error}` : ""}</small>
           </div>
           <span class="health-badge" data-status="${statusLabel(camera.health?.status || camera.status)}">${statusLabel(camera.health?.status || camera.status)}</span>
           <label class="inline-toggle">
@@ -1500,7 +1501,7 @@ async function renderCamerasPage() {
     <div class="camera-admin">
       <section class="camera-list-panel">
         <div class="section-heading">
-          <h2>Câmeras cadastradas</h2>
+          <h2>Cameras cadastradas</h2>
           <div class="section-actions">
             <button type="button" id="add-camera"><i data-lucide="plus" aria-hidden="true"></i><span>Adicionar câmera</span></button>
             <button type="button" id="refresh-cameras"><i data-lucide="refresh-cw" aria-hidden="true"></i><span>Atualizar</span></button>
@@ -1672,7 +1673,7 @@ function renderSimpleCameraRegistration() {
             <option value="webcam">Webcam</option>
             <option value="video_file">Arquivo de vídeo</option>
             <option value="rtsp">RTSP</option>
-            <option value="ip_camera">Câmera IP / HTTP</option>
+            <option value="ip_camera">Camera IP / HTTP</option>
           </select>
         </label>
         <label class="simple-field simple-field-wide">
@@ -1684,7 +1685,7 @@ function renderSimpleCameraRegistration() {
       <section class="simple-camera-options">
         <label>
           <input name="enabled" type="checkbox" checked />
-          <span><strong>Câmera ativa</strong><small>Inicia disponível para uso após salvar.</small></span>
+          <span><strong>Camera ativa</strong><small>Inicia disponível para uso após salvar.</small></span>
         </label>
         <label>
           <input name="vision_enabled" type="checkbox" />
@@ -1783,7 +1784,7 @@ async function handleCameraSubmit(event) {
       ? await updateCamera(editingCameraId, payload)
       : await createCamera(payload);
     notify(
-      editingCameraId ? "Câmera atualizada" : "Câmera cadastrada",
+      editingCameraId ? "Camera atualizada" : "Camera cadastrada",
       `${camera.name} está pronta para operação.`,
       "success"
     );
@@ -1814,7 +1815,7 @@ async function handleTestCameraSource() {
     result.dataset.state = response.success ? "success" : "error";
     const resolution = response.resolution ? `${response.resolution.width}x${response.resolution.height}` : "sem resolução";
     result.textContent = response.success
-      ? `Conexão OK · ${resolution}`
+      ? `Conexão OK - ${resolution}`
       : `Falha no teste: ${response.error || response.status}`;
     if (preview && response.preview_data_url) {
       preview.src = response.preview_data_url;
@@ -1855,7 +1856,7 @@ async function handleSimpleCameraTest() {
     result.dataset.state = response.success ? "success" : "error";
     const resolution = response.resolution ? `${response.resolution.width}x${response.resolution.height}` : "sem resolução";
     result.textContent = response.success
-      ? `Conexão OK · ${resolution}`
+      ? `Conexão OK - ${resolution}`
       : `Falha no teste: ${response.error || response.status}`;
     if (preview && response.preview_data_url) {
       preview.src = response.preview_data_url;
@@ -1872,7 +1873,7 @@ async function handleSimpleCameraSubmit(event) {
   const form = event.currentTarget;
   try {
     const camera = await createCamera(simpleCameraPayloadFromForm(form));
-    notify("Câmera cadastrada", `${camera.name} está pronta para operação.`, "success");
+    notify("Camera cadastrada", `${camera.name} está pronta para operação.`, "success");
     closeCameraModal();
     await loadCameras();
   } catch (error) {
@@ -1955,7 +1956,7 @@ function stateDraft(name, meaning, color, hsv, isStop) {
 }
 
 function cameraWizardSteps() {
-  return ["Câmera", "Cena", "Áreas", "Monitores", "Regras", "Saídas", "Validar"];
+  return ["Camera", "Cena", "Áreas", "Monitores", "Regras", "Saídas", "Validar"];
 }
 
 function renderCameraWizard() {
@@ -2026,7 +2027,7 @@ function renderWizardCameraStep() {
             </div>
           </div>
           <div class="wizard-source-options">
-            ${wizardSourceOption("rtsp", "RTSP / IP", "Câmeras industriais, NVR e streams de rede.", c.source_type)}
+            ${wizardSourceOption("rtsp", "RTSP / IP", "Cameras industriais, NVR e streams de rede.", c.source_type)}
             ${wizardSourceOption("video_file", "Arquivo / vídeo", "Use MP4 para teste sem câmera física.", c.source_type)}
             ${wizardSourceOption("webcam", "Outra fonte", "Webcam local ou fonte simples.", c.source_type)}
           </div>
@@ -2055,7 +2056,7 @@ function renderWizardCameraStep() {
         <div>
           <span class="wizard-status-dot"></span>
           <div>
-            <strong>${connection.state === "success" ? "Câmera conectada" : connection.state === "error" ? "Não foi possível conectar" : connection.state === "loading" ? "Testando conexão..." : "Teste de conexão"}</strong>
+            <strong>${connection.state === "success" ? "Camera conectada" : connection.state === "error" ? "Não foi possível conectar" : connection.state === "loading" ? "Testando conexão..." : "Teste de conexão"}</strong>
             <p>${connection.message || "Verifique se a câmera está acessível antes de avançar."}</p>
           </div>
         </div>
@@ -2262,7 +2263,7 @@ function renderWizardValidateStep() {
       <div class="wizard-validation-layout">
         <section class="wizard-section wizard-section-flat">
           <div class="wizard-summary-grid">
-            ${wizardSummaryItem("Câmera", cameraWizard.createdCamera?.name || cameraWizard.camera.name || "-")}
+            ${wizardSummaryItem("Camera", cameraWizard.createdCamera?.name || cameraWizard.camera.name || "-")}
             ${wizardSummaryItem("Local", `${cameraWizard.camera.site || "-"} / ${cameraWizard.camera.sector || "-"}`)}
             ${wizardSummaryItem("Conexão", cameraWizard.connection?.state === "success" ? "Online" : "Pendente")}
             ${wizardSummaryItem("Áreas", cameraWizard.createdRoi ? "1 configurada" : "Pendente")}
@@ -2283,7 +2284,7 @@ function renderWizardValidateStep() {
               <dt>Estável</dt><dd>${status?.stable ? "Sim" : "Não"}</dd>
             </dl>
             <div class="wizard-checklist">
-              ${["Câmera", "Áreas", "Monitor", "Estados", "Regras", "Saídas"].map((item) => `<span><i data-lucide="check"></i>${item}</span>`).join("")}
+              ${["Camera", "Áreas", "Monitor", "Estados", "Regras", "Saídas"].map((item) => `<span><i data-lucide="check"></i>${item}</span>`).join("")}
             </div>
           </aside>
         </section>
@@ -2379,7 +2380,7 @@ async function persistWizardStep() {
   try {
     if (cameraWizard.step === 0 && !cameraWizard.createdCamera) {
       const payload = {
-        name: cameraWizard.camera.name || "Câmera sem nome",
+        name: cameraWizard.camera.name || "Camera sem nome",
         area_id: cameraWizard.camera.sector || cameraWizard.camera.area_id || null,
         source_type: cameraWizard.camera.source_type,
         source_uri: cameraWizard.camera.source_uri || "0",
@@ -2525,7 +2526,7 @@ async function handleEnabledChange(event) {
   const enabled = event.currentTarget.checked;
   try {
     await updateCamera(row.dataset.cameraId, { enabled });
-    notify(enabled ? "Câmera ativada" : "Câmera pausada", "Estado atualizado com sucesso.", enabled ? "success" : "warning");
+    notify(enabled ? "Camera ativada" : "Camera pausada", "Estado atualizado com sucesso.", enabled ? "success" : "warning");
     await loadCameras();
   } catch (error) {
     notifyError("Falha ao atualizar câmera", error);
@@ -2551,7 +2552,7 @@ async function handleCameraAction(event) {
 
     if (action === "delete") {
       await deleteCamera(cameraId);
-      notify("Câmera removida", "A fonte foi excluída do sistema.", "warning");
+      notify("Camera removida", "A fonte foi excluída do sistema.", "warning");
       await loadCameras();
       return;
     }
@@ -2580,39 +2581,53 @@ async function handleCameraAction(event) {
 
 async function renderEventsPage() {
   appView.innerHTML = `
-    <div class="ops-page">
-      <section class="ops-toolbar">
-        <label>Status
-          <select id="event-status-filter">
-            <option value="">Todos</option>
-            <option value="OPEN">Abertos</option>
-            <option value="REVIEWED">Revisados</option>
-            <option value="CLOSED">Fechados</option>
-          </select>
-        </label>
-        <label>Câmera
-          <select id="event-camera-filter"><option value="">Todas</option></select>
-        </label>
-        <label>Tipo
-          <input id="event-type-filter" placeholder="PERSON_RESTRICTED_ZONE" />
-        </label>
-        <button type="button" id="event-refresh">Atualizar</button>
-      </section>
-      <section class="ops-grid">
+    <div class="ops-page events-product-page">
+      <section class="page-header">
         <div>
-          <div class="section-heading"><h2>Fila de eventos</h2><span id="event-count">0</span></div>
-          <div id="event-list" class="ops-list"></div>
+          <h2>Eventos</h2>
+          <p>Feed operacional dos eventos processados pelas cameras e Nodes CAMPEX.</p>
         </div>
-        <aside class="ops-detail">
-          <h2>Evento selecionado</h2>
-          <div id="event-detail">${emptyState("Selecione um evento", "Abra detalhes para revisar contexto e evidência.")}</div>
-          <h2>Resumo</h2>
-          <dl id="event-summary" class="metric-list"></dl>
-        </aside>
+        <button type="button" class="secondary-action" id="event-refresh"><i data-lucide="refresh-cw"></i>Atualizar</button>
       </section>
+      <section class="cx-inline-stats" id="event-summary"></section>
+      <section class="cx-filterbar">
+        <div class="cx-tabs" id="event-status-tabs">
+          <button type="button" class="is-active" data-status="">Todos</button>
+          <button type="button" data-status="OPEN">Abertos</button>
+          <button type="button" data-status="REVIEWED">Revisados</button>
+          <button type="button" data-status="CLOSED">Fechados</button>
+        </div>
+        <div class="actions-row">
+          <select id="event-camera-filter"><option value="">Todas as cameras</option></select>
+          <input id="event-type-filter" placeholder="Tipo de evento" />
+        </div>
+      </section>
+      <input id="event-status-filter" type="hidden" value="" />
+      <section id="event-list" class="cx-list"></section>
+      <aside class="cx-drawer" id="event-drawer" aria-hidden="true">
+        <div class="cx-drawer-backdrop" data-drawer-close></div>
+        <div class="cx-drawer-panel">
+          <div class="cx-drawer-head">
+            <div>
+              <h3>Detalhes do evento</h3>
+              <span class="cx-code" id="event-drawer-id">-</span>
+            </div>
+            <button type="button" class="cx-ghost-button" data-drawer-close>Fechar</button>
+          </div>
+          <div id="event-detail">${emptyState("Selecione um evento", "Abra detalhes para revisar contexto e evidencia.")}</div>
+        </div>
+      </aside>
     </div>
   `;
   document.querySelector("#event-refresh").addEventListener("click", loadEvents);
+  document.querySelectorAll("#event-status-tabs button").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("#event-status-tabs button").forEach((item) => item.classList.toggle("is-active", item === button));
+      document.querySelector("#event-status-filter").value = button.dataset.status || "";
+      loadEvents();
+    });
+  });
+  document.querySelectorAll("[data-drawer-close]").forEach((item) => item.addEventListener("click", closeEventDrawer));
   ["#event-status-filter", "#event-camera-filter", "#event-type-filter"].forEach((selector) => {
     document.querySelector(selector).addEventListener("change", loadEvents);
     document.querySelector(selector).addEventListener("input", debounce(loadEvents, 250));
@@ -2633,7 +2648,6 @@ async function loadEvents() {
     const [events, cameras, zones] = await Promise.all([listEvents(params), listCameras(), listZones()]);
     const cameraById = Object.fromEntries(cameras.map((camera) => [camera.id, camera]));
     const zoneById = Object.fromEntries(zones.map((zone) => [zone.id, zone]));
-    document.querySelector("#event-count").textContent = `${events.length} eventos`;
     list.innerHTML = events.length
       ? events.map((event) => eventRow(event, cameraById, zoneById)).join("")
       : emptyState("Nenhum evento encontrado", "Ajuste os filtros ou gere eventos entrando em uma zona.");
@@ -2651,15 +2665,14 @@ function eventRow(event, cameraById, zoneById) {
   const zone = event.zone_id ? zoneById[event.zone_id] : null;
   const category = event.metadata?.facts?.activity?.category || "other";
   return `
-    <article class="ops-row" data-event-id="${event.id}">
+    <article class="cx-row" data-event-id="${event.id}">
       <div>
-        <strong>${event.type}</strong>
-        <span>${category} · ${camera?.name || event.camera_id} · ${zone?.name || event.zone_id || "sem zona"} · track ${event.track_id ?? "-"}</span>
-        <small>${formatDate(event.started_at)} · ${event.confidence ? Math.round(event.confidence * 100) : "-"}%</small>
+        <strong class="cx-row-title">${escapeHtml(event.type)}</strong>
+        <span class="cx-row-meta">${escapeHtml(camera?.name || event.camera_id)} - ${escapeHtml(zone?.name || event.zone_id || "sem zona")} - ${escapeHtml(category)}</span>
+        <small class="cx-row-meta">${formatDate(event.started_at)} - confianca ${event.confidence ? Math.round(event.confidence * 100) : "-"}%</small>
       </div>
-      <span class="severity-badge" data-severity="${event.severity}">${event.severity}</span>
-      <span class="health-badge" data-status="${event.status}">${event.status}</span>
-      <div class="row-actions">
+      <span class="cx-status" data-state="${escapeHtml(event.severity)}">${escapeHtml(event.severity)}</span>
+      <div class="cx-actions">
         <button type="button" data-event-action="review">Revisar</button>
         <button type="button" data-event-action="close">Fechar</button>
         <button type="button" data-event-action="details">Detalhes</button>
@@ -2704,23 +2717,31 @@ async function showEventDetail(eventId) {
   const zone = zones.find((item) => item.id === event.zone_id);
   const hasEvidence = Boolean(event.metadata?.overlay_path);
   const category = event.metadata?.facts?.activity?.category || "other";
+  document.querySelector("#event-drawer")?.classList.add("is-open");
+  document.querySelector("#event-drawer")?.setAttribute("aria-hidden", "false");
+  document.querySelector("#event-drawer-id").textContent = event.id;
   document.querySelector("#event-detail").innerHTML = `
     <div class="event-detail-panel">
-      ${hasEvidence ? `<img class="event-evidence" src="${eventEvidenceUrl(event.id)}" alt="Evidência do evento ${event.id}" />` : ""}
+      ${hasEvidence ? `<img class="event-evidence" src="${eventEvidenceUrl(event.id)}" alt="Evidencia do evento ${event.id}" />` : ""}
       <dl class="metric-list">
         <dt>ID</dt><dd>${event.id}</dd>
         <dt>Tipo</dt><dd>${event.type}</dd>
         <dt>Categoria</dt><dd>${category}</dd>
-        <dt>Câmera</dt><dd>${camera?.name || event.camera_id}</dd>
+        <dt>Camera</dt><dd>${camera?.name || event.camera_id}</dd>
         <dt>Zona</dt><dd>${zone?.name || event.zone_id || "-"}</dd>
         <dt>Track</dt><dd>${event.track_id ?? "-"}</dd>
         <dt>Status</dt><dd>${event.status}</dd>
-        <dt>Início</dt><dd>${formatDate(event.started_at)}</dd>
-        <dt>Evidência</dt><dd>${hasEvidence ? "salva" : "não disponível"}</dd>
+        <dt>Inicio</dt><dd>${formatDate(event.started_at)}</dd>
+        <dt>Evidencia</dt><dd>${hasEvidence ? "salva" : "nao disponivel"}</dd>
       </dl>
       <pre class="code-block">${JSON.stringify(event.metadata || {}, null, 2)}</pre>
     </div>
   `;
+}
+
+function closeEventDrawer() {
+  document.querySelector("#event-drawer")?.classList.remove("is-open");
+  document.querySelector("#event-drawer")?.setAttribute("aria-hidden", "true");
 }
 
 function renderEventSummary(events) {
@@ -2728,10 +2749,10 @@ function renderEventSummary(events) {
   const critical = events.filter((event) => event.severity === "critical").length;
   const types = new Set(events.map((event) => event.type)).size;
   document.querySelector("#event-summary").innerHTML = `
-    <dt>Total</dt><dd>${events.length}</dd>
-    <dt>Abertos</dt><dd>${open}</dd>
-    <dt>Críticos</dt><dd>${critical}</dd>
-    <dt>Tipos</dt><dd>${types}</dd>
+    <span><strong>${events.length}</strong> eventos</span>
+    <span><strong>${open}</strong> abertos</span>
+    <span><strong>${critical}</strong> criticos</span>
+    <span><strong>${types}</strong> tipos</span>
   `;
 }
 
@@ -2793,7 +2814,7 @@ async function renderInvestigations() {
       <article class="ops-row" data-investigation-id="${item.id}">
         <div>
           <strong>${item.title}</strong>
-          <span>${item.event_id || "sem evento"} · ${formatDate(item.updated_at)}</span>
+          <span>${item.event_id || "sem evento"} - ${formatDate(item.updated_at)}</span>
           <small>${item.notes ? item.notes.slice(0, 120) : "sem notas"}</small>
         </div>
         <span class="health-badge" data-status="${item.status}">${item.status}</span>
@@ -2865,7 +2886,7 @@ async function renderZonesPage() {
   appView.innerHTML = `
     <div class="ops-page">
       <section class="ops-toolbar">
-        <label>Câmera<select id="zone-camera-select"></select></label>
+        <label>Camera<select id="zone-camera-select"></select></label>
         <button type="button" id="zone-refresh">Atualizar</button>
       </section>
       <section class="ops-grid">
@@ -2944,7 +2965,7 @@ function renderAreaSummary(cameras, zones) {
     return `
       <div class="system-cell">
         <span>${areaId === "sem_area" ? "Sem área" : areaId}</span>
-        <strong>${areaCameras.length} câmeras · ${zones.length} zonas visíveis</strong>
+        <strong>${areaCameras.length} câmeras - ${zones.length} zonas visíveis</strong>
       </div>
     `;
   }).join("");
@@ -2955,7 +2976,7 @@ function zoneRow(zone, camera) {
     <article class="ops-row" data-zone-id="${zone.id}">
       <div>
         <strong>${zone.name}</strong>
-        <span>${camera?.name || zone.camera_id} · ${zone.points.length} pontos</span>
+        <span>${camera?.name || zone.camera_id} - ${zone.points.length} pontos</span>
         <small>${zone.points.map((point) => `[${point.join(", ")}]`).join(" ")}</small>
       </div>
       <span class="severity-badge" data-severity="${zone.type === "restricted" ? "critical" : "attention"}">${zone.type}</span>
@@ -3158,7 +3179,7 @@ async function renderMachinesPage() {
   appView.innerHTML = `
     <div class="ops-page">
       <section class="ops-toolbar">
-        <label>Câmera<select id="machine-camera-select"></select></label>
+        <label>Camera<select id="machine-camera-select"></select></label>
         <button type="button" id="machine-refresh">Atualizar</button>
       </section>
       <section class="ops-grid">
@@ -3294,8 +3315,8 @@ function machineRow(machine, camera) {
     <article class="ops-row" data-machine-id="${machine.id}">
       <div>
         <strong>${machine.name}</strong>
-        <span>${camera?.name || machine.camera_id} · ${machine.type} · ${machine.points.length} pontos</span>
-        <small>${machine.requires_operator ? "requer operador" : "operador opcional"} · ${machine.allow_idle ? "parada permitida" : "parada monitorada"} · distância ${machine.min_person_distance}</small>
+        <span>${camera?.name || machine.camera_id} - ${machine.type} - ${machine.points.length} pontos</span>
+        <small>${machine.requires_operator ? "requer operador" : "operador opcional"} - ${machine.allow_idle ? "parada permitida" : "parada monitorada"} - distância ${machine.min_person_distance}</small>
       </div>
       <span class="health-badge" data-status="${machine.enabled ? "ONLINE" : "OFFLINE"}">${machine.enabled ? "ATIVA" : "INATIVA"}</span>
       <label class="inline-toggle"><input type="checkbox" data-machine-action="toggle" ${machine.enabled ? "checked" : ""} /> Ativa</label>
@@ -3592,7 +3613,7 @@ async function renderEvidencePage() {
       </section>
       <section class="ops-grid">
         <div>
-          <div class="section-heading"><h2>Evidências</h2><span id="evidence-count">0</span></div>
+          <div class="section-heading"><h2>Evidencias</h2><span id="evidence-count">0</span></div>
           <div id="evidence-list" class="ops-list"></div>
         </div>
         <aside class="ops-detail">
@@ -3631,8 +3652,8 @@ function evidenceRow(item, cameraById, zoneById) {
     <article class="ops-row">
       <div>
         <strong>${item.type}</strong>
-        <span>${camera?.name || item.camera_id} · ${zone?.name || item.zone_id || "sem zona"}</span>
-        <small>${formatDate(item.started_at)} · ${item.media_path}</small>
+        <span>${camera?.name || item.camera_id} - ${zone?.name || item.zone_id || "sem zona"}</span>
+        <small>${formatDate(item.started_at)} - ${item.media_path}</small>
       </div>
       <span class="severity-badge" data-severity="${item.severity}">${item.severity}</span>
       <span class="health-badge" data-status="${item.status}">${item.status}</span>
@@ -3691,14 +3712,14 @@ async function loadDiagnostics() {
     const payload = await getOperationsDiagnostics();
     grid.innerHTML = [
       metricItem("Banco local", payload.sqlite ? "OK" : "Não encontrado", payload.database_path),
-      metricItem("Câmeras online", payload.cameras_online, "Streams ativos agora"),
-      metricItem("IA ativa", payload.ia_ativa, "Câmeras com vision ligada"),
+      metricItem("Cameras online", payload.cameras_online, "Streams ativos agora"),
+      metricItem("IA ativa", payload.ia_ativa, "Cameras com vision ligada"),
       metricItem("Zonas ativas", payload.zonas_ativas, "Polígonos monitorados"),
       metricItem("Regras", payload.regras_ativas, "Regras operacionais carregadas"),
       metricItem("Eventos abertos", payload.eventos_abertos, "Ocorrências em andamento"),
       metricItem("Investigações", payload.investigacoes_abertas, "Casos não fechados"),
       metricItem("Disco livre", `${payload.disco_livre_percentual}%`, "Partição do banco local"),
-      metricItem("Evidências", `${payload.evidence_mb} MB`, "Armazenamento local"),
+      metricItem("Evidencias", `${payload.evidence_mb} MB`, "Armazenamento local"),
     ].join("");
     document.querySelector("#diagnostics-last").textContent = payload.ultima_entrega
       ? JSON.stringify(payload.ultima_entrega, null, 2)
@@ -3900,8 +3921,8 @@ function ruleCard(rule) {
     <article class="ops-row" data-rule-id="${rule.id || ""}">
       <div>
         <strong>${rule.name}</strong>
-        <span>${observation} · zone=${zone || "qualquer"} · cooldown ${rule.cooldown_seconds ?? 10}s</span>
-        <small>${event} · ${delay}</small>
+        <span>${observation} - zone=${zone || "qualquer"} - cooldown ${rule.cooldown_seconds ?? 10}s</span>
+        <small>${event} - ${delay}</small>
       </div>
       <span class="severity-badge" data-severity="${rule.severity}">${rule.severity}</span>
       <span class="health-badge" data-status="${rule.enabled ? "ONLINE" : "OFFLINE"}">${rule.enabled ? "ATIVA" : "INATIVA"}</span>
@@ -3946,53 +3967,74 @@ async function simulateRule(event) {
 async function renderNodesPage() {
   appView.innerHTML = `
     <div class="ops-page nodes-page">
-      <section class="hero-card nodes-hero">
+      <section class="page-header">
         <div>
-          <p class="eyebrow">CAMPEX Cloud + Node</p>
           <h2>Central de Nodes</h2>
-          <p>Acompanhe os softwares locais que ficam dentro da rede do cliente, suas câmeras RTSP e a fila de sincronização com a Cloud.</p>
+          <p>Instalacoes locais CAMPEX Node, cameras RTSP, fila de sincronizacao e saude de operacao.</p>
         </div>
-        <div class="hero-actions">
+        <div class="actions-row">
           <button type="button" class="secondary-action" id="nodes-refresh"><i data-lucide="refresh-cw"></i>Atualizar</button>
-          <button type="button" class="primary-action" id="nodes-create-code"><i data-lucide="key-round"></i>Parear Node</button>
+          <button type="button" class="primary-action" id="nodes-open-pairing"><i data-lucide="link"></i>Conectar Node</button>
         </div>
       </section>
 
-      <section class="metric-grid" id="nodes-summary">
-        ${metricItem("Nodes", "-", "Carregando")}
-        ${metricItem("Câmeras", "-", "Carregando")}
-        ${metricItem("Fila", "-", "Carregando")}
-        ${metricItem("Eventos", "-", "Carregando")}
+      <section class="cx-inline-stats" id="nodes-summary"></section>
+
+      <section class="cx-filterbar">
+        <div class="cx-tabs" aria-label="Filtro de Nodes">
+          <button type="button" class="is-active">Todos</button>
+          <button type="button">Online</button>
+          <button type="button">Atencao</button>
+        </div>
+        <div class="cx-status" data-state="info">CAMPEX Cloud recebendo heartbeats</div>
       </section>
 
-      <section class="ops-panel">
-        <div class="panel-head">
-          <div>
-            <h3>Instalações locais</h3>
-            <p>Detalhe operacional de cada CAMPEX Node pareado.</p>
+      <section id="nodes-page-list" class="cx-list">${emptyState("Carregando Nodes", "Buscando instalacoes pareadas.")}</section>
+
+      <aside class="cx-drawer" id="nodes-pairing-drawer" aria-hidden="true">
+        <div class="cx-drawer-backdrop" data-nodes-pairing-close></div>
+        <div class="cx-drawer-panel">
+          <div class="cx-drawer-head">
+            <div>
+              <h3>Conectar CAMPEX Node</h3>
+              <span class="cx-code">Use o codigo exibido no app local</span>
+            </div>
+            <button type="button" class="cx-ghost-button" data-nodes-pairing-close>Fechar</button>
           </div>
+          <form id="nodes-authorize-form" class="stack-form">
+            <label>Codigo do CAMPEX Node
+              <input name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="482 917" required />
+            </label>
+            <div class="actions-row">
+              <button type="submit" class="primary-action"><i data-lucide="link"></i>Autorizar</button>
+              <button type="button" class="secondary-action" id="nodes-legacy-code"><i data-lucide="key-round"></i>Codigo legado</button>
+            </div>
+            <div id="nodes-page-pairing" class="settings-info-callout">
+              <i data-lucide="info"></i>
+              <div><strong>Aguardando codigo.</strong><span>Abra o CAMPEX Node no computador do cliente e copie o codigo exibido.</span></div>
+            </div>
+          </form>
         </div>
-        <div id="nodes-page-list" class="node-dashboard-list">${emptyState("Carregando Nodes", "Buscando instalações pareadas.")}</div>
-      </section>
-
-      <section class="ops-panel">
-        <div class="panel-head">
-          <div>
-            <h3>Pareamento rápido</h3>
-            <p>Gere um código temporário e digite no aplicativo local CAMPEX Node.</p>
-          </div>
-        </div>
-        <div id="nodes-page-pairing" class="settings-info-callout">
-          <i data-lucide="info"></i>
-          <div><strong>Nenhum código gerado.</strong><span>Clique em Parear Node para conectar uma instalação local.</span></div>
-        </div>
-      </section>
+      </aside>
     </div>
   `;
   document.querySelector("#nodes-refresh")?.addEventListener("click", loadNodesDashboard);
-  document.querySelector("#nodes-create-code")?.addEventListener("click", createNodesPagePairingCode);
+  document.querySelector("#nodes-open-pairing")?.addEventListener("click", openNodesPairingDrawer);
+  document.querySelectorAll("[data-nodes-pairing-close]").forEach((item) => item.addEventListener("click", closeNodesPairingDrawer));
+  document.querySelector("#nodes-legacy-code")?.addEventListener("click", createNodesPagePairingCode);
+  document.querySelector("#nodes-authorize-form")?.addEventListener("submit", authorizeNodesPagePairingCode);
   refreshIcons();
   await loadNodesDashboard();
+}
+
+function openNodesPairingDrawer() {
+  document.querySelector("#nodes-pairing-drawer")?.classList.add("is-open");
+  document.querySelector("#nodes-pairing-drawer")?.setAttribute("aria-hidden", "false");
+}
+
+function closeNodesPairingDrawer() {
+  document.querySelector("#nodes-pairing-drawer")?.classList.remove("is-open");
+  document.querySelector("#nodes-pairing-drawer")?.setAttribute("aria-hidden", "true");
 }
 
 async function loadNodesDashboard() {
@@ -4027,12 +4069,12 @@ function nodesDashboardSummary(nodes, telemetryItems) {
   const camerasOnline = nodes.reduce((total, node) => total + Number(node.cameras_online || 0), 0);
   const queueSize = nodes.reduce((total, node) => total + Number(node.queue_size || 0), 0);
   const events = telemetryItems.reduce((total, item) => total + Number(item.summary?.events_count || 0), 0);
-  return [
-    metricItem("Nodes", `${onlineNodes}/${nodes.length} online`, "Instalações pareadas"),
-    metricItem("Câmeras", `${camerasOnline}/${camerasTotal} online`, "Reportadas por heartbeat"),
-    metricItem("Fila", `${queueSize} pendente(s)`, "Outbox local dos Nodes"),
-    metricItem("Eventos", `${events} recentes`, "Sincronizados pelos Nodes"),
-  ].join("");
+  return `
+    <span><strong>${onlineNodes}/${nodes.length}</strong> Nodes online</span>
+    <span><strong>${camerasOnline}/${camerasTotal}</strong> cameras</span>
+    <span><strong>${queueSize}</strong> na fila local</span>
+    <span><strong>${events}</strong> eventos recentes</span>
+  `;
 }
 
 function nodesDashboardCard(node, telemetry) {
@@ -4041,38 +4083,21 @@ function nodesDashboardCard(node, telemetry) {
   const cameras = telemetry?.cameras || [];
   const events = telemetry?.events || [];
   const lastMetric = telemetry?.summary?.latest_metric_at;
-  const cameraRows = cameras.length
-    ? cameras.map(nodesDashboardCameraRow).join("")
-    : `<div class="muted">Sem telemetria de câmera recebida ainda.</div>`;
-  const eventRows = events.length
-    ? events.slice(0, 5).map((event) => `<span class="node-event-chip" data-severity="${escapeHtml(event.severity || "info")}">${escapeHtml(event.camera_id || "camera")} · ${escapeHtml(event.type || "evento")} · ${escapeHtml(formatDate(event.started_at))}</span>`).join("")
-    : `<span class="muted">Nenhum evento recente sincronizado.</span>`;
+  const cameraLabel = cameras.length ? `${cameras.length} cameras com telemetria` : "sem telemetria de camera";
+  const eventLabel = events.length ? `${events.length} eventos recentes` : "sem eventos recentes";
   return `
-    <article class="node-dashboard-card" data-node-id="${escapeHtml(node.id)}">
-      <header>
-        <div>
-          <h3>${escapeHtml(node.name || node.id)}</h3>
-          <p>${escapeHtml(node.hostname || "hostname não informado")} · ${escapeHtml(node.platform || "plataforma não informada")} · v${escapeHtml(node.version || "0.1.0")}</p>
-        </div>
-        <span class="health-badge" data-status="${connected ? "ONLINE" : "OFFLINE"}">${status.toUpperCase()}</span>
-      </header>
-      <div class="node-dashboard-metrics">
-        ${metricItem("Heartbeat", formatDate(node.last_seen_at), `${node.cameras_online || 0}/${node.cameras_total || 0} câmeras`)}
-        ${metricItem("Fila local", `${node.queue_size || 0}`, "Itens aguardando sync")}
-        ${metricItem("Última métrica", formatDate(lastMetric), `${telemetry?.summary?.metrics_count || 0} métricas`)}
+    <article class="cx-row node-ops-row" data-node-id="${escapeHtml(node.id)}">
+      <div>
+        <strong class="cx-row-title">${escapeHtml(node.name || node.id)}</strong>
+        <span class="cx-row-meta">${escapeHtml(node.hostname || "hostname nao informado")} - ${escapeHtml(node.platform || "plataforma nao informada")} - v${escapeHtml(node.version || "0.1.0")}</span>
+        <small class="cx-row-meta">Heartbeat ${formatDate(node.last_seen_at)} - ${node.cameras_online || 0}/${node.cameras_total || 0} cameras - fila ${node.queue_size || 0} - ${cameraLabel} - ${eventLabel}</small>
+        <small class="cx-row-meta">Ultima metrica ${formatDate(lastMetric)} - ${telemetry?.summary?.metrics_count || 0} metricas</small>
       </div>
-      <div class="node-dashboard-section">
-        <strong>Câmeras do Node</strong>
-        <div class="node-camera-telemetry-list">${cameraRows}</div>
-      </div>
-      <div class="node-dashboard-section">
-        <strong>Eventos recentes</strong>
-        <div class="node-event-list">${eventRows}</div>
-      </div>
-      <footer>
+      <span class="cx-status" data-state="${connected ? "online" : "offline"}">${status.toUpperCase()}</span>
+      <div class="cx-actions">
         <button type="button" data-node-action="rename">Renomear</button>
         <button type="button" data-node-action="revoke">Revogar</button>
-      </footer>
+      </div>
     </article>
   `;
 }
@@ -4110,6 +4135,47 @@ async function createNodesPagePairingCode() {
   }
 }
 
+async function authorizeNodesPagePairingCode(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const code = form.elements.code.value.trim();
+  const host = document.querySelector("#nodes-page-pairing");
+  try {
+    const found = await lookupNodePairingCode(code);
+    if (host) {
+      host.innerHTML = `
+        <i data-lucide="server"></i>
+        <div>
+          <strong>Novo CAMPEX Node</strong>
+          <span>${escapeHtml(found.hostname || found.node_name || "Computador local")} - ${escapeHtml(found.platform || "sistema nao informado")} - CAMPEX Node ${escapeHtml(found.version || "0.1.0")}</span>
+          <div class="actions-row" style="margin-top:.75rem">
+            <button type="button" class="secondary-action" id="nodes-cancel-authorize">Cancelar</button>
+            <button type="button" class="primary-action" id="nodes-confirm-authorize">Autorizar Node</button>
+          </div>
+        </div>
+      `;
+      document.querySelector("#nodes-cancel-authorize")?.addEventListener("click", () => renderNodesPage());
+      document.querySelector("#nodes-confirm-authorize")?.addEventListener("click", async () => {
+        const result = await authorizeNodePairingCode(code, found.node_name || found.hostname || "CAMPEX Node");
+        notify("CAMPEX Node conectado", `${result.name || result.node_id} foi vinculado a esta empresa.`, "success");
+        form.reset();
+        await loadNodesDashboard();
+        if (host) {
+          host.innerHTML = `<i data-lucide="check-circle"></i><div><strong>CAMPEX Node conectado</strong><span>O Node recebera credenciais e iniciara heartbeat/eventos automaticamente.</span></div>`;
+        }
+        refreshIcons();
+      });
+    }
+    refreshIcons();
+  } catch (error) {
+    if (host) {
+      host.innerHTML = `<i data-lucide="alert-triangle"></i><div><strong>Nao foi possivel localizar o Node.</strong><span>${escapeHtml(error.message)}</span></div>`;
+    }
+    notify("Falha ao conectar Node", error.message, "error");
+    refreshIcons();
+  }
+}
+
 async function renderSettingsPage() {
   appView.innerHTML = `
     <div class="ops-page settings-page settings-reference">
@@ -4125,24 +4191,6 @@ async function renderSettingsPage() {
         </label>
       </section>
 
-      <section class="ops-panel">
-        <h3>Conexão com as câmeras</h3>
-        <p>Para câmeras da rede local, mantenha o conector CAMPEX ligado neste computador. A interface continua na Vercel.</p>
-        <p>Backend em uso: <code>${escapeHtml(getBackendUrl())}</code></p>
-        <form id="backend-connection-form" class="stack-form">
-          <label>Onde executar
-            <select name="mode">
-              <option value="local">Neste computador — câmeras da rede local</option>
-              <option value="cloud">Backend configurado na nuvem</option>
-            </select>
-          </label>
-          <label>Token do backend selecionado<input name="token" type="password" autocomplete="off" required /></label>
-          <p>Use o CAMPEX_API_TOKEN do conector local. Os cadastros e dados exibidos pertencem ao backend selecionado.</p>
-          <button type="submit">Testar e conectar</button>
-          <p id="backend-connection-status" role="status"></p>
-        </form>
-      </section>
-
       <nav class="settings-tabs" aria-label="Categorias de configurações">
         ${settingsTabs().map((tab) => `
           <button type="button" data-settings-tab="${tab.id}">
@@ -4154,27 +4202,6 @@ async function renderSettingsPage() {
       <section class="settings-reference-grid" id="settings-tab-panel"></section>
     </div>
   `;
-  document.querySelector("#backend-connection-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const status = document.querySelector("#backend-connection-status");
-    const button = form.querySelector("button");
-    button.disabled = true;
-    status.textContent = "Conectando... Se o navegador solicitar acesso à rede local, permita para usar suas câmeras.";
-    try {
-      const token = form.elements.token.value.trim();
-      const base = await connectBackend(form.elements.mode.value, token);
-      setApiToken(token);
-      const target = new URL(window.location.href);
-      target.searchParams.set("api", base);
-      window.location.assign(target.href);
-    } catch (error) {
-      status.textContent = error.message === "Failed to fetch"
-        ? "Não foi possível acessar o backend. Inicie o conector local e permita o acesso à rede local no navegador."
-        : error.message;
-      button.disabled = false;
-    }
-  });
   setupSettingsInteractions();
   await renderSettingsTab("general");
 }
@@ -4197,7 +4224,7 @@ function settingsTabs() {
   return [
     { id: "general", label: "Geral", icon: "settings" },
     { id: "nodes", label: "Nodes", icon: "server" },
-    { id: "cameras", label: "Câmeras", icon: "camera" },
+    { id: "cameras", label: "Cameras", icon: "camera" },
     { id: "notifications", label: "Notificações", icon: "bell" },
     { id: "integrations", label: "Integrações", icon: "wrench" },
     { id: "security", label: "Segurança", icon: "shield" },
@@ -4345,7 +4372,7 @@ function generalSettingsMarkup() {
 
 function camerasSettingsMarkup() {
   return `
-    ${settingsCard("Câmeras", "Gerencie disponibilidade, visão computacional e testes de conexão.", "camera", `
+    ${settingsCard("Cameras", "Gerencie disponibilidade, visão computacional e testes de conexão.", "camera", `
       <div id="settings-camera-list" class="settings-integration-list">${emptyState("Carregando câmeras", "Buscando câmeras cadastradas.")}</div>
     `, `<button type="button" class="secondary-action" data-settings-action="refresh-cameras"><i data-lucide="refresh-cw"></i>Atualizar</button>`)}
     ${settingsCard("Operação visual", "Resumo operacional calculado a partir do backend.", "activity", `
@@ -4415,8 +4442,8 @@ function notificationsSettingsMarkup() {
         <span class="settings-switch-control"><input name="immediate_alerts_enabled" type="checkbox" /><span>Ativo</span></span>
       </label>
       <div class="settings-toggle-grid">
-        <label class="toggle-row"><input name="camera_offline" type="checkbox" /><span>Câmera offline</span></label>
-        <label class="toggle-row"><input name="camera_online" type="checkbox" /><span>Câmera online</span></label>
+        <label class="toggle-row"><input name="camera_offline" type="checkbox" /><span>Camera offline</span></label>
+        <label class="toggle-row"><input name="camera_online" type="checkbox" /><span>Camera online</span></label>
         <label class="toggle-row"><input name="zone_idle" type="checkbox" /><span>Área sem atividade</span></label>
         <label class="toggle-row"><input name="zone_activity_resumed" type="checkbox" /><span>Atividade retomada</span></label>
         <label class="toggle-row"><input name="crowding_started" type="checkbox" /><span>Aglomeração</span></label>
@@ -4653,12 +4680,12 @@ async function loadSettingsCameras() {
     ]);
     listHost.innerHTML = cameras.length
       ? cameras.map(settingsCameraLine).join("")
-      : emptyState("Nenhuma câmera cadastrada", "Cadastre câmeras na área Câmeras.");
+      : emptyState("Nenhuma câmera cadastrada", "Cadastre câmeras na área Cameras.");
     if (summaryHost) {
       const online = cameras.filter((camera) => camera.status === "ONLINE").length;
       const enabled = cameras.filter((camera) => camera.enabled).length;
       summaryHost.innerHTML = [
-        metricItem("Câmeras", `${cameras.length} cadastradas`, `${enabled} habilitadas`),
+        metricItem("Cameras", `${cameras.length} cadastradas`, `${enabled} habilitadas`),
         metricItem("Online", `${online} online`, `${cameras.length - online} offline/degradadas`),
         metricItem("Zonas", `${zones.length} áreas`, "Polígonos operacionais"),
         metricItem("Eventos", `${events.length} recentes`, "Última leitura operacional"),
@@ -4680,7 +4707,7 @@ function settingsCameraLine(camera) {
     <article class="settings-integration-line" data-camera-id="${camera.id}">
       <div>
         <strong>${escapeHtml(camera.name || camera.id)}</strong>
-        <span>${escapeHtml(camera.source_type || "camera")} · ${escapeHtml(camera.area_id || "sem área")}</span>
+        <span>${escapeHtml(camera.source_type || "camera")} - ${escapeHtml(camera.area_id || "sem área")}</span>
       </div>
       <small data-state="${status === "ONLINE" ? "connected" : "pending"}">${status}</small>
       <div class="settings-row-actions">
@@ -4718,13 +4745,13 @@ function settingsNodeLine(node) {
     node.platform || "plataforma não informada",
     `v${node.version || "0.1.0"}`,
     `${node.cameras_online || 0}/${node.cameras_total || 0} câmeras`,
-  ].join(" · ");
+  ].join(" - ");
   return `
     <article class="settings-integration-line" data-node-id="${escapeHtml(node.id)}">
       <div>
         <strong>${escapeHtml(node.name || node.id)}</strong>
         <span>${escapeHtml(details)}</span>
-        <span>Último heartbeat: ${escapeHtml(lastSeen)} · Fila local: ${Number(node.queue_size || 0)}</span>
+        <span>Último heartbeat: ${escapeHtml(lastSeen)} - Fila local: ${Number(node.queue_size || 0)}</span>
         <div class="node-telemetry" data-node-telemetry="${escapeHtml(node.id)}">Carregando telemetria...</div>
       </div>
       <small data-state="${connected ? "connected" : "pending"}">${status.toUpperCase()}</small>
@@ -4755,13 +4782,13 @@ function settingsNodeTelemetryMarkup(telemetry) {
   const events = telemetry.events || [];
   const stats = [
     metricItem("Telemetria", `${summary.metrics_count || 0} métricas`, formatDate(summary.latest_metric_at) || "sem leitura"),
-    metricItem("Câmeras reportadas", `${summary.cameras_online || 0}/${summary.cameras_reported || 0} online`, `${events.length} eventos recentes`),
+    metricItem("Cameras reportadas", `${summary.cameras_online || 0}/${summary.cameras_reported || 0} online`, `${events.length} eventos recentes`),
   ].join("");
   const cameraRows = cameras.length
     ? cameras.slice(0, 6).map(settingsNodeCameraTelemetryLine).join("")
     : `<p class="muted">Sem telemetria de câmera sincronizada ainda.</p>`;
   const eventRows = events.length
-    ? events.slice(0, 4).map((event) => `<span class="node-event-chip" data-severity="${escapeHtml(event.severity || "info")}">${escapeHtml(event.camera_id || "camera")} · ${escapeHtml(event.type || "evento")} · ${escapeHtml(formatDate(event.started_at))}</span>`).join("")
+    ? events.slice(0, 4).map((event) => `<span class="node-event-chip" data-severity="${escapeHtml(event.severity || "info")}">${escapeHtml(event.camera_id || "camera")} - ${escapeHtml(event.type || "evento")} - ${escapeHtml(formatDate(event.started_at))}</span>`).join("")
     : `<span class="muted">Nenhum evento recente.</span>`;
   return `
     <div class="settings-runtime-grid node-telemetry-grid">${stats}</div>
@@ -4824,7 +4851,11 @@ async function handleSettingsNodeAction(event) {
       notify("Node renomeado", "Nome atualizado na Cloud.", "success");
     }
     if (action === "revoke") {
-      const confirmed = window.confirm("Revogar este Node? Ele precisará ser pareado novamente.");
+      const confirmed = await confirmProductAction({
+        title: "Revogar Node?",
+        message: "Este CAMPEX Node deixara de enviar dados e precisara ser pareado novamente.",
+        confirmLabel: "Revogar Node",
+      });
       if (!confirmed) return;
       await revokeNode(nodeId);
       notify("Node revogado", "O token deste Node foi invalidado.", "success");
@@ -4839,6 +4870,41 @@ async function handleSettingsNodeAction(event) {
   }
 }
 
+function confirmProductAction({ title, message, confirmLabel = "Confirmar", cancelLabel = "Cancelar" }) {
+  return new Promise((resolve) => {
+    const layer = document.createElement("section");
+    layer.className = "modal-layer";
+    layer.setAttribute("aria-modal", "true");
+    layer.setAttribute("role", "dialog");
+    layer.innerHTML = `
+      <div class="modal-backdrop" data-confirm-cancel></div>
+      <div class="modal-window product-confirm">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Confirmacao</p>
+            <h2>${escapeHtml(title)}</h2>
+          </div>
+        </header>
+        <p>${escapeHtml(message)}</p>
+        <footer class="modal-actions">
+          <button type="button" data-confirm-cancel>${escapeHtml(cancelLabel)}</button>
+          <button type="button" class="primary-action" data-confirm-ok>${escapeHtml(confirmLabel)}</button>
+        </footer>
+      </div>
+    `;
+    const finish = (value) => {
+      layer.remove();
+      delete document.body.dataset.modalOpen;
+      resolve(value);
+    };
+    document.body.dataset.modalOpen = "true";
+    document.body.appendChild(layer);
+    layer.querySelectorAll("[data-confirm-cancel]").forEach((item) => item.addEventListener("click", () => finish(false)));
+    layer.querySelector("[data-confirm-ok]")?.addEventListener("click", () => finish(true));
+    layer.querySelector("[data-confirm-ok]")?.focus();
+  });
+}
+
 async function handleSettingsCameraAction(event) {
   const row = event.currentTarget.closest("[data-camera-id]");
   const cameraId = row?.dataset.cameraId;
@@ -4847,12 +4913,12 @@ async function handleSettingsCameraAction(event) {
   try {
     if (action === "test") {
       await testCamera(cameraId);
-      notify("Câmera testada", "Conexão validada pelo backend.", "success");
+      notify("Camera testada", "Conexão validada pelo backend.", "success");
     }
     if (action === "toggle") {
       const enabled = event.currentTarget.textContent === "Desativar";
       await updateCamera(cameraId, { enabled: !enabled });
-      notify("Câmera atualizada", `Câmera ${enabled ? "desativada" : "ativada"}.`, "success");
+      notify("Camera atualizada", `Camera ${enabled ? "desativada" : "ativada"}.`, "success");
     }
     await loadSettingsCameras();
   } catch (error) {
@@ -4878,8 +4944,8 @@ async function handleSettingsAction(event) {
     const days = Number(document.querySelector("#security-settings-form")?.elements.evidence_retention_days.value || 7);
     try {
       await cleanupEvidence(days);
-      appendSettingsAudit(`Evidências antigas limpas (${days} dias)`);
-      notify("Limpeza solicitada", `Evidências com mais de ${days} dias foram processadas.`, "success");
+      appendSettingsAudit(`Evidencias antigas limpas (${days} dias)`);
+      notify("Limpeza solicitada", `Evidencias com mais de ${days} dias foram processadas.`, "success");
     } catch (error) {
       notify("Falha na limpeza", error.message, "error");
     }
@@ -4964,7 +5030,7 @@ function settingsUserLine(name, email, role, status) {
     <article class="settings-integration-line">
       <div>
         <strong>${escapeHtml(name || email)}</strong>
-        <span>${escapeHtml(email || "")} · ${escapeHtml(role || "operator")}</span>
+        <span>${escapeHtml(email || "")} - ${escapeHtml(role || "operator")}</span>
       </div>
       <small data-state="${status === "Ativo" ? "connected" : "pending"}">${status}</small>
       <button type="button" disabled>Perfil</button>
@@ -4994,8 +5060,8 @@ async function loadSettings() {
     host.innerHTML = [
       metricItem("Serviço", `${runtime.service_name} ${runtime.version}`, runtime.environment),
       metricItem("Banco", runtime.database_url, `${cameras.length} câmeras`),
-      metricItem("Vision", `${runtime.vision.detector} · ${runtime.vision.device}`, `${runtime.vision.fps} FPS · conf ${runtime.vision.confidence}`),
-      metricItem("Câmeras", `${runtime.camera.stale_seconds}s stale`, `${runtime.camera.read_failure_limit} falhas até reconectar`),
+      metricItem("Vision", `${runtime.vision.detector} - ${runtime.vision.device}`, `${runtime.vision.fps} FPS - conf ${runtime.vision.confidence}`),
+      metricItem("Cameras", `${runtime.camera.stale_seconds}s stale`, `${runtime.camera.read_failure_limit} falhas até reconectar`),
       metricItem("Zonas", `${zones.length} cadastradas`, `${events.length} eventos recentes`),
       metricItem("CORS", runtime.frontend_origins.join(", "), runtime.log_level),
     ].join("");
@@ -5184,12 +5250,12 @@ function notificationDeliveryLine(delivery) {
     delivery.channel,
     delivery.type,
     delivery.recipient,
-  ].filter(Boolean).join(" · ");
+  ].filter(Boolean).join(" - ");
   return `
     <article class="settings-integration-line">
       <div>
         <strong>${escapeHtml(delivery.reference_id || delivery.id || "Entrega")}</strong>
-        <span>${escapeHtml(detail || "Entrega de notificação")} · ${formatDate(delivery.created_at)}</span>
+        <span>${escapeHtml(detail || "Entrega de notificação")} - ${formatDate(delivery.created_at)}</span>
         ${delivery.error ? `<span>${escapeHtml(delivery.error)}</span>` : ""}
       </div>
       <small data-state="${ok ? "connected" : "pending"}">${escapeHtml(delivery.status || "pending")}</small>
@@ -5382,3 +5448,4 @@ window.addEventListener("keydown", (event) => {
 
 accountButton?.addEventListener("click", handleSignOut);
 startAuthenticatedApp();
+

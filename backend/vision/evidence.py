@@ -7,7 +7,7 @@ from typing import Any
 
 import cv2
 
-from backend.config import ROOT_DIR
+from backend.config import ROOT_DIR, get_data_dir
 from backend.events.models import Event
 from backend.vision.models import TrackedObject
 from backend.vision.overlay import OverlayRenderer
@@ -15,7 +15,7 @@ from backend.vision.overlay import OverlayRenderer
 
 class EvidenceRecorder:
     def __init__(self, storage_dir: Path | None = None) -> None:
-        self.storage_dir = storage_dir or ROOT_DIR / "storage" / "evidence"
+        self.storage_dir = storage_dir or get_data_dir() / "evidence"
         self._overlay = OverlayRenderer()
 
     def record(
@@ -52,8 +52,15 @@ class EvidenceRecorder:
         metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
         return {
-            "evidence_dir": str(event_dir.relative_to(ROOT_DIR)),
-            "snapshot_path": str(clean_path.relative_to(ROOT_DIR)),
-            "overlay_path": str(overlay_path.relative_to(ROOT_DIR)),
-            "evidence_metadata_path": str(metadata_path.relative_to(ROOT_DIR)),
+            "evidence_dir": _metadata_path(event_dir),
+            "snapshot_path": _metadata_path(clean_path),
+            "overlay_path": _metadata_path(overlay_path),
+            "evidence_metadata_path": _metadata_path(metadata_path),
         }
+
+
+def _metadata_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT_DIR))
+    except ValueError:
+        return str(path)

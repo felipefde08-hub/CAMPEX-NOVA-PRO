@@ -5,21 +5,26 @@ import platform
 import sys
 from dataclasses import replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 import time
 
-import cv2
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from campex_node.core.config import NodeSettings
-from campex_node.main import build_lifecycle
 
 
 class CloudConnectionPayload(BaseModel):
     cloud_url: str = Field(min_length=1, max_length=500)
     pairing_code: str = Field(min_length=1, max_length=40)
+    node_name: str = Field(default="CAMPEX Node", max_length=120)
+
+
+class PairingStartPayload(BaseModel):
+    cloud_url: str = Field(min_length=1, max_length=500)
     node_name: str = Field(default="CAMPEX Node", max_length=120)
 
 
@@ -30,6 +35,8 @@ class LocalNodeRuntime:
         self.lifecycle.start()
 
     def reconfigure(self, payload: CloudConnectionPayload) -> dict | None:
+        from campex_node.main import build_lifecycle
+
         current_status = self.status()
         if current_status.get("paired"):
             if self.lifecycle.config_sync is not None:
@@ -93,6 +100,66 @@ class LocalNodeRuntime:
         cameras = self.lifecycle.config_sync.sync_once()
         return {"ok": True, "cameras_loaded": len(cameras), **self.status()}
 
+    def start_pairing(self, payload: PairingStartPayload) -> dict:
+        from campex_node.main import build_lifecycle
+
+        self.lifecycle.store.set_meta("cloud_url", payload.cloud_url.rstrip("/"))
+        settings = replace(
+            NodeSettings.from_env(),
+            cloud_url=payload.cloud_url.rstrip("/"),
+        )
+        client_lifecycle = build_lifecycle(settings)
+        client_lifecycle.store.initialize()
+        node_public_id = self.lifecycle.node_id
+        result = client_lifecycle.cloud_client.start_pairing_session(
+            node_public_id=node_public_id,
+            node_name=payload.node_name.strip() or "CAMPEX Node",
+            version=settings.version,
+        )
+        if not result.ok or not isinstance(result.data, dict):
+            raise ValueError(result.error or "Nao foi possivel iniciar pareamento.")
+        self.lifecycle.store.set_meta("pairing_session_id", result.data["session_id"])
+        self.lifecycle.store.set_meta("pairing_node_public_id", node_public_id)
+        os.environ["CAMPEX_NODE_CLOUD_URL"] = settings.cloud_url or ""
+        return {"ok": True, **result.data, **self.status()}
+
+    def pairing_status(self) -> dict:
+        from campex_node.main import build_lifecycle
+
+        session_id = self.lifecycle.store.get_meta("pairing_session_id")
+        node_public_id = self.lifecycle.store.get_meta("pairing_node_public_id") or self.lifecycle.node_id
+        if not session_id:
+            return {"ok": False, "status": "missing"}
+        settings = replace(
+            NodeSettings.from_env(),
+            cloud_url=self.lifecycle.settings.cloud_url or self.lifecycle.store.get_meta("cloud_url"),
+        )
+        client_lifecycle = build_lifecycle(settings)
+        client_lifecycle.store.initialize()
+        result = client_lifecycle.cloud_client.check_pairing_session(
+            session_id=session_id,
+            node_public_id=node_public_id,
+        )
+        if not result.ok or not isinstance(result.data, dict):
+            return {"ok": False, "status": "pending", "error": result.error}
+        data = result.data
+        if data.get("status") == "authorized":
+            self.lifecycle.stop()
+            paired_settings = replace(
+                settings,
+                node_id=data["node_id"],
+                cloud_token=data["node_token"],
+                organization_id=data["organization_id"],
+            )
+            self.lifecycle = build_lifecycle(paired_settings)
+            self.lifecycle.initialize()
+            self.lifecycle.store.set_meta("cloud_url", paired_settings.cloud_url or "")
+            self.lifecycle.store.set_meta("node_id", paired_settings.node_id or "")
+            self.lifecycle.store.set_meta("node_token", paired_settings.cloud_token or "")
+            self.lifecycle.store.set_meta("organization_id", paired_settings.organization_id or "")
+            self.lifecycle.start()
+        return {"ok": True, **data, **self.status()}
+
     def diagnostics(self) -> dict:
         settings = self.lifecycle.settings
         return {
@@ -119,6 +186,8 @@ class LocalNodeRuntime:
         }
 
     def _build_from_persisted_connection(self):
+        from campex_node.main import build_lifecycle
+
         lifecycle = build_lifecycle()
         lifecycle.settings.data_dir.mkdir(parents=True, exist_ok=True)
         lifecycle.store.initialize()
@@ -143,6 +212,9 @@ def create_app() -> FastAPI:
     runtime = LocalNodeRuntime()
     app = FastAPI(title="CAMPEX Node Local", version="0.1.0")
     app.state.runtime = runtime
+    assets_dir = Path(__file__).resolve().parents[1] / "frontend" / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
     @app.on_event("shutdown")
     def shutdown() -> None:
@@ -170,9 +242,22 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             return {"ok": False, "error": str(exc), **runtime.status()}
 
+    @app.post("/api/pairing/start")
+    def start_pairing(payload: PairingStartPayload) -> dict:
+        try:
+            return runtime.start_pairing(payload)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), **runtime.status()}
+
+    @app.get("/api/pairing/status")
+    def pairing_status() -> dict:
+        return runtime.pairing_status()
+
 
     @app.get("/api/cameras/{camera_id}/snapshot")
     def camera_snapshot(camera_id: str):
+        import cv2
+
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="Frame ainda não disponível para esta câmera.")
@@ -205,6 +290,8 @@ def create_app() -> FastAPI:
 
 
 def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str):
+    import cv2
+
     last_payload: bytes | None = None
     while True:
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
@@ -238,30 +325,35 @@ NODE_HTML = """<!doctype html>
     .panel h2{margin:0 0 12px;font-size:17px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.stat{background:var(--soft);border:1px solid #252b34;border-radius:8px;padding:14px}.stat strong{display:block;font-size:24px}.stat span{color:var(--muted)}
     label{display:block;color:var(--muted);margin:12px 0 6px}input{width:100%;height:40px;background:#0f1217;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:0 11px}button{height:40px;border:0;border-radius:6px;background:var(--accent);color:#07101d;font-weight:700;padding:0 14px;cursor:pointer}button.secondary{background:var(--soft);color:var(--text);border:1px solid var(--border)}
     .actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}.camera{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid #252b34}.camera:first-child{border-top:0}.dot{width:9px;height:9px;border-radius:99px;background:var(--critical);display:inline-block;margin-right:7px}.ONLINE .dot{background:var(--online)}.DEGRADED .dot,.CONNECTING .dot{background:var(--attention)}
-    code{color:var(--accent);word-break:break-all}.status{color:var(--muted);min-height:22px}@media(max-width:820px){.shell{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--border)}.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}}
+    code{color:var(--accent);word-break:break-all}.status{color:var(--muted);min-height:22px}.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:10px;align-items:center}.flow-step{background:var(--soft);border:1px solid #252b34;border-radius:8px;padding:12px}.flow-arrow{color:var(--accent);font-weight:800}.note{color:var(--muted);margin:10px 0 0}@media(max-width:820px){.shell{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--border)}.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.flow{grid-template-columns:1fr}.flow-arrow{display:none}}
   </style>
 </head>
 <body>
   <div class="shell">
-    <aside class="side"><div class="brand">CAMP<span>EX</span></div><p>Node local</p><p>Captura câmeras na rede da empresa e sincroniza com a Cloud.</p></aside>
+    <aside class="side"><div class="brand">CAMP<span>EX</span></div><p>Node operacional</p><p>Processa câmeras dentro da empresa e envia dados úteis para a Cloud.</p></aside>
     <main>
-      <div class="top"><div><p class="eyebrow">Serviço local 24/7</p><h1>CAMPEX Node</h1></div><div class="badge" id="cloud-badge">Carregando...</div></div>
+      <div class="top"><div><p class="eyebrow">Serviço local 24/7 · saída HTTPS</p><h1>CAMPEX Node</h1></div><div class="badge" id="cloud-badge">Carregando...</div></div>
+      <section class="panel" style="margin-bottom:16px"><h2>Fluxo operacional</h2><div class="flow">
+        <div class="flow-step"><strong>Câmeras</strong><br><span class="status">RTSP/ONVIF na rede local</span></div><div class="flow-arrow">→</div>
+        <div class="flow-step"><strong>Node</strong><br><span class="status">Captura, IA, eventos e fila offline</span></div><div class="flow-arrow">→</div>
+        <div class="flow-step"><strong>Cloud</strong><br><span class="status">API, dashboard, relatórios e alertas</span></div>
+      </div><p class="note">O painel web lê a Cloud. Ele não precisa acessar este PC diretamente.</p></section>
       <div class="grid">
-        <section class="panel"><h2>Conexão com a Cloud</h2><form id="connect-form">
+        <section class="panel"><h2>Pareamento com a Cloud</h2><form id="connect-form">
           <label>Backend Cloud</label><input name="cloud_url" placeholder="https://campexback.vercel.app/api/v1" />
           <label>Código de pareamento</label><input name="pairing_code" autocomplete="off" placeholder="CXP-7KQ2-N91P" />
           <label>Nome deste Node</label><input name="node_name" placeholder="RBA-NODE-01" />
           <div class="actions"><button type="submit">Parear Node</button><button class="secondary" type="button" id="sync-button">Sincronizar agora</button><button class="secondary" type="button" id="diagnostics-button">Diagnóstico</button></div>
           <p class="status" id="form-status"></p>
         </form></section>
-        <section class="panel"><h2>Status</h2><div class="stats">
+        <section class="panel"><h2>Status do Node</h2><div class="stats">
           <div class="stat"><strong id="total">0</strong><span>Câmeras</span></div>
           <div class="stat"><strong id="online">0</strong><span>Online</span></div>
           <div class="stat"><strong id="node">-</strong><span>Node</span></div>
           <div class="stat"><strong id="queue">0</strong><span>Fila</span></div>
         </div><p>Node ID: <code id="node-id">-</code></p></section>
       </div>
-      <section class="panel" style="margin-top:16px"><h2>Câmeras sincronizadas</h2><div id="cameras"></div></section>
+      <section class="panel" style="margin-top:16px"><h2>Câmeras recebidas da Cloud</h2><div id="cameras"></div></section>
     </main>
   </div>
   <script>
@@ -283,7 +375,7 @@ NODE_HTML = """<!doctype html>
       const body={cloud_url:form.cloud_url.value,pairing_code:form.pairing_code.value,node_name:form.node_name.value};
       const res=await fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       const data=await res.json();
-      statusEl.textContent=data.ok?(data.message||'Pareado. Sincronizando câmeras cadastradas.'):(data.error||'Falha ao parear.');
+      statusEl.textContent=data.ok?(data.message||'Pareado. O Node buscará configurações e enviará eventos para a Cloud.'):(data.error||'Falha ao parear.');
       await load();
     });
     document.querySelector('#sync-button').addEventListener('click',async()=>{statusEl.textContent='Sincronizando...';const res=await fetch('/api/sync',{method:'POST'});const data=await res.json();statusEl.textContent=data.ok?`Sincronizadas: ${data.cameras_loaded}`:(data.error||'Falha na sincronização');await load();});
@@ -292,3 +384,5 @@ NODE_HTML = """<!doctype html>
   </script>
 </body>
 </html>"""
+
+from campex_node.node_ui import NODE_HTML

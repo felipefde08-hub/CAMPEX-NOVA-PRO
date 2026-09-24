@@ -1,11 +1,34 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+def _is_desktop_runtime() -> bool:
+    return os.getenv("CAMPEX_DESKTOP_MODE", "").lower() in {"1", "true", "yes", "on"} or bool(
+        getattr(sys, "frozen", False)
+    )
+
+
+def _default_local_data_dir() -> Path:
+    configured = os.getenv("CAMPEX_DATA_DIR")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if os.name == "nt":
+        base = os.getenv("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return (Path(base) / "CAMPEX").resolve()
+    return (Path.home() / ".local" / "share" / "campex").resolve()
+
+
+def get_data_dir() -> Path:
+    if _is_desktop_runtime():
+        return _default_local_data_dir()
+    return (ROOT_DIR / "storage").resolve()
 
 
 def _load_dotenv() -> None:
@@ -71,12 +94,16 @@ def _is_serverless_env() -> bool:
 def _default_database_url() -> str:
     if _is_serverless_env():
         return "sqlite:////tmp/campex_serverless.sqlite3"
+    if _is_desktop_runtime():
+        return f"sqlite:///{(_default_local_data_dir() / 'campex.sqlite3').as_posix()}"
     return "sqlite:///./storage/campex_dev.sqlite3"
 
 
 def _default_video_upload_dir() -> str:
     if _is_serverless_env():
         return "/tmp/campex_video_uploads"
+    if _is_desktop_runtime():
+        return str(_default_local_data_dir() / "video_uploads")
     return "./storage/video_uploads"
 
 

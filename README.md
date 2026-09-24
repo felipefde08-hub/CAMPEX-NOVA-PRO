@@ -27,6 +27,16 @@ O script cria/atualiza o ambiente, instala dependencias, inicializa o SQLite e s
 - Backend: `http://127.0.0.1:8000`
 - Frontend: `http://127.0.0.1:5174`
 
+No Windows, para validar o caminho do futuro `.exe` com interface web local:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_desktop_web.py
+```
+
+Esse launcher sobe o backend local com captura/visao em `127.0.0.1:8000`,
+serve a interface em `127.0.0.1:5174` e abre o navegador. Instrucoes de
+empacotamento estao em `docs/CAMPEX_DESKTOP_EXE.md`.
+
 Portas customizadas:
 
 ```bash
