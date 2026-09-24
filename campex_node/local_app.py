@@ -11,6 +11,7 @@ from pathlib import Path
 import time
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -33,13 +34,18 @@ class PairingStartPayload(BaseModel):
 
 class LocalCameraPayload(BaseModel):
     id: str | None = Field(default=None, max_length=120)
-    name: str = Field(min_length=1, max_length=120)
-    rtsp_url: str = Field(min_length=1, max_length=1000)
+    name: str = Field(default="", max_length=120)
+    rtsp_url: str | None = Field(default=None, max_length=1000)
+    source_uri: str | None = Field(default=None, max_length=1000)
+    source_type: str = Field(default="rtsp", max_length=40)
     enabled: bool = True
+    area_id: str | None = None
+    vision_enabled: bool = False
 
 
 class CameraTestPayload(BaseModel):
-    rtsp_url: str = Field(min_length=1, max_length=1000)
+    rtsp_url: str | None = Field(default=None, max_length=1000)
+    source_uri: str | None = Field(default=None, max_length=1000)
 
 
 class LocalNodeRuntime:
@@ -94,21 +100,62 @@ class LocalNodeRuntime:
         return None
 
     def add_camera(self, payload: LocalCameraPayload) -> dict:
+        rtsp_url = (payload.rtsp_url or payload.source_uri or "").strip()
+        if not payload.name.strip():
+            raise ValueError("Camera name is required.")
+        if not rtsp_url:
+            raise ValueError("RTSP URL is required.")
         camera = NodeCameraConfig(
             id=_camera_id(payload.id),
             name=payload.name.strip(),
-            rtsp_url=payload.rtsp_url.strip(),
+            rtsp_url=rtsp_url,
             enabled=payload.enabled,
         )
         self.lifecycle.store.save_local_camera(camera)
         self._restart_with_persisted_connection()
-        return {"ok": True, "camera_id": camera.id, **self.status()}
+        return self._camera_response(camera)
+
+    def update_camera(self, camera_id: str, payload: LocalCameraPayload) -> dict:
+        existing = {camera.id: camera for camera in self.lifecycle.camera_manager.configs()}
+        current = existing.get(camera_id)
+        if current is None:
+            raise ValueError("Camera not found.")
+        rtsp_url = (payload.rtsp_url or payload.source_uri or current.rtsp_url).strip()
+        camera = NodeCameraConfig(
+            id=camera_id,
+            name=payload.name.strip() if payload.name else current.name,
+            rtsp_url=rtsp_url,
+            enabled=payload.enabled,
+        )
+        self.lifecycle.store.save_local_camera(camera)
+        self._restart_with_persisted_connection()
+        return self._camera_response(camera)
+
+    def delete_camera(self, camera_id: str) -> None:
+        self.lifecycle.store.delete_local_camera(camera_id)
+        self._restart_with_persisted_connection()
 
     def test_camera(self, payload: CameraTestPayload) -> dict:
         from campex_node.cameras.capture import test_rtsp_connection
 
-        result = test_rtsp_connection(payload.rtsp_url.strip())
+        rtsp_url = (payload.rtsp_url or payload.source_uri or "").strip()
+        if not rtsp_url:
+            return {"ok": False, "success": False, "status": "OFFLINE", "error": "RTSP URL is required."}
+        result = test_rtsp_connection(rtsp_url)
         return result
+
+    def cameras(self) -> list[dict]:
+        states = {state["id"]: state for state in self.lifecycle.camera_manager.summary()["cameras"]}
+        return [
+            self._camera_response(camera, states.get(camera.id))
+            for camera in self.lifecycle.camera_manager.configs()
+        ]
+
+    def camera_health(self, camera_id: str) -> dict:
+        for camera in self.cameras():
+            if camera["id"] == camera_id:
+                return camera["health"]
+        raise ValueError("Camera not found.")
 
     def status(self) -> dict:
         settings = self.lifecycle.settings
@@ -139,6 +186,36 @@ class LocalNodeRuntime:
             "cameras_total": summary["cameras_total"],
             "cameras_online": summary["cameras_online"],
             "cameras": summary["cameras"],
+        }
+
+    def _camera_response(self, camera: NodeCameraConfig, state: dict | None = None) -> dict:
+        if state is None:
+            state = next(
+                (item for item in self.lifecycle.camera_manager.summary()["cameras"] if item["id"] == camera.id),
+                None,
+            )
+        status = (state or {}).get("status") or ("ONLINE" if camera.enabled else "OFFLINE")
+        health = {
+            "status": status,
+            "last_successful_frame": (state or {}).get("last_frame_at"),
+            "last_connected_at": (state or {}).get("last_connected_at"),
+            "last_error": sanitize_error_message((state or {}).get("last_error")),
+            "reconnect_attempts": (state or {}).get("reconnect_attempts", 0),
+            "frames_received": (state or {}).get("frames_received", 0),
+            "consecutive_failures": (state or {}).get("consecutive_failures", 0),
+            "resolution": None,
+            "approximate_fps": None,
+        }
+        return {
+            "id": camera.id,
+            "name": camera.name,
+            "source_type": "rtsp",
+            "source_uri": camera.rtsp_url,
+            "rtsp_url": camera.rtsp_url,
+            "enabled": camera.enabled,
+            "vision_enabled": False,
+            "status": status,
+            "health": health,
         }
 
     def sync_now(self) -> dict:
@@ -281,6 +358,13 @@ class LocalNodeRuntime:
 def create_app() -> FastAPI:
     runtime = LocalNodeRuntime()
     app = FastAPI(title="CAMPEX Node Local", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.runtime = runtime
     assets_dir = Path(__file__).resolve().parents[1] / "frontend" / "assets"
     if assets_dir.exists():
@@ -297,6 +381,21 @@ def create_app() -> FastAPI:
     @app.get("/api/status")
     def status() -> dict:
         return runtime.status()
+
+    @app.get("/api/health")
+    def health() -> dict:
+        data = runtime.status()
+        return {
+            "ok": True,
+            "service": "CAMPEX Node",
+            "version": runtime.lifecycle.settings.version,
+            "node_id": data["node_id"],
+            "status": "online",
+            "paired": data["paired"],
+            "cameras_total": data["cameras_total"],
+            "cameras_online": data["cameras_online"],
+            "queue_size": data["queue_size"],
+        }
 
     @app.post("/api/connect")
     def connect(payload: CloudConnectionPayload) -> dict:
@@ -356,12 +455,39 @@ def create_app() -> FastAPI:
     def test_camera(payload: CameraTestPayload) -> dict:
         return runtime.test_camera(payload)
 
+    @app.post("/api/cameras/test-source")
+    def test_camera_source(payload: CameraTestPayload) -> dict:
+        return runtime.test_camera(payload)
+
+    @app.get("/api/cameras")
+    def list_cameras() -> list[dict]:
+        return runtime.cameras()
+
     @app.post("/api/cameras")
     def add_camera(payload: LocalCameraPayload) -> dict:
         try:
             return runtime.add_camera(payload)
         except ValueError as exc:
             return {"ok": False, "error": str(exc), **runtime.status()}
+
+    @app.patch("/api/cameras/{camera_id}")
+    def update_camera(camera_id: str, payload: LocalCameraPayload) -> dict:
+        try:
+            return runtime.update_camera(camera_id, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/api/cameras/{camera_id}", status_code=204, response_class=Response, response_model=None)
+    def delete_camera(camera_id: str) -> Response:
+        runtime.delete_camera(camera_id)
+        return Response(status_code=204)
+
+    @app.get("/api/cameras/{camera_id}/health")
+    def camera_health(camera_id: str) -> dict:
+        try:
+            return runtime.camera_health(camera_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/diagnostics")
     def diagnostics() -> dict:

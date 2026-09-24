@@ -33,6 +33,7 @@ def test_rtsp_connection(rtsp_url: str) -> dict:
         health = source.health()
         return {
             "ok": bool(connected),
+            "success": bool(connected),
             "status": health.status.value,
             "latency_ms": int((time.monotonic() - started_at) * 1000),
             "resolution": {
@@ -45,6 +46,7 @@ def test_rtsp_connection(rtsp_url: str) -> dict:
     except Exception as exc:
         return {
             "ok": False,
+            "success": False,
             "status": "OFFLINE",
             "latency_ms": int((time.monotonic() - started_at) * 1000),
             "resolution": {"width": None, "height": None},

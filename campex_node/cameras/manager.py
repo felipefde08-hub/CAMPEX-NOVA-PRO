@@ -68,6 +68,10 @@ class CameraManager:
         for camera_id in camera_ids:
             self.stop_camera(camera_id)
 
+    def configs(self) -> list[NodeCameraConfig]:
+        with self._lock:
+            return list(self._cameras.values())
+
     def states(self) -> list[CameraRuntimeState]:
         with self._lock:
             workers = dict(self._workers)

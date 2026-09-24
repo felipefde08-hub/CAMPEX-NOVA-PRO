@@ -1,10 +1,12 @@
 import { createMediaUrl } from "./media-auth.js";
 import { getApiToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
-const localApiBaseUrl = "http://127.0.0.1:8000/api/v1";
+const localApiBaseUrl = "http://127.0.0.1:8787/api";
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const storedApiBaseUrl = localStorage.getItem("campex.backend_url") || "";
+const configuredApiBaseUrl = window.CAMPEX_API_BASE_URL || "";
 const API_BASE_URL =
-  (queryApiBaseUrl || localStorage.getItem("campex.backend_url") || window.CAMPEX_API_BASE_URL || (isLocalFrontend ? localApiBaseUrl : "")).replace(/\/$/, "");
+  (queryApiBaseUrl || configuredApiBaseUrl || (!isLocalFrontend ? storedApiBaseUrl : "") || (isLocalFrontend ? localApiBaseUrl : "")).replace(/\/$/, "");
 
 const mediaUrl = await createMediaUrl(API_BASE_URL, getApiToken);
 
@@ -535,7 +537,7 @@ export async function revokeNode(nodeId) {
 export function getBackendUrl() { return API_BASE_URL; }
 
 export async function connectBackend(mode, token) {
-  const base = mode === "local" ? "http://127.0.0.1:8000/api/v1" : window.CAMPEX_API_BASE_URL;
+  const base = mode === "local" ? "http://127.0.0.1:8787/api" : window.CAMPEX_API_BASE_URL;
   if (!base) throw new Error("Endereço do backend não configurado.");
   const response = await fetch(`${base}/cameras`, {
     headers: { Accept: "application/json", ...(token ? { "X-CAMPEX-Token": token.trim() } : {}) },

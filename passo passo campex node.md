@@ -93,6 +93,40 @@ A interface local fica em:
 http://127.0.0.1:8787
 ```
 
+## 5.1. Usar o frontend local com o Node
+
+Enquanto nao houver backend Cloud, use o frontend da pasta `frontend/` apontando para o Node local.
+
+1. Inicie o Node:
+
+```powershell
+dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8787
+```
+
+2. Abra `frontend/index.html` pelo Live Server.
+
+3. O arquivo `frontend/config.js` ja usa, em localhost:
+
+```text
+http://127.0.0.1:8787/api
+```
+
+4. A tela de cameras do frontend passa a conversar com o Node local para:
+
+- verificar health;
+- listar cameras;
+- adicionar camera RTSP;
+- testar fonte RTSP;
+- ativar/desativar camera;
+- consultar health;
+- abrir snapshot/stream quando houver frame.
+
+Se o navegador ainda tentar chamar `campexback.vercel.app`, limpe o `localStorage` do site no DevTools ou abra com:
+
+```text
+http://127.0.0.1:5500/frontend/index.html?api=http://127.0.0.1:8787/api
+```
+
 ## 6. Instalar como tarefa agendada
 
 Depois de gerar o executavel:

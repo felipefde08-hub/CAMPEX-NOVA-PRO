@@ -108,6 +108,15 @@ class LocalStore:
     def save_local_camera(self, camera: NodeCameraConfig) -> None:
         cameras = {item.id: item for item in self.get_local_cameras()}
         cameras[camera.id] = camera
+        self._save_local_cameras(cameras.values())
+
+    def delete_local_camera(self, camera_id: str) -> None:
+        cameras = {item.id: item for item in self.get_local_cameras()}
+        cameras.pop(camera_id, None)
+        self._save_local_cameras(cameras.values())
+
+    def _save_local_cameras(self, cameras: Any) -> None:
+        camera_items = cameras.values() if hasattr(cameras, "values") else cameras
         payload = [
             {
                 "id": item.id,
@@ -115,7 +124,7 @@ class LocalStore:
                 "rtsp_url": item.rtsp_url,
                 "enabled": item.enabled,
             }
-            for item in sorted(cameras.values(), key=lambda item: item.name.lower())
+            for item in sorted(camera_items, key=lambda item: item.name.lower())
         ]
         self.set_meta("local_cameras_json", json.dumps(payload, separators=(",", ":")))
 
