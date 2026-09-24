@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime, timezone
 
 from backend.cameras.security import sanitize_error_message
 
@@ -47,6 +48,7 @@ class SyncService:
             result = self._send_item(item)
             if result:
                 self.store.mark_outbound_synced(item["id"])
+                self.store.set_meta("last_sync_at", datetime.now(timezone.utc).isoformat())
                 sent += 1
             else:
                 attempts = item["attempts"] + 1

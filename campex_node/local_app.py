@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import platform
 import sys
+import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +15,9 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from campex_node.core.config import NodeSettings
+from backend.cameras.security import sanitize_error_message
+
+from campex_node.core.config import NodeCameraConfig, NodeSettings
 
 
 class CloudConnectionPayload(BaseModel):
@@ -26,6 +29,17 @@ class CloudConnectionPayload(BaseModel):
 class PairingStartPayload(BaseModel):
     cloud_url: str = Field(min_length=1, max_length=500)
     node_name: str = Field(default="CAMPEX Node", max_length=120)
+
+
+class LocalCameraPayload(BaseModel):
+    id: str | None = Field(default=None, max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+    rtsp_url: str = Field(min_length=1, max_length=1000)
+    enabled: bool = True
+
+
+class CameraTestPayload(BaseModel):
+    rtsp_url: str = Field(min_length=1, max_length=1000)
 
 
 class LocalNodeRuntime:
@@ -79,9 +93,31 @@ class LocalNodeRuntime:
         self.lifecycle.start()
         return None
 
+    def add_camera(self, payload: LocalCameraPayload) -> dict:
+        camera = NodeCameraConfig(
+            id=_camera_id(payload.id),
+            name=payload.name.strip(),
+            rtsp_url=payload.rtsp_url.strip(),
+            enabled=payload.enabled,
+        )
+        self.lifecycle.store.save_local_camera(camera)
+        self._restart_with_persisted_connection()
+        return {"ok": True, "camera_id": camera.id, **self.status()}
+
+    def test_camera(self, payload: CameraTestPayload) -> dict:
+        from campex_node.cameras.capture import test_rtsp_connection
+
+        result = test_rtsp_connection(payload.rtsp_url.strip())
+        return result
+
     def status(self) -> dict:
         settings = self.lifecycle.settings
         summary = self.lifecycle.camera_manager.summary()
+        meta = self.lifecycle.store.meta_dict()
+        uptime_seconds = 0
+        if self.lifecycle.started_at is not None:
+            uptime_seconds = int((datetime.now(timezone.utc) - self.lifecycle.started_at).total_seconds())
+        resources = _system_resources()
         return {
             "node_id": self.lifecycle.node_id,
             "cloud_url": settings.cloud_url,
@@ -89,6 +125,17 @@ class LocalNodeRuntime:
             "paired": bool(settings.cloud_token and settings.node_id),
             "cloud_configured": bool(settings.cloud_url),
             "queue_size": self.lifecycle.store.outbound_queue_size(),
+            "queue": self.lifecycle.store.outbound_summary(),
+            "last_sync_at": meta.get("last_sync_at"),
+            "last_heartbeat_at": meta.get("last_heartbeat_at"),
+            "last_cloud_ok_at": meta.get("last_cloud_ok_at"),
+            "last_cloud_error": sanitize_error_message(meta.get("last_cloud_error")),
+            "uptime_seconds": uptime_seconds,
+            "data_dir": str(settings.data_dir),
+            "logs_dir": str(settings.data_dir / "logs"),
+            "cpu_percent": resources["cpu_percent"],
+            "ram_percent": resources["ram_percent"],
+            "ram_used_mb": resources["ram_used_mb"],
             "cameras_total": summary["cameras_total"],
             "cameras_online": summary["cameras_online"],
             "cameras": summary["cameras"],
@@ -98,6 +145,8 @@ class LocalNodeRuntime:
         if self.lifecycle.config_sync is None:
             return {"ok": False, "error": "Config sync service is not running."}
         cameras = self.lifecycle.config_sync.sync_once()
+        if self.lifecycle.sync is not None:
+            self.lifecycle.sync.sync_once()
         return {"ok": True, "cameras_loaded": len(cameras), **self.status()}
 
     def start_pairing(self, payload: PairingStartPayload) -> dict:
@@ -175,6 +224,12 @@ class LocalNodeRuntime:
             "cloud_configured": bool(settings.cloud_url),
             "paired": bool(settings.node_id and settings.cloud_token),
             "queue_size": self.lifecycle.store.outbound_queue_size(),
+            "queue": self.lifecycle.store.outbound_summary(),
+            "last_sync_at": self.lifecycle.store.get_meta("last_sync_at"),
+            "last_heartbeat_at": self.lifecycle.store.get_meta("last_heartbeat_at"),
+            "last_cloud_ok_at": self.lifecycle.store.get_meta("last_cloud_ok_at"),
+            "last_cloud_error": sanitize_error_message(self.lifecycle.store.get_meta("last_cloud_error")),
+            "resources": _system_resources(),
             "services": {
                 "camera_manager": True,
                 "config_sync": self.lifecycle.config_sync is not None,
@@ -192,7 +247,15 @@ class LocalNodeRuntime:
         lifecycle.settings.data_dir.mkdir(parents=True, exist_ok=True)
         lifecycle.store.initialize()
         meta = lifecycle.store.meta_dict()
+        camera_configs = {
+            camera.id: camera for camera in lifecycle.store.get_cached_cloud_cameras()
+        }
+        camera_configs.update({camera.id: camera for camera in lifecycle.store.get_local_cameras()})
+        cached_cameras = tuple(camera_configs.values())
         if not meta.get("cloud_url") and not lifecycle.settings.cloud_url:
+            if cached_cameras:
+                settings = replace(lifecycle.settings, cameras=cached_cameras)
+                return build_lifecycle(settings)
             return lifecycle
         settings = replace(
             lifecycle.settings,
@@ -200,12 +263,19 @@ class LocalNodeRuntime:
             node_id=lifecycle.settings.node_id or meta.get("node_id"),
             cloud_token=lifecycle.settings.cloud_token or meta.get("node_token"),
             organization_id=lifecycle.settings.organization_id or meta.get("organization_id"),
+            cameras=cached_cameras,
         )
         os.environ["CAMPEX_NODE_CLOUD_URL"] = settings.cloud_url or ""
         os.environ["CAMPEX_NODE_ID"] = settings.node_id or ""
         os.environ["CAMPEX_NODE_TOKEN"] = settings.cloud_token or ""
         os.environ["CAMPEX_NODE_ORGANIZATION_ID"] = settings.organization_id or ""
         return build_lifecycle(settings)
+
+    def _restart_with_persisted_connection(self) -> None:
+        self.lifecycle.stop()
+        self.lifecycle = self._build_from_persisted_connection()
+        self.lifecycle.initialize()
+        self.lifecycle.start()
 
 
 def create_app() -> FastAPI:
@@ -281,6 +351,17 @@ def create_app() -> FastAPI:
     @app.post("/api/sync")
     def sync() -> dict:
         return runtime.sync_now()
+
+    @app.post("/api/cameras/test")
+    def test_camera(payload: CameraTestPayload) -> dict:
+        return runtime.test_camera(payload)
+
+    @app.post("/api/cameras")
+    def add_camera(payload: LocalCameraPayload) -> dict:
+        try:
+            return runtime.add_camera(payload)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), **runtime.status()}
 
     @app.get("/api/diagnostics")
     def diagnostics() -> dict:
@@ -386,3 +467,25 @@ NODE_HTML = """<!doctype html>
 </html>"""
 
 from campex_node.node_ui import NODE_HTML
+
+
+def _camera_id(value: str | None) -> str:
+    raw_value = (value or "").strip()
+    if raw_value:
+        safe_value = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in raw_value)
+        return safe_value[:120]
+    return f"local_{uuid.uuid4().hex[:12]}"
+
+
+def _system_resources() -> dict:
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+        return {
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "ram_percent": memory.percent,
+            "ram_used_mb": int(memory.used / (1024 * 1024)),
+        }
+    except Exception:
+        return {"cpu_percent": None, "ram_percent": None, "ram_used_mb": None}

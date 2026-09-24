@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from campex_node.core.config import NodeCameraConfig
+
 
 SCHEMA = (
     """
@@ -76,6 +78,60 @@ class LocalStore:
         with self._connect() as connection:
             rows = connection.execute("SELECT key, value FROM node_meta").fetchall()
         return {str(row["key"]): str(row["value"]) for row in rows}
+
+    def get_local_cameras(self) -> list[NodeCameraConfig]:
+        return self._get_camera_meta("local_cameras_json")
+
+    def get_cached_cloud_cameras(self) -> list[NodeCameraConfig]:
+        return self._get_camera_meta("cloud_cameras_json")
+
+    def _get_camera_meta(self, key: str) -> list[NodeCameraConfig]:
+        raw_value = self.get_meta(key)
+        if not raw_value:
+            return []
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        cameras: list[NodeCameraConfig] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            try:
+                cameras.append(NodeCameraConfig.from_mapping(item))
+            except ValueError:
+                continue
+        return cameras
+
+    def save_local_camera(self, camera: NodeCameraConfig) -> None:
+        cameras = {item.id: item for item in self.get_local_cameras()}
+        cameras[camera.id] = camera
+        payload = [
+            {
+                "id": item.id,
+                "name": item.name,
+                "rtsp_url": item.rtsp_url,
+                "enabled": item.enabled,
+            }
+            for item in sorted(cameras.values(), key=lambda item: item.name.lower())
+        ]
+        self.set_meta("local_cameras_json", json.dumps(payload, separators=(",", ":")))
+
+    def outbound_summary(self) -> dict[str, int]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT status, COUNT(*) AS total
+                FROM outbound_events
+                GROUP BY status
+                """
+            ).fetchall()
+        summary = {"pending": 0, "synced": 0}
+        for row in rows:
+            summary[str(row["status"])] = int(row["total"])
+        return summary
 
     def enqueue_event(self, event_type: str, payload: dict[str, Any], event_id: str | None = None) -> str:
         event_id = event_id or str(payload.get("event_id") or payload.get("metric_id") or f"evt_{uuid.uuid4().hex}")

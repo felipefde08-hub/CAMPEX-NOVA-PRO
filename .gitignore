@@ -19,6 +19,8 @@ frontend/config.local.js
 .playwright-cli/
 .coverage
 htmlcov/
+build/
+dist/
 
 storage/*.sqlite3
 storage/*.db

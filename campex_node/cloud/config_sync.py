@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import threading
 
 from backend.cameras.security import sanitize_error_message
@@ -8,6 +9,7 @@ from backend.cameras.security import sanitize_error_message
 from campex_node.cameras.manager import CameraManager
 from campex_node.cloud.client import CloudClient
 from campex_node.core.config import NodeCameraConfig, NodeSettings
+from campex_node.storage.local_store import LocalStore
 
 
 logger = logging.getLogger("campex.node.config_sync")
@@ -20,10 +22,12 @@ class ConfigSyncService:
         settings: NodeSettings,
         cloud_client: CloudClient,
         camera_manager: CameraManager,
+        store: LocalStore | None = None,
     ) -> None:
         self.settings = settings
         self.cloud_client = cloud_client
         self.camera_manager = camera_manager
+        self.store = store
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
@@ -49,7 +53,7 @@ class ConfigSyncService:
             logger.warning("Config sync failed: %s", self.last_error)
             return []
         payload = result.data or {}
-        cameras = [
+        remote_cameras = [
             NodeCameraConfig.from_mapping(
                 {
                     "id": item["id"],
@@ -61,6 +65,25 @@ class ConfigSyncService:
             for item in payload.get("cameras", [])
             if item.get("source_uri")
         ]
+        if self.store is not None:
+            self.store.set_meta(
+                "cloud_cameras_json",
+                json.dumps(
+                    [
+                        {
+                            "id": camera.id,
+                            "name": camera.name,
+                            "rtsp_url": camera.rtsp_url,
+                            "enabled": camera.enabled,
+                        }
+                        for camera in remote_cameras
+                    ],
+                    separators=(",", ":"),
+                ),
+            )
+        cameras_by_id = {camera.id: camera for camera in self.settings.cameras}
+        cameras_by_id.update({camera.id: camera for camera in remote_cameras})
+        cameras = list(cameras_by_id.values())
         self.camera_manager.apply_configs(cameras)
         self.last_error = None
         self.last_count = len(cameras)

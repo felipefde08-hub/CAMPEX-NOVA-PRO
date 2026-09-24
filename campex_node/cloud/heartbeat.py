@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime, timezone
 
 from campex_node.cameras.manager import CameraManager
 from campex_node.cloud.client import CloudClient
@@ -46,9 +47,13 @@ class HeartbeatService:
     def send_once(self) -> dict:
         payload = self.build_payload()
         result = self.cloud_client.send_heartbeat(payload)
+        now = datetime.now(timezone.utc).isoformat()
+        self.store.set_meta("last_heartbeat_at", now)
         if result.ok:
+            self.store.set_meta("last_cloud_ok_at", now)
             logger.info("Heartbeat sent", extra={"status_code": result.status_code})
         else:
+            self.store.set_meta("last_cloud_error", result.error or str(result.status_code))
             self.store.enqueue_event("heartbeat", payload)
             logger.warning("Heartbeat not delivered: %s", result.error or result.status_code)
         return payload

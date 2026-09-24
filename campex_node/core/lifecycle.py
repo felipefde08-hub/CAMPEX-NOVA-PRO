@@ -4,6 +4,7 @@ import logging
 import signal
 import threading
 import uuid
+from datetime import datetime, timezone
 
 from campex_node.cameras.manager import CameraManager
 from campex_node.cloud.client import CloudClient
@@ -37,6 +38,7 @@ class NodeLifecycle:
         self.sync: SyncService | None = None
         self.telemetry: TelemetryCollector | None = None
         self._running = False
+        self.started_at: datetime | None = None
 
     def initialize(self) -> None:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +62,7 @@ class NodeLifecycle:
             settings=self.settings,
             cloud_client=self.cloud_client,
             camera_manager=self.camera_manager,
+            store=self.store,
         )
         if self.cloud_client.is_configured():
             self.config_sync.sync_once()
@@ -89,6 +92,7 @@ class NodeLifecycle:
         )
         self.heartbeat.start()
         self._running = True
+        self.started_at = datetime.now(timezone.utc)
         logger.info("CAMPEX Node started")
 
     def run_forever(self) -> None:
@@ -121,6 +125,7 @@ class NodeLifecycle:
             self.heartbeat.stop()
         self.camera_manager.stop()
         self._running = False
+        self.started_at = None
         logger.info("CAMPEX Node stopped")
 
     def run_once(self) -> dict:
@@ -129,6 +134,7 @@ class NodeLifecycle:
                 settings=self.settings,
                 cloud_client=self.cloud_client,
                 camera_manager=self.camera_manager,
+                store=self.store,
             ).sync_once()
         self.camera_manager.start()
         try:

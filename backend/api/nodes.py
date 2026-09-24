@@ -5,7 +5,7 @@ import socket
 from datetime import datetime, timezone
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
 from backend.cameras.repository import CameraRepository
@@ -279,14 +279,20 @@ def rename_node(
     return _serialize_node(node)
 
 
-@router.delete("/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{node_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 def revoke_node(
     node_id: str,
     scope: OrganizationScope = Depends(get_organization_scope),
     repository: NodeRepository = Depends(get_node_repository),
-) -> None:
+) -> Response:
     if not repository.revoke_node(node_id, scope.organization_id):
         raise HTTPException(status_code=404, detail="Node not found.")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{node_id}/heartbeat")

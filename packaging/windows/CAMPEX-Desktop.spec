@@ -1,27 +1,34 @@
-# PyInstaller spec for the local web launcher.
+# PyInstaller spec for CAMPEX Node on Windows.
 #
-# Build from repository root after installing runtime dependencies:
-#   py -3.12 -m pip install -r requirements.txt pyinstaller
-#   py -3.12 -m PyInstaller packaging/windows/CAMPEX-Desktop.spec
+# Build from repository root:
+#   powershell -ExecutionPolicy Bypass -File packaging/windows/build.ps1
 
 from pathlib import Path
+
+from PyInstaller.utils.hooks import collect_submodules
 
 
 ROOT = Path.cwd()
 
 
 a = Analysis(
-    [str(ROOT / "scripts" / "run_desktop_web.py")],
+    [str(ROOT / "campex_node" / "desktop_launcher.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=[
-        (str(ROOT / "frontend"), "frontend"),
-        (str(ROOT / "backend"), "backend"),
-        (str(ROOT / "scripts" / "init_db.py"), "scripts"),
-        (str(ROOT / "yolo11n.pt"), "."),
+        (str(ROOT / "frontend" / "assets"), "frontend/assets"),
     ],
     hiddenimports=[
-        "backend.main",
+        "campex_node.local_app",
+        "campex_node.node_ui",
+        "backend.cameras.base",
+        "backend.cameras.factory",
+        "backend.cameras.frame_buffer",
+        "backend.cameras.health",
+        "backend.cameras.opencv_source",
+        "backend.cameras.rtsp",
+        "backend.cameras.security",
+        "backend.config",
         "uvicorn",
         "uvicorn.logging",
         "uvicorn.loops",
@@ -33,11 +40,25 @@ a = Analysis(
         "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan",
         "uvicorn.lifespan.on",
-    ],
+    ]
+    + collect_submodules("cv2"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        "matplotlib",
+        "pandas",
+        "scipy",
+        "torch",
+        "ultralytics",
+        "pytest",
+        "numpy.tests",
+        "numpy.f2py.tests",
+        "numpy.lib.tests",
+        "numpy.linalg.tests",
+        "numpy.random.tests",
+        "numpy.typing.tests",
+    ],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
@@ -45,20 +66,27 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
-    name="CAMPEX-Desktop",
+    exclude_binaries=True,
+    name="CAMPEX-Node",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=True,
+    upx=False,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="CAMPEX-Node",
 )
