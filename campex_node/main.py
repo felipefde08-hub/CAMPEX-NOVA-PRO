@@ -24,7 +24,6 @@ def build_lifecycle(settings: NodeSettings | None = None) -> NodeLifecycle:
         camera_manager=camera_manager,
     )
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run CAMPEX Node.")
     parser.add_argument(
