@@ -6,8 +6,11 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+import time
+
+import cv2
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from campex_node.core.config import NodeSettings
@@ -167,6 +170,29 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             return {"ok": False, "error": str(exc), **runtime.status()}
 
+
+    @app.get("/api/cameras/{camera_id}/snapshot")
+    def camera_snapshot(camera_id: str):
+        frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
+        if frame is None:
+            raise HTTPException(status_code=404, detail="Frame ainda não disponível para esta câmera.")
+        ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
+        if not ok:
+            raise HTTPException(status_code=500, detail="Não foi possível codificar o frame.")
+        return Response(
+            content=encoded.tobytes(),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/cameras/{camera_id}/stream")
+    def camera_stream(camera_id: str):
+        return StreamingResponse(
+            _mjpeg_frames(runtime, camera_id),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.post("/api/sync")
     def sync() -> dict:
         return runtime.sync_now()
@@ -176,6 +202,25 @@ def create_app() -> FastAPI:
         return runtime.diagnostics()
 
     return app
+
+
+def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str):
+    last_payload: bytes | None = None
+    while True:
+        frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
+        if frame is not None:
+            ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 68])
+            if ok:
+                last_payload = encoded.tobytes()
+        if last_payload is not None:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-store\r\n\r\n"
+                + last_payload
+                + b"\r\n"
+            )
+        time.sleep(0.15)
 
 
 NODE_HTML = """<!doctype html>

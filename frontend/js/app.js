@@ -83,6 +83,7 @@ import {
 import { currentRoute, routes } from "./state.js";
 
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
+const CAMPEX_NODE_LOCAL_URL = "http://127.0.0.1:8787";
 
 const statusElement = document.querySelector("#backend-status");
 const statusText = statusElement.querySelector(".status-text");
@@ -1042,7 +1043,7 @@ async function renderLiveMedia(camera) {
     }
 
     if (info.available === false) {
-      renderMediaPlaceholder(info.message);
+      renderNodeMjpegElement(camera, info.message);
       return;
     }
 
@@ -1053,7 +1054,7 @@ async function renderLiveMedia(camera) {
 
     renderMjpegElement(camera);
   } catch (error) {
-    renderMediaPlaceholder(escapeHtml(error.message));
+    renderNodeMjpegElement(camera, error.message);
   }
 }
 
@@ -1091,6 +1092,25 @@ function renderVideoElement(camera) {
     video.controls = true;
   });
 }
+
+function renderNodeMjpegElement(camera, fallbackMessage = "") {
+  const mediaHost = document.querySelector("#live-media-host");
+  if (!mediaHost) return;
+  const streamUrl = `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(camera.id)}/stream?t=${Date.now()}`;
+  mediaHost.innerHTML = `
+    <img
+      id="live-node-stream"
+      class="live-media"
+      alt="Video ao vivo da câmera via CAMPEX Node local"
+      src="${streamUrl}"
+    />
+    <div class="node-stream-hint">Stream via CAMPEX Node local · ${escapeHtml(fallbackMessage || "backend de vídeo indisponível")}</div>
+  `;
+  mediaHost.querySelector("img").addEventListener("error", () => {
+    renderMediaPlaceholder("Aguardando frames do CAMPEX Node local. Verifique se o Node está aberto em http://127.0.0.1:8787 e se a câmera está online.");
+  });
+}
+
 
 function renderMjpegElement(camera) {
   const mediaHost = document.querySelector("#live-media-host");

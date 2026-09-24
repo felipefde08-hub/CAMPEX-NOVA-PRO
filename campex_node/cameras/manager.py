@@ -92,6 +92,13 @@ class CameraManager:
                 states.append(worker.state())
         return states
 
+    def latest_frame(self, camera_id: str):
+        with self._lock:
+            worker = self._workers.get(camera_id)
+        if worker is None:
+            return None, None
+        return worker.latest_frame()
+
     def summary(self) -> dict:
         states = self.states()
         return {

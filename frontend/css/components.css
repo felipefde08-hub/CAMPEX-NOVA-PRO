@@ -4189,3 +4189,17 @@ body[data-motion="reduced"] *::after {
     grid-template-columns: 1fr;
   }
 }
+
+.node-stream-hint {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  max-width: min(760px, calc(100% - 32px));
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  backdrop-filter: blur(8px);
+}
