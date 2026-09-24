@@ -127,6 +127,8 @@ Se o navegador ainda tentar chamar `campexback.vercel.app`, limpe o `localStorag
 http://127.0.0.1:5500/frontend/index.html?api=http://127.0.0.1:8787/api
 ```
 
+No modo local sem CAMPEX Cloud, o codigo gerado na tela do Node nao autoriza nada na nuvem. Ele serve apenas para manter o fluxo preparado para quando a Cloud voltar. Para testar cameras agora, mantenha o Node rodando em `127.0.0.1:8787` e use o frontend local apontando para `http://127.0.0.1:8787/api`.
+
 ## 6. Instalar como tarefa agendada
 
 Depois de gerar o executavel:

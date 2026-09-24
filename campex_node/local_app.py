@@ -5,7 +5,7 @@ import platform
 import sys
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import time
@@ -28,7 +28,7 @@ class CloudConnectionPayload(BaseModel):
 
 
 class PairingStartPayload(BaseModel):
-    cloud_url: str = Field(min_length=1, max_length=500)
+    cloud_url: str | None = Field(default=None, max_length=500)
     node_name: str = Field(default="CAMPEX Node", max_length=120)
 
 
@@ -229,10 +229,34 @@ class LocalNodeRuntime:
     def start_pairing(self, payload: PairingStartPayload) -> dict:
         from campex_node.main import build_lifecycle
 
-        self.lifecycle.store.set_meta("cloud_url", payload.cloud_url.rstrip("/"))
+        cloud_url = (payload.cloud_url or "").strip().rstrip("/")
+        if not cloud_url:
+            node_public_id = self.lifecycle.node_id
+            pairing_code = _pairing_code()
+            session_id = f"local-{uuid.uuid4().hex}"
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+            self.lifecycle.store.set_meta("pairing_session_id", session_id)
+            self.lifecycle.store.set_meta("pairing_node_public_id", node_public_id)
+            self.lifecycle.store.set_meta("pairing_code", pairing_code)
+            self.lifecycle.store.set_meta("pairing_expires_at", expires_at.isoformat())
+            self.lifecycle.store.set_meta("cloud_url", "")
+            return {
+                "ok": True,
+                "mode": "local",
+                "status": "pending",
+                "session_id": session_id,
+                "node_public_id": node_public_id,
+                "pairing_code": pairing_code,
+                "code": pairing_code,
+                "expires_at": expires_at.isoformat(),
+                "message": "Codigo local gerado. Sem CAMPEX Cloud configurada, ele fica aguardando autorizacao futura.",
+                **self.status(),
+            }
+
+        self.lifecycle.store.set_meta("cloud_url", cloud_url)
         settings = replace(
             NodeSettings.from_env(),
-            cloud_url=payload.cloud_url.rstrip("/"),
+            cloud_url=cloud_url,
         )
         client_lifecycle = build_lifecycle(settings)
         client_lifecycle.store.initialize()
@@ -256,6 +280,25 @@ class LocalNodeRuntime:
         node_public_id = self.lifecycle.store.get_meta("pairing_node_public_id") or self.lifecycle.node_id
         if not session_id:
             return {"ok": False, "status": "missing"}
+        if session_id.startswith("local-") or not (self.lifecycle.settings.cloud_url or self.lifecycle.store.get_meta("cloud_url")):
+            expires_at = self.lifecycle.store.get_meta("pairing_expires_at")
+            expired = False
+            if expires_at:
+                try:
+                    expired = datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc)
+                except ValueError:
+                    expired = False
+            return {
+                "ok": True,
+                "mode": "local",
+                "status": "expired" if expired else "pending",
+                "session_id": session_id,
+                "node_public_id": node_public_id,
+                "pairing_code": self.lifecycle.store.get_meta("pairing_code"),
+                "code": self.lifecycle.store.get_meta("pairing_code"),
+                "expires_at": expires_at,
+                **self.status(),
+            }
         settings = replace(
             NodeSettings.from_env(),
             cloud_url=self.lifecycle.settings.cloud_url or self.lifecycle.store.get_meta("cloud_url"),
@@ -601,6 +644,11 @@ def _camera_id(value: str | None) -> str:
         safe_value = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in raw_value)
         return safe_value[:120]
     return f"local_{uuid.uuid4().hex[:12]}"
+
+
+def _pairing_code() -> str:
+    raw_value = uuid.uuid4().hex[:8].upper()
+    return f"CXP-{raw_value[:4]}-{raw_value[4:]}"
 
 
 def _system_resources() -> dict:
