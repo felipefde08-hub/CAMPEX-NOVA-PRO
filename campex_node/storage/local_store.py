@@ -123,6 +123,7 @@ class LocalStore:
                 "name": item.name,
                 "rtsp_url": item.rtsp_url,
                 "enabled": item.enabled,
+                "vision_enabled": item.vision_enabled,
             }
             for item in sorted(camera_items, key=lambda item: item.name.lower())
         ]

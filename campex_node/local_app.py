@@ -10,7 +10,7 @@ from pathlib import Path
 
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,7 +40,7 @@ class LocalCameraPayload(BaseModel):
     source_type: str = Field(default="rtsp", max_length=40)
     enabled: bool = True
     area_id: str | None = None
-    vision_enabled: bool = False
+    vision_enabled: bool | None = None
 
 
 class CameraTestPayload(BaseModel):
@@ -119,6 +119,7 @@ class LocalNodeRuntime:
             name=payload.name.strip(),
             rtsp_url=rtsp_url,
             enabled=payload.enabled,
+            vision_enabled=bool(payload.vision_enabled),
         )
         self.lifecycle.store.save_local_camera(camera)
         self._restart_with_persisted_connection()
@@ -135,6 +136,7 @@ class LocalNodeRuntime:
             name=payload.name.strip() if payload.name else current.name,
             rtsp_url=rtsp_url,
             enabled=payload.enabled,
+            vision_enabled=current.vision_enabled if payload.vision_enabled is None else bool(payload.vision_enabled),
         )
         self.lifecycle.store.save_local_camera(camera)
         self._restart_with_persisted_connection()
@@ -279,10 +281,45 @@ class LocalNodeRuntime:
             "source_uri": camera.rtsp_url,
             "rtsp_url": camera.rtsp_url,
             "enabled": camera.enabled,
-            "vision_enabled": False,
+            "vision_enabled": camera.vision_enabled,
+            "edge_vision": self.lifecycle.vision.status(camera.id) if self.lifecycle.vision else None,
             "status": status,
             "health": health,
         }
+
+    def set_camera_vision(self, camera_id: str, enabled: bool) -> dict:
+        cameras = {camera.id: camera for camera in self.lifecycle.camera_manager.configs()}
+        current = cameras.get(camera_id)
+        if current is None:
+            raise ValueError("Camera not found.")
+        updated = NodeCameraConfig(
+            id=current.id,
+            name=current.name,
+            rtsp_url=current.rtsp_url,
+            enabled=current.enabled,
+            vision_enabled=enabled,
+        )
+        self.lifecycle.store.save_local_camera(updated)
+        cameras[camera_id] = updated
+        self.lifecycle.camera_manager.apply_configs(list(cameras.values()))
+        if self.lifecycle.vision is None:
+            return {"camera_id": camera_id, "status": "DISABLED", "enabled": enabled}
+        return self.lifecycle.vision.status(camera_id)
+
+    def vision_status(self, camera_id: str) -> dict:
+        if self.lifecycle.vision is None:
+            return {
+                "camera_id": camera_id,
+                "status": "DISABLED",
+                "enabled": False,
+                "error": "Edge vision service is not running.",
+            }
+        return self.lifecycle.vision.status(camera_id)
+
+    def vision_objects(self, camera_id: str) -> list[dict]:
+        if self.lifecycle.vision is None:
+            return []
+        return self.lifecycle.vision.objects(camera_id)
 
     def sync_now(self) -> dict:
         if self.lifecycle.config_sync is None:
@@ -462,6 +499,7 @@ class LocalNodeRuntime:
                 "sync": self.lifecycle.sync is not None,
                 "telemetry": self.lifecycle.telemetry is not None,
                 "heartbeat": self.lifecycle.heartbeat is not None,
+                "edge_vision": self.lifecycle.vision is not None,
             },
             "cameras": self.lifecycle.camera_manager.summary(),
         }
@@ -506,7 +544,7 @@ class LocalNodeRuntime:
 
 def create_app() -> FastAPI:
     runtime = LocalNodeRuntime()
-    app = FastAPI(title="CAMPEX Node Local", version="0.1.0")
+    app = FastAPI(title="CAMPEX Node Local", version="0.2.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
@@ -631,12 +669,14 @@ def create_app() -> FastAPI:
 
 
     @app.get("/api/cameras/{camera_id}/snapshot")
-    def camera_snapshot(camera_id: str):
+    def camera_snapshot(camera_id: str, overlay: bool = Query(False)):
         import cv2
 
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="Frame ainda não disponível para esta câmera.")
+        if overlay and runtime.lifecycle.vision is not None:
+            frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
         if not ok:
             raise HTTPException(status_code=500, detail="Não foi possível codificar o frame.")
@@ -647,12 +687,42 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/cameras/{camera_id}/stream")
-    def camera_stream(camera_id: str):
+    def camera_stream(camera_id: str, overlay: bool = Query(False)):
         return StreamingResponse(
-            _mjpeg_frames(runtime, camera_id),
+            _mjpeg_frames(runtime, camera_id, overlay=overlay),
             media_type="multipart/x-mixed-replace; boundary=frame",
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post("/api/cameras/{camera_id}/vision/start")
+    def start_camera_vision(camera_id: str) -> dict:
+        try:
+            return runtime.set_camera_vision(camera_id, True)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/cameras/{camera_id}/vision/stop")
+    def stop_camera_vision(camera_id: str) -> dict:
+        try:
+            return runtime.set_camera_vision(camera_id, False)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/cameras/{camera_id}/vision/restart")
+    def restart_camera_vision(camera_id: str) -> dict:
+        try:
+            runtime.set_camera_vision(camera_id, False)
+            return runtime.set_camera_vision(camera_id, True)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/cameras/{camera_id}/vision/status")
+    def camera_vision_status(camera_id: str) -> dict:
+        return runtime.vision_status(camera_id)
+
+    @app.get("/api/cameras/{camera_id}/vision/objects")
+    def camera_vision_objects(camera_id: str) -> list[dict]:
+        return runtime.vision_objects(camera_id)
 
     @app.post("/api/sync")
     def sync() -> dict:
@@ -703,13 +773,15 @@ def create_app() -> FastAPI:
     return app
 
 
-def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str):
+def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str, *, overlay: bool = False):
     import cv2
 
     last_payload: bytes | None = None
     while True:
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is not None:
+            if overlay and runtime.lifecycle.vision is not None:
+                frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
             ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 68])
             if ok:
                 last_payload = encoded.tobytes()

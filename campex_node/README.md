@@ -4,9 +4,10 @@ CAMPEX Node is the local, long-running service that stays inside the customer's
 network. It connects to existing RTSP cameras, keeps camera workers alive, stores
 temporary data locally, and prepares heartbeat communication with CAMPEX Cloud.
 
-This version does not run AI models. It only builds the runtime foundation:
-configuration, logging, node identity, camera capture, reconnects, local SQLite
-storage, heartbeat delivery, sync outbox, and operational telemetry.
+This version runs a lightweight offline Edge Vision loop using OpenCV HOG for
+person detection. It also includes the runtime foundation: configuration,
+logging, node identity, camera capture, reconnects, local SQLite storage,
+heartbeat delivery, sync outbox, and operational telemetry.
 
 ## Configuration
 
@@ -64,6 +65,26 @@ python -m campex_node.main --app
 `--once` initializes the node, sends one heartbeat attempt, prints the payload,
 and stops. Running without `--once` keeps the service alive for 24/7 operation.
 `--app` opens the lightweight local app at `http://127.0.0.1:8787`.
+
+## Offline Edge Vision
+
+The local Node can process camera frames without internet access when a camera
+has `vision_enabled` set to `true`. The first offline detector is intentionally
+lightweight:
+
+- Detector: OpenCV HOG person detector
+- Device: CPU
+- Network/API dependency: none
+- Overlay: `GET /api/cameras/{camera_id}/stream?overlay=true`
+
+Useful local endpoints:
+
+```text
+POST /api/cameras/{camera_id}/vision/start
+POST /api/cameras/{camera_id}/vision/stop
+GET  /api/cameras/{camera_id}/vision/status
+GET  /api/cameras/{camera_id}/vision/objects
+```
 
 ## Cloud Behavior
 

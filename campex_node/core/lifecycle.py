@@ -14,6 +14,7 @@ from campex_node.cloud.sync import SyncService
 from campex_node.core.config import NodeSettings
 from campex_node.storage.local_store import LocalStore
 from campex_node.telemetry.collector import TelemetryCollector
+from campex_node.vision import EdgeVisionService
 
 
 logger = logging.getLogger("campex.node.lifecycle")
@@ -37,6 +38,7 @@ class NodeLifecycle:
         self.config_sync: ConfigSyncService | None = None
         self.sync: SyncService | None = None
         self.telemetry: TelemetryCollector | None = None
+        self.vision: EdgeVisionService | None = None
         self._running = False
         self.started_at: datetime | None = None
 
@@ -67,6 +69,8 @@ class NodeLifecycle:
         if self.cloud_client.is_configured():
             self.config_sync.sync_once()
         self.camera_manager.start()
+        self.vision = EdgeVisionService(self.settings, self.camera_manager)
+        self.vision.start()
         if self.cloud_client.is_configured():
             self.config_sync.start()
         self.telemetry = TelemetryCollector(
@@ -123,6 +127,8 @@ class NodeLifecycle:
             self.telemetry.stop()
         if self.heartbeat is not None:
             self.heartbeat.stop()
+        if self.vision is not None:
+            self.vision.stop()
         self.camera_manager.stop()
         self._running = False
         self.started_at = None
@@ -137,6 +143,8 @@ class NodeLifecycle:
                 store=self.store,
             ).sync_once()
         self.camera_manager.start()
+        vision = EdgeVisionService(self.settings, self.camera_manager)
+        vision.start()
         try:
             TelemetryCollector(
                 settings=self.settings,
@@ -153,6 +161,7 @@ class NodeLifecycle:
             )
             return heartbeat.send_once()
         finally:
+            vision.stop()
             self.camera_manager.stop()
 
     def _get_or_create_node_id(self) -> str:

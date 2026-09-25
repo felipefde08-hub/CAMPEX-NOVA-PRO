@@ -46,6 +46,9 @@ Como usar:
 3. O painel local abrira em http://127.0.0.1:8787.
 4. Configure/conecte o Node e cadastre as cameras.
 
+Esta versao inclui Edge Vision offline inicial com OpenCV HOG para deteccao
+local de pessoas nas cameras com Vision ativada.
+
 Dados, logs e credenciais locais ficam em:
 %LOCALAPPDATA%\CAMPEX\node
 
