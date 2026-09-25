@@ -976,9 +976,8 @@ async function loadLiveCameras() {
     }
     await selectLiveCamera();
   } catch (error) {
-    select.innerHTML = `<option value="">Backend indisponivel</option>`;
+    select.innerHTML = `<option value="">Node local indisponivel</option>`;
     renderVisionStatus(null, [], null);
-    console.error(error);
   }
 }
 
@@ -1003,8 +1002,8 @@ async function selectLiveCamera() {
     await renderLiveMedia(camera);
   } catch (error) {
     const nameElement = document.querySelector("#live-camera-name");
-    if (nameElement && nameElement.textContent !== "Backend indisponivel") {
-      nameElement.textContent = "Backend indisponivel";
+    if (nameElement && nameElement.textContent !== "Node local indisponivel") {
+      nameElement.textContent = "Node local indisponivel";
     }
     const statusElement = document.querySelector("#live-camera-status");
     if (statusElement) {
@@ -1013,7 +1012,6 @@ async function selectLiveCamera() {
     }
     renderMediaPlaceholder("Stream indisponivel");
     renderVisionStatus(null, [], null);
-    console.error(error);
   }
 }
 
@@ -1171,7 +1169,6 @@ async function handleStartVision() {
     await startVision(cameraId);
     notify("Vision ligada", "A análise da câmera foi iniciada.", "success");
   } catch (error) {
-    console.error("Start vision failed:", error);
     notifyError("Falha ao ligar Vision", error);
   }
   await refreshLiveStatus();
@@ -1231,7 +1228,6 @@ async function handleStartMapping() {
     await startMapping(cameraId);
     notify("Mapeamento ligado", "O mapeamento corporal foi solicitado.", "success");
   } catch (error) {
-    console.error("Start mapping failed:", error);
     notifyError("Falha ao ligar mapeamento", error);
   } finally {
     if (button) {
@@ -1271,7 +1267,6 @@ async function handleRestartVision() {
     await restartVision(cameraId);
     notify("Vision reiniciada", "A sessão de análise foi reiniciada.", "success");
   } catch (error) {
-    console.error("Restart vision failed:", error);
     notifyError("Falha ao reiniciar Vision", error);
   }
   await refreshLiveStatus();
@@ -5386,7 +5381,7 @@ async function refreshBackendStatus() {
   try {
     if (lastBackendState !== "online") {
       statusElement.dataset.state = "checking";
-      statusText.textContent = "Verificando backend";
+      statusText.textContent = "Verificando Node local";
     }
     const health = await getHealth();
     backendFailureCount = 0;
@@ -5398,29 +5393,27 @@ async function refreshBackendStatus() {
     }
     lastBackendState = newState;
     if (backendSummary) {
-      backendSummary.textContent = "Conectado via /api/v1/health";
+      backendSummary.textContent = "Conectado via Node local /api/health";
     }
   } catch (error) {
     backendFailureCount += 1;
     if (lastBackendState === "online" && backendFailureCount < 3) {
-      console.warn("[CAMPEX] health check transient failure", error);
       return;
     }
     const newState = backendFailureCount < 3 ? "checking" : "offline";
     if (lastBackendState !== newState) {
       statusElement.dataset.state = newState;
-      statusText.textContent = backendFailureCount < 3 ? "Verificando backend" : "Backend indisponível";
+      statusText.textContent = backendFailureCount < 3 ? "Verificando Node local" : "Node local indisponível";
       if (backendFailureCount >= 3) {
-        notify("Backend indisponível", "Confira a URL configurada da API no arquivo frontend/config.js.", "error", 8000);
+        notify("Node local indisponível", "Abra o CampexNode.exe e confirme que ele esta rodando em 127.0.0.1:8787.", "error", 8000);
       }
     }
     if (backendFailureCount >= 3) {
       lastBackendState = "offline";
     }
     if (backendSummary) {
-      backendSummary.textContent = backendFailureCount < 3 ? "Tentando reconectar" : "Sem resposta do backend";
+      backendSummary.textContent = backendFailureCount < 3 ? "Tentando reconectar" : "Sem resposta do Node local";
     }
-    console.error(error);
   } finally {
     backendStatusRefreshInFlight = false;
   }
