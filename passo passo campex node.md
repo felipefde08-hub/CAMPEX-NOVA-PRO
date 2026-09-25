@@ -135,7 +135,7 @@ http://127.0.0.1:8787/api
 - consultar health;
 - abrir snapshot/stream quando houver frame.
 
-Se o navegador ainda tentar chamar `campexback.vercel.app`, limpe o `localStorage` do site no DevTools ou abra com:
+Se o navegador ainda tentar chamar um backend antigo, limpe o `localStorage` do site no DevTools ou abra com:
 
 ```text
 http://127.0.0.1:5500/frontend/index.html?api=http://127.0.0.1:8787/api

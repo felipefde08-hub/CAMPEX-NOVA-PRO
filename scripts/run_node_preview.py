@@ -110,10 +110,10 @@ class NodePreviewHandler(BaseHTTPRequestHandler):
 def _status_payload() -> dict:
     return {
         "node_id": "node_preview_01",
-        "cloud_url": "https://campexback.vercel.app/api/v1",
+        "cloud_url": None,
         "organization_id": "default",
         "paired": False,
-        "cloud_configured": True,
+        "cloud_configured": False,
         "queue_size": 3,
         "events_pending": 3,
         "metrics_pending": 14,

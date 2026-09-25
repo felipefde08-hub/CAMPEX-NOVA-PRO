@@ -826,7 +826,7 @@ NODE_HTML = """<!doctype html>
       </div><p class="note">O painel web lê a Cloud. Ele não precisa acessar este PC diretamente.</p></section>
       <div class="grid">
         <section class="panel"><h2>Pareamento com a Cloud</h2><form id="connect-form">
-          <label>Backend Cloud</label><input name="cloud_url" placeholder="https://campexback.vercel.app/api/v1" />
+          <label>Backend Cloud</label><input name="cloud_url" placeholder="Opcional: URL da Cloud CAMPEX" />
           <label>Código de pareamento</label><input name="pairing_code" autocomplete="off" placeholder="CXP-7KQ2-N91P" />
           <label>Nome deste Node</label><input name="node_name" placeholder="RBA-NODE-01" />
           <div class="actions"><button type="submit">Parear Node</button><button class="secondary" type="button" id="sync-button">Sincronizar agora</button><button class="secondary" type="button" id="diagnostics-button">Diagnóstico</button></div>

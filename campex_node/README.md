@@ -31,7 +31,7 @@ export CAMPEX_NODE_CAMERAS_JSON='[
 Optional Cloud settings:
 
 ```bash
-export CAMPEX_NODE_CLOUD_URL="https://campexback.vercel.app/api/v1"
+export CAMPEX_NODE_CLOUD_URL=""
 export CAMPEX_NODE_ID="node_a81f28"
 export CAMPEX_NODE_TOKEN="token_privado_do_node"
 export CAMPEX_NODE_ORGANIZATION_ID="default"
