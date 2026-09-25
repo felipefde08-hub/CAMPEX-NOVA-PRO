@@ -93,6 +93,14 @@ A interface local fica em:
 http://127.0.0.1:8787
 ```
 
+Em desenvolvimento, prefira iniciar com o script abaixo para evitar erro por Node antigo ainda preso na porta `8787`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\packaging\windows\start_node_local.ps1
+```
+
+Ele encerra qualquer processo antigo escutando a porta `8787` e sobe o Node atual do repositorio.
+
 ## 5.1. Usar o frontend local com o Node
 
 Enquanto nao houver backend Cloud, use o frontend da pasta `frontend/` apontando para o Node local.
@@ -101,6 +109,12 @@ Enquanto nao houver backend Cloud, use o frontend da pasta `frontend/` apontando
 
 ```powershell
 dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8787
+```
+
+Ou, durante o desenvolvimento:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\packaging\windows\start_node_local.ps1
 ```
 
 2. Abra `frontend/index.html` pelo Live Server.
