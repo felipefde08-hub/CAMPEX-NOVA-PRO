@@ -547,7 +547,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="CAMPEX Node Local", version="0.2.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|https://campexfront\.vercel\.app)$",
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -888,7 +888,11 @@ def _pairing_code() -> str:
 
 
 def _is_local_origin(origin: str) -> bool:
-    return origin.startswith("http://127.0.0.1:") or origin.startswith("http://localhost:")
+    return (
+        origin.startswith("http://127.0.0.1:")
+        or origin.startswith("http://localhost:")
+        or origin == "https://campexfront.vercel.app"
+    )
 
 
 def _system_resources() -> dict:
