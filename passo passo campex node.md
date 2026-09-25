@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 Resultado esperado:
 
 ```text
-dist\CAMPEX-Node\CAMPEX-Node.exe
+dist\CampexNode\CampexNode.exe
 ```
 
 O build usa PyInstaller em modo `onedir`, sem console visivel.
@@ -78,13 +78,13 @@ O build usa PyInstaller em modo `onedir`, sem console visivel.
 Abrir manualmente:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe
+dist\CampexNode\CampexNode.exe
 ```
 
 Executar em background:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8787
+dist\CampexNode\CampexNode.exe --no-browser --host 127.0.0.1 --port 8787
 ```
 
 A interface local fica em:
@@ -108,7 +108,7 @@ Enquanto nao houver backend Cloud, use o frontend da pasta `frontend/` apontando
 1. Inicie o Node:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8787
+dist\CampexNode\CampexNode.exe --no-browser --host 127.0.0.1 --port 8787
 ```
 
 Ou, durante o desenvolvimento:
@@ -159,7 +159,7 @@ Remover a tarefa:
 powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall_task.ps1
 ```
 
-A tarefa usa o executavel se ele existir em `dist\CAMPEX-Node\CAMPEX-Node.exe`.
+A tarefa usa o executavel se ele existir em `dist\CampexNode\CampexNode.exe`.
 Caso contrario, pode usar o Python de desenvolvimento informado pelo parametro `-Python`.
 
 ## 7. Pareamento com CAMPEX Cloud
@@ -226,6 +226,6 @@ python -m campex_node.main --once
 Smoke test do executavel:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8799
+dist\CampexNode\CampexNode.exe --no-browser --host 127.0.0.1 --port 8799
 Invoke-RestMethod http://127.0.0.1:8799/api/status
 ```

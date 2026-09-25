@@ -85,6 +85,9 @@ import { currentRoute, routes } from "./state.js";
 
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
 const CAMPEX_NODE_LOCAL_URL = "http://127.0.0.1:8787";
+const CAMPEX_NODE_DOWNLOAD_URL =
+  window.CAMPEX_NODE_DOWNLOAD_URL ||
+  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip";
 
 const statusElement = document.querySelector("#backend-status");
 const statusText = statusElement.querySelector(".status-text");
@@ -3973,6 +3976,7 @@ async function renderNodesPage() {
           <p>Instalacoes locais CAMPEX Node, cameras RTSP, fila de sincronizacao e saude de operacao.</p>
         </div>
         <div class="actions-row">
+          <a class="secondary-action" id="nodes-download-node" href="${CAMPEX_NODE_DOWNLOAD_URL}" download><i data-lucide="download"></i>Instalar Node</a>
           <button type="button" class="secondary-action" id="nodes-refresh"><i data-lucide="refresh-cw"></i>Atualizar</button>
           <button type="button" class="primary-action" id="nodes-open-pairing"><i data-lucide="link"></i>Conectar Node</button>
         </div>
@@ -4386,6 +4390,7 @@ function nodesSettingsMarkup() {
     ${settingsCard("CAMPEX Nodes", "Softwares locais pareados com esta organização.", "server", `
       <div id="settings-node-list" class="settings-integration-list">${emptyState("Carregando Nodes", "Buscando instalações pareadas.")}</div>
     `, `
+      <a class="secondary-action" href="${CAMPEX_NODE_DOWNLOAD_URL}" download><i data-lucide="download"></i>Instalar Node</a>
       <button type="button" class="secondary-action" data-settings-action="refresh-nodes"><i data-lucide="refresh-cw"></i>Atualizar</button>
       <button type="button" class="primary-action" data-settings-action="create-node-code"><i data-lucide="plus"></i>Adicionar Node</button>
     `)}

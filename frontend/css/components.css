@@ -1852,6 +1852,7 @@ button:hover {
   border-radius: 7px;
   font-weight: 720;
   line-height: 1;
+  text-decoration: none;
   white-space: nowrap;
 }
 

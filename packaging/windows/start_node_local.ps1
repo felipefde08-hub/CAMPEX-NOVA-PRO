@@ -20,7 +20,7 @@ foreach ($listener in $listeners) {
     if ($processId -and $processId -ne $PID) {
         $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
         if ($process) {
-            Write-Host "Encerrando processo antigo na porta $Port: $($process.ProcessName) ($processId)"
+            Write-Host "Encerrando processo antigo na porta ${Port}: $($process.ProcessName) ($processId)"
             Stop-Process -Id $processId -Force
         }
     }

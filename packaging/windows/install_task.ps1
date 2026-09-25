@@ -4,7 +4,7 @@ param(
   [string]$Executable = ""
 )
 
-$DefaultExecutable = Join-Path $ProjectDir "dist\CAMPEX-Node\CAMPEX-Node.exe"
+$DefaultExecutable = Join-Path $ProjectDir "dist\CampexNode\CampexNode.exe"
 if ([string]::IsNullOrWhiteSpace($Executable) -and (Test-Path $DefaultExecutable)) {
   $Executable = $DefaultExecutable
 }
