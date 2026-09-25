@@ -11,12 +11,12 @@ from pathlib import Path
 import time
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.cameras.security import sanitize_error_message
+from backend.middleware.cors import LocalNetworkCORSMiddleware
 
 from campex_node.core.config import NodeCameraConfig, NodeSettings
 
@@ -545,9 +545,11 @@ class LocalNodeRuntime:
 def create_app() -> FastAPI:
     runtime = LocalNodeRuntime()
     app = FastAPI(title="CAMPEX Node Local", version="0.2.0")
+    allowed_frontend_origins = _frontend_origins()
     app.add_middleware(
-        CORSMiddleware,
-        allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|https://campexfront\.vercel\.app)$",
+        LocalNetworkCORSMiddleware,
+        local_runtime=True,
+        allow_origins=allowed_frontend_origins,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -556,11 +558,11 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def local_cors_fallback(request, call_next):
         origin = request.headers.get("origin", "")
-        if request.method == "OPTIONS" and _is_local_origin(origin):
+        if request.method == "OPTIONS" and _is_allowed_frontend_origin(origin):
             response = Response(status_code=204)
         else:
             response = await call_next(request)
-        if _is_local_origin(origin):
+        if _is_allowed_frontend_origin(origin):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
             response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
@@ -568,6 +570,8 @@ def create_app() -> FastAPI:
                 "access-control-request-headers",
                 "authorization,content-type,accept,x-campex-token",
             )
+            if request.headers.get("access-control-request-private-network") == "true":
+                response.headers["Access-Control-Allow-Private-Network"] = "true"
         return response
 
     app.state.runtime = runtime
@@ -887,12 +891,26 @@ def _pairing_code() -> str:
     return f"CXP-{raw_value[:4]}-{raw_value[4:]}"
 
 
-def _is_local_origin(origin: str) -> bool:
-    return (
-        origin.startswith("http://127.0.0.1:")
-        or origin.startswith("http://localhost:")
-        or origin == "https://campexfront.vercel.app"
-    )
+def _frontend_origins() -> list[str]:
+    configured = [
+        item.strip()
+        for item in os.getenv("CAMPEX_FRONTEND_ORIGINS", "").split(",")
+        if item.strip()
+    ]
+    defaults = [
+        "https://campexfront.vercel.app",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+    ]
+    return list(dict.fromkeys(configured + defaults))
+
+
+def _is_allowed_frontend_origin(origin: str) -> bool:
+    return origin in _frontend_origins()
 
 
 def _system_resources() -> dict:
