@@ -514,6 +514,24 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def local_cors_fallback(request, call_next):
+        origin = request.headers.get("origin", "")
+        if request.method == "OPTIONS" and _is_local_origin(origin):
+            response = Response(status_code=204)
+        else:
+            response = await call_next(request)
+        if _is_local_origin(origin):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = request.headers.get(
+                "access-control-request-headers",
+                "authorization,content-type,accept,x-campex-token",
+            )
+        return response
+
     app.state.runtime = runtime
     assets_dir = Path(__file__).resolve().parents[1] / "frontend" / "assets"
     if assets_dir.exists():
@@ -795,6 +813,10 @@ def _camera_id(value: str | None) -> str:
 def _pairing_code() -> str:
     raw_value = uuid.uuid4().hex[:8].upper()
     return f"CXP-{raw_value[:4]}-{raw_value[4:]}"
+
+
+def _is_local_origin(origin: str) -> bool:
+    return origin.startswith("http://127.0.0.1:") or origin.startswith("http://localhost:")
 
 
 def _system_resources() -> dict:
