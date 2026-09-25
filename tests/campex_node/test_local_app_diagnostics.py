@@ -41,6 +41,8 @@ def test_local_node_diagnostics_do_not_expose_tokens(monkeypatch, tmp_path):
 def test_service_packaging_files_do_not_contain_secrets():
     paths = [
         "packaging/macos/install_launch_agent.sh",
+        "packaging/macos/status_launch_agent.sh",
+        "packaging/macos/build.sh",
         "packaging/linux/campex-node.service",
         "packaging/linux/install_systemd.sh",
         "packaging/windows/install_task.ps1",

@@ -132,6 +132,8 @@ never prints camera credentials, API keys or tokens intentionally.
 Service-ready packaging files are available in `packaging/`:
 
 - macOS LaunchAgent: `packaging/macos/install_launch_agent.sh`
+- macOS status helper: `packaging/macos/status_launch_agent.sh`
+- macOS package build: `packaging/macos/build.sh`
 - Linux systemd: `packaging/linux/install_systemd.sh`
 - Windows Scheduled Task: `packaging/windows/install_task.ps1`
 

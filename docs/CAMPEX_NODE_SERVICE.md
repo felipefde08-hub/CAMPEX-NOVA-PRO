@@ -26,10 +26,22 @@ buscar configurações e enviar eventos, métricas, alertas e snapshots pontuais
 
 ## macOS
 
-Para instalar como LaunchAgent do usuário atual:
+No MacBook, ha dois caminhos: instalar direto a partir do repositorio com
+Python, ou gerar um pacote local com binario `CampexNode`.
+
+Para instalar a partir do repositorio:
 
 ```bash
 ./packaging/macos/install_launch_agent.sh
+```
+
+Esse comando cria `.venv` se necessario, instala `campex_node/requirements.txt`,
+registra o LaunchAgent do usuario atual e inicia o Node em `127.0.0.1:8787`.
+
+Para ver status, healthcheck e caminhos de logs:
+
+```bash
+./packaging/macos/status_launch_agent.sh
 ```
 
 Para remover:
@@ -38,16 +50,39 @@ Para remover:
 ./packaging/macos/uninstall_launch_agent.sh
 ```
 
-O serviço roda:
+Para gerar o pacote macOS, execute em um Mac:
+
+```bash
+./packaging/macos/build.sh
+```
+
+Saida esperada:
 
 ```text
-python -m campex_node.main --app --host 127.0.0.1 --port 8787
+dist/CampexNode/CampexNode
+dist/CampexNode-macos-<arquitetura>.tar.gz
+```
+
+Ao extrair o pacote, o mesmo instalador usa o binario `./CampexNode`
+automaticamente.
+
+O servico roda:
+
+```text
+CampexNode --no-browser --host 127.0.0.1 --port 8787
+```
+
+ou, quando instalado pelo codigo-fonte:
+
+```text
+python -m campex_node.desktop_launcher --no-browser --host 127.0.0.1 --port 8787
 ```
 
 Logs ficam em:
 
 ```text
 storage/campex_node/logs/
+$HOME/.local/share/campex/node/logs/campex-node-bootstrap.log
 ```
 
 ## Linux systemd
