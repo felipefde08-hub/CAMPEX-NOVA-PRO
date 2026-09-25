@@ -129,6 +129,8 @@ http://127.0.0.1:5500/frontend/index.html?api=http://127.0.0.1:8787/api
 
 No modo local sem CAMPEX Cloud, o codigo gerado na tela do Node nao autoriza nada na nuvem. Ele serve apenas para manter o fluxo preparado para quando a Cloud voltar. Para testar cameras agora, mantenha o Node rodando em `127.0.0.1:8787` e use o frontend local apontando para `http://127.0.0.1:8787/api`.
 
+Na tela `Configuracoes > Nodes` do frontend local, o botao `Adicionar Node` chama o proprio Node local em `/api/nodes/pair/request`. Se aparecer erro de CORS ou `422`, pare o Node antigo, rode `git pull`, reinicie o Node e, se estiver usando executavel, gere o build novamente.
+
 ## 6. Instalar como tarefa agendada
 
 Depois de gerar o executavel:

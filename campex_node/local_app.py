@@ -48,6 +48,15 @@ class CameraTestPayload(BaseModel):
     source_uri: str | None = Field(default=None, max_length=1000)
 
 
+class PairingLookupPayload(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+
+
+class PairingAuthorizePayload(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+    node_name: str | None = Field(default=None, max_length=120)
+
+
 class LocalNodeRuntime:
     def __init__(self) -> None:
         self.lifecycle = self._build_from_persisted_connection()
@@ -188,6 +197,63 @@ class LocalNodeRuntime:
             "cameras": summary["cameras"],
         }
 
+    def node_summary(self) -> dict:
+        data = self.status()
+        hostname = platform.node()
+        return {
+            "id": data["node_id"],
+            "node_id": data["node_id"],
+            "name": self.lifecycle.store.get_meta("node_name") or hostname or "CAMPEX Node",
+            "hostname": hostname,
+            "platform": platform.system().lower(),
+            "version": self.lifecycle.settings.version,
+            "status": "online",
+            "paired": data["paired"],
+            "cloud_configured": data["cloud_configured"],
+            "last_seen_at": data["last_heartbeat_at"] or datetime.now(timezone.utc).isoformat(),
+            "cameras_total": data["cameras_total"],
+            "cameras_online": data["cameras_online"],
+            "queue_size": data["queue_size"],
+        }
+
+    def node_telemetry(self) -> dict:
+        data = self.status()
+        cameras = [
+            {
+                "camera_id": camera["id"],
+                "name": camera["name"],
+                "online": camera["status"] == "ONLINE",
+                "status": camera["status"],
+                "frames_received": camera.get("frames_received", 0),
+                "reconnect_attempts": camera.get("reconnect_attempts", 0),
+                "consecutive_failures": camera.get("consecutive_failures", 0),
+                "last_frame_at": camera.get("last_frame_at"),
+            }
+            for camera in data["cameras"]
+        ]
+        latest_metric_at = data["last_heartbeat_at"] or data["last_sync_at"]
+        metrics = []
+        if latest_metric_at:
+            metrics.append(
+                {
+                    "created_at": latest_metric_at,
+                    "cpu_percent": data["cpu_percent"],
+                    "ram_percent": data["ram_percent"],
+                    "queue_size": data["queue_size"],
+                }
+            )
+        return {
+            "node_id": data["node_id"],
+            "summary": {
+                "latest_metric_at": latest_metric_at,
+                "metrics_count": len(metrics),
+                "events_count": data["queue_size"],
+            },
+            "cameras": cameras,
+            "events": [],
+            "metrics": metrics,
+        }
+
     def _camera_response(self, camera: NodeCameraConfig, state: dict | None = None) -> dict:
         if state is None:
             state = next(
@@ -239,6 +305,7 @@ class LocalNodeRuntime:
             self.lifecycle.store.set_meta("pairing_node_public_id", node_public_id)
             self.lifecycle.store.set_meta("pairing_code", pairing_code)
             self.lifecycle.store.set_meta("pairing_expires_at", expires_at.isoformat())
+            self.lifecycle.store.set_meta("node_name", payload.node_name.strip() or "CAMPEX Node")
             self.lifecycle.store.set_meta("cloud_url", "")
             return {
                 "ok": True,
@@ -328,6 +395,45 @@ class LocalNodeRuntime:
             self.lifecycle.store.set_meta("organization_id", paired_settings.organization_id or "")
             self.lifecycle.start()
         return {"ok": True, **data, **self.status()}
+
+    def lookup_local_pairing_code(self, code: str) -> dict:
+        stored_code = (self.lifecycle.store.get_meta("pairing_code") or "").strip().upper()
+        requested_code = code.strip().upper()
+        expires_at = self.lifecycle.store.get_meta("pairing_expires_at")
+        if not stored_code or requested_code != stored_code:
+            raise ValueError("Codigo de pareamento nao encontrado.")
+        if expires_at:
+            try:
+                expired = datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc)
+            except ValueError:
+                expired = False
+            if expired:
+                raise ValueError("Codigo de pareamento expirado.")
+        return {
+            "ok": True,
+            "code": stored_code,
+            "node_id": self.lifecycle.node_id,
+            "node_public_id": self.lifecycle.node_id,
+            "node_name": self.lifecycle.store.get_meta("node_name") or "CAMPEX Node",
+            "hostname": platform.node(),
+            "platform": platform.system().lower(),
+            "version": self.lifecycle.settings.version,
+            "expires_at": expires_at,
+        }
+
+    def authorize_local_pairing_code(self, payload: PairingAuthorizePayload) -> dict:
+        found = self.lookup_local_pairing_code(payload.code)
+        if payload.node_name:
+            self.lifecycle.store.set_meta("node_name", payload.node_name.strip())
+        return {
+            "ok": True,
+            "mode": "local",
+            "id": self.lifecycle.node_id,
+            "node_id": self.lifecycle.node_id,
+            "name": self.lifecycle.store.get_meta("node_name") or found["node_name"],
+            "status": "online",
+            "message": "Node local autorizado para teste sem CAMPEX Cloud.",
+        }
 
     def diagnostics(self) -> dict:
         settings = self.lifecycle.settings
@@ -464,6 +570,46 @@ def create_app() -> FastAPI:
     @app.get("/api/pairing/status")
     def pairing_status() -> dict:
         return runtime.pairing_status()
+
+    @app.get("/api/nodes")
+    def list_nodes() -> list[dict]:
+        return [runtime.node_summary()]
+
+    @app.get("/api/nodes/{node_id}/telemetry")
+    def node_telemetry(node_id: str) -> dict:
+        if node_id != runtime.lifecycle.node_id:
+            raise HTTPException(status_code=404, detail="Node not found.")
+        return runtime.node_telemetry()
+
+    @app.post("/api/nodes/pair/request")
+    def request_node_pairing_code() -> dict:
+        try:
+            result = runtime.start_pairing(PairingStartPayload(cloud_url=None, node_name="CAMPEX Node"))
+            return {
+                "ok": True,
+                "code": result["pairing_code"],
+                "pairing_code": result["pairing_code"],
+                "expires_at": result["expires_at"],
+                "node_id": result["node_id"],
+                "node_public_id": result["node_public_id"],
+                "mode": result.get("mode", "local"),
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/nodes/pairing/lookup")
+    def lookup_node_pairing_code(payload: PairingLookupPayload) -> dict:
+        try:
+            return runtime.lookup_local_pairing_code(payload.code)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/nodes/pairing/authorize")
+    def authorize_node_pairing_code(payload: PairingAuthorizePayload) -> dict:
+        try:
+            return runtime.authorize_local_pairing_code(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
     @app.get("/api/cameras/{camera_id}/snapshot")
