@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 
 from backend.cameras.base import CameraSource
-from backend.cameras.frame_buffer import LatestFrameBuffer
+from backend.cameras.frame_buffer import LatestFrameBuffer, LatestFrameSnapshot, LatestFrameStats
 from backend.cameras.health import CameraStatus, utc_now
 from backend.cameras.security import sanitize_error_message
 
@@ -15,6 +15,8 @@ from campex_node.core.config import NodeCameraConfig, NodeSettings
 
 
 logger = logging.getLogger("campex.node.camera_worker")
+
+STOP_JOIN_TIMEOUT_SECONDS = 3.0
 
 
 class CameraWorker:
@@ -42,11 +44,18 @@ class CameraWorker:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=STOP_JOIN_TIMEOUT_SECONDS)
+        if self._thread.is_alive():
+            # Releasing the capture while the thread is inside read() crashes
+            # the process (native SIGTRAP/SIGSEGV). _run closes the source
+            # itself once the pending read returns.
+            logger.warning(
+                "Camera worker did not stop before timeout; it will close the camera when its read returns",
+                extra={"camera_id": self.camera.id},
+            )
+            return
         self.source.close()
-        if self._thread.is_alive():
-            self._thread.join(timeout=3)
-        if self._thread.is_alive():
-            logger.warning("Camera worker did not stop before timeout", extra={"camera_id": self.camera.id})
 
     def is_alive(self) -> bool:
         return self._thread.is_alive()
@@ -67,6 +76,12 @@ class CameraWorker:
 
     def latest_frame(self):
         return self._frame_buffer.latest()
+
+    def latest_snapshot(self) -> LatestFrameSnapshot:
+        return self._frame_buffer.snapshot()
+
+    def frame_stats(self) -> LatestFrameStats:
+        return self._frame_buffer.stats()
 
     def _run(self) -> None:
         consecutive_failures = 0

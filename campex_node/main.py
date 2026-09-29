@@ -9,6 +9,7 @@ from campex_node.core.config import NodeSettings
 from campex_node.core.lifecycle import NodeLifecycle
 from campex_node.core.logger import configure_logging
 from campex_node.storage.local_store import LocalStore
+from campex_node.vision.service import NodeVisionService
 
 
 def build_lifecycle(settings: NodeSettings | None = None) -> NodeLifecycle:
@@ -22,6 +23,7 @@ def build_lifecycle(settings: NodeSettings | None = None) -> NodeLifecycle:
         store=store,
         cloud_client=cloud_client,
         camera_manager=camera_manager,
+        vision=NodeVisionService(settings, camera_manager, store=store),
     )
 
 def main(argv: list[str] | None = None) -> int:

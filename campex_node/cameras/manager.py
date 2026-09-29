@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import threading
 
-from backend.cameras.health import CameraStatus
+from backend.cameras.frame_buffer import LatestFrameSnapshot, LatestFrameStats
+from backend.cameras.health import CameraHealth, CameraStatus
 
 from campex_node.cameras.camera import CameraRuntimeState
 from campex_node.core.config import NodeCameraConfig, NodeSettings
@@ -102,6 +103,41 @@ class CameraManager:
         if worker is None:
             return None, None
         return worker.latest_frame()
+
+    # The four methods below match backend.cameras.manager.CameraManager so
+    # backend.vision.engine.VisionEngine can consume the Node's frame buffers.
+
+    def is_running(self, camera_id: str) -> bool:
+        with self._lock:
+            worker = self._workers.get(camera_id)
+        return worker is not None and worker.is_alive()
+
+    def latest_frame_snapshot(self, camera_id: str) -> LatestFrameSnapshot:
+        with self._lock:
+            worker = self._workers.get(camera_id)
+        if worker is None:
+            return LatestFrameSnapshot(
+                frame=None,
+                frame_at=None,
+                frame_id=0,
+                frames_received=0,
+                frames_replaced=0,
+            )
+        return worker.latest_snapshot()
+
+    def camera_health(self, camera_id: str) -> CameraHealth:
+        with self._lock:
+            worker = self._workers.get(camera_id)
+        if worker is None:
+            return CameraHealth(camera_id=camera_id, status=CameraStatus.OFFLINE)
+        return worker.source.health()
+
+    def frame_stats(self, camera_id: str) -> LatestFrameStats:
+        with self._lock:
+            worker = self._workers.get(camera_id)
+        if worker is None:
+            return LatestFrameStats(frames_received=0, frames_replaced=0)
+        return worker.frame_stats()
 
     def summary(self) -> dict:
         states = self.states()

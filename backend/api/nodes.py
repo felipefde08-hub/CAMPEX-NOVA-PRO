@@ -13,6 +13,7 @@ from backend.cloud.nodes import NodeIdentity, NodeRepository, get_node_identity
 from backend.config import get_settings
 from backend.database.db import connect
 from backend.security import OrganizationScope, get_organization_scope
+from backend.zones.repository import ZoneRepository
 
 
 router = APIRouter(prefix="/api/v1/nodes", tags=["nodes"])
@@ -72,6 +73,10 @@ def get_node_repository() -> NodeRepository:
 
 def get_camera_repository() -> CameraRepository:
     return CameraRepository(get_settings())
+
+
+def get_zone_repository() -> ZoneRepository:
+    return ZoneRepository(get_settings())
 
 
 @router.post("/pair/request", status_code=status.HTTP_201_CREATED)
@@ -327,6 +332,7 @@ def node_config(
     node_id: str,
     identity: NodeIdentity = Depends(get_node_identity),
     repository: CameraRepository = Depends(get_camera_repository),
+    zone_repository: ZoneRepository = Depends(get_zone_repository),
 ) -> dict:
     if node_id != identity.node_id:
         raise HTTPException(status_code=403, detail="Node token does not match requested node.")
@@ -342,11 +348,18 @@ def node_config(
         for camera in repository.list(identity.organization_id)
         if camera.source_type in {"rtsp", "ip_camera"} and camera.enabled
     ]
+    camera_ids = {camera["id"] for camera in cameras}
+    zones = [
+        zone.as_dict()
+        for zone in zone_repository.list(organization_id=identity.organization_id)
+        if zone.camera_id in camera_ids
+    ]
     return {
         "organization_id": identity.organization_id,
         "node_id": identity.node_id,
         "version": get_settings().version,
         "cameras": cameras,
+        "zones": zones,
     }
 
 
@@ -354,8 +367,9 @@ def node_config(
 def legacy_node_config(
     identity: NodeIdentity = Depends(get_node_identity),
     repository: CameraRepository = Depends(get_camera_repository),
+    zone_repository: ZoneRepository = Depends(get_zone_repository),
 ) -> dict:
-    return node_config(identity.node_id, identity, repository)
+    return node_config(identity.node_id, identity, repository, zone_repository)
 
 
 @legacy_router.post("/heartbeat")

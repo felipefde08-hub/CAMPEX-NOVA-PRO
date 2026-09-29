@@ -25,6 +25,8 @@ class NodeEventPayload(BaseModel):
     ended_at: str | None = None
     duration: float | None = None
     confidence: float | None = None
+    zone_id: str | None = Field(default=None, max_length=120)
+    track_id: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -101,19 +103,55 @@ def sync_batch(
 
 
 def _insert_event(connection, identity: NodeIdentity, event: NodeEventPayload) -> bool:
-    cursor = connection.execute(
+    """Insert a node event, or update its lifecycle fields if it already exists.
+
+    Returns True only when the event is new. Updates are skipped when the event
+    belongs to another organization/node or would move a CLOSED event back to
+    OPEN (a retried, out-of-order send). An event already REVIEWED by an
+    operator keeps its status and metadata; only a CLOSED update fills in its
+    ended_at and duration.
+    """
+    exists = connection.execute(
+        "SELECT 1 FROM events WHERE id = ?", (event.event_id,)
+    ).fetchone() is not None
+    connection.execute(
         """
-        INSERT OR IGNORE INTO events (
-            id, type, camera_id, severity, status, confidence,
+        INSERT INTO events (
+            id, type, camera_id, zone_id, track_id, severity, status, confidence,
             started_at, ended_at, duration, metadata, organization_id, node_id,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            status = CASE
+                WHEN events.status = 'REVIEWED' THEN events.status
+                ELSE excluded.status
+            END,
+            ended_at = CASE
+                WHEN events.status = 'REVIEWED' AND excluded.status <> 'CLOSED'
+                    THEN events.ended_at
+                ELSE excluded.ended_at
+            END,
+            duration = CASE
+                WHEN events.status = 'REVIEWED' AND excluded.status <> 'CLOSED'
+                    THEN events.duration
+                ELSE excluded.duration
+            END,
+            metadata = CASE
+                WHEN events.status = 'REVIEWED' THEN events.metadata
+                ELSE excluded.metadata
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE events.organization_id = excluded.organization_id
+          AND events.node_id IS excluded.node_id
+          AND NOT (events.status = 'CLOSED' AND excluded.status = 'OPEN')
         """,
         (
             event.event_id,
             event.event_type,
             event.camera_id,
+            event.zone_id,
+            event.track_id,
             event.severity,
             event.status,
             event.confidence,
@@ -125,9 +163,9 @@ def _insert_event(connection, identity: NodeIdentity, event: NodeEventPayload) -
             identity.node_id,
         ),
     )
-    if cursor.rowcount:
+    if not exists:
         _record_sync_item(connection, identity, event.event_id, "event")
-    return cursor.rowcount > 0
+    return not exists
 
 
 def _insert_metric(connection, identity: NodeIdentity, metric: NodeMetricPayload) -> bool:

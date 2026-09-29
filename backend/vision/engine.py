@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Optional, Tuple
 
 from backend.cameras.manager import CameraManager
 from backend.config import Settings
@@ -31,7 +31,14 @@ from backend.zones.models import Zone, Observation
 logger = logging.getLogger("campex.vision.engine")
 
 
-FrameProvider = Callable[[str], tuple[object | None, datetime | None]]
+FrameProvider = Callable[[str], Tuple[Optional[object], Optional[datetime]]]
+
+# Longest pause between scheduler passes that processed no frame. Without a
+# pause the loop spins a full CPU core whenever frames are absent or
+# rate-limited by VISION_FPS.
+IDLE_WAIT_SECONDS = 0.02
+# Re-check interval once a session is due but its camera has no new frame yet.
+NEW_FRAME_POLL_SECONDS = 0.005
 
 
 class VisionSession:
@@ -140,6 +147,11 @@ class VisionSession:
         self._last_frame_at = frame_at
         self._last_processed_at = now
         return True
+
+    def seconds_until_due(self) -> float:
+        """Time left before the VISION_FPS limit lets this session process again."""
+        interval = 1 / self.settings.vision_fps
+        return max(0.0, self._last_processed_at + interval - self._monotonic())
 
     def process(
         self,
@@ -496,6 +508,10 @@ class VisionSession:
                 self.tracker, "backend", self.tracker.__class__.__name__
             )
             tracker_state = getattr(self.tracker, "state", "ACTIVE")
+            detector_fallback = bool(getattr(self.detector, "fallback_used", False))
+            detector_fallback_reason = (
+                getattr(self.detector, "fallback_reason", None) if detector_fallback else None
+            )
             metrics = VisionMetrics(
                 camera_fps=camera_fps,
                 vision_fps=self.settings.vision_fps if self.status == "RUNNING" else 0.0,
@@ -530,11 +546,16 @@ class VisionSession:
                 },
                 "detector": {
                     "backend": self.detector.__class__.__name__,
+                    "name": self.detector.name,
+                    "model": getattr(self.detector, "model_name", None),
                     "state": (
                         "ERROR" if "detector" in self._component_errors
                         else "LOADING" if not self.detector_ready
+                        else "DEGRADED" if detector_fallback
                         else "ACTIVE"
                     ),
+                    "fallback_used": detector_fallback,
+                    "fallback_reason": detector_fallback_reason,
                     "error": self._component_errors.get("detector"),
                 },
                 "tracker": {
@@ -583,6 +604,8 @@ class VisionSession:
                 "status": self.status,
                 "vision_status": self.status,
                 "error": self.error,
+                "detector_fallback": detector_fallback,
+                "detector_fallback_reason": detector_fallback_reason,
                 "metrics": metrics.as_dict(),
                 "components": components,
             }
@@ -892,6 +915,7 @@ class VisionEngine:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            processed_any = False
             with self._lock:
                 sessions = list(self._sessions.values())
                 detector_error = self._detector_error
@@ -925,6 +949,7 @@ class VisionEngine:
                 ):
                     continue
                 frame = snapshot.frame
+                processed_any = True
                 try:
                     session.process(
                         frame,
@@ -945,6 +970,19 @@ class VisionEngine:
                     if session.error is None:
                         session.fail(str(exc))
                 time.sleep(0.02)
+            if not processed_any:
+                self._stop.wait(self._idle_wait_seconds(sessions))
+
+    @staticmethod
+    def _idle_wait_seconds(sessions: list[VisionSession]) -> float:
+        """Sleep until the next session is due, so pausing never delays a frame."""
+        wait = IDLE_WAIT_SECONDS
+        for session in sessions:
+            if session.status == "STOPPED":
+                continue
+            due_in = session.seconds_until_due()
+            wait = min(wait, due_in if due_in > 0 else NEW_FRAME_POLL_SECONDS)
+        return wait
 
     @staticmethod
     def _disabled_status(camera_id: str) -> dict:

@@ -77,6 +77,8 @@ class NodeCameraConfig:
     name: str
     rtsp_url: str
     enabled: bool = True
+    # None means the cloud did not say; vision then runs on this camera.
+    vision_enabled: bool | None = None
 
     @classmethod
     def from_mapping(cls, item: dict[str, Any]) -> "NodeCameraConfig":
@@ -96,6 +98,9 @@ class NodeCameraConfig:
             name=name,
             rtsp_url=rtsp_url,
             enabled=bool(item.get("enabled", True)),
+            vision_enabled=(
+                None if item.get("vision_enabled") is None else bool(item["vision_enabled"])
+            ),
         )
 
 

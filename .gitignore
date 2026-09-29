@@ -35,3 +35,6 @@ storage/video_uploads/*
 Thumbs.db
 *.log
 nvidia.js
+
+# Third-party reference repositories (own licenses; not part of CAMPEX)
+REPOGIT/

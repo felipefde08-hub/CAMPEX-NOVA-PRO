@@ -78,3 +78,78 @@ def test_camera_worker_reconnects_without_exposing_rtsp_credentials(tmp_path):
     assert source.closed is True
     assert source.reconnects >= 1
     assert worker.state().last_error in {None, "rtsp://***:***@192.168.1.10/stream failed"}
+
+
+class SlowReadSource:
+    """Records whether close() ever ran while a read() was in progress."""
+
+    def __init__(self, read_seconds: float):
+        import threading
+
+        self.read_seconds = read_seconds
+        self._reading = threading.Event()
+        self.closed = False
+        self.closed_during_read = False
+        self._health = CameraHealth(camera_id="cam_slow", status=CameraStatus.ONLINE)
+
+    def connect(self):
+        return True
+
+    def read(self):
+        self._reading.set()
+        time.sleep(self.read_seconds)
+        self._reading.clear()
+        return FrameResult(success=True, frame=b"frame")
+
+    def reconnect(self):
+        return True
+
+    def close(self):
+        if self._reading.is_set():
+            self.closed_during_read = True
+        self.closed = True
+
+    def health(self):
+        return self._health
+
+    def wait_until_reading(self):
+        assert self._reading.wait(2)
+
+
+def test_camera_worker_stop_waits_for_read_before_closing_camera(tmp_path):
+    source = SlowReadSource(read_seconds=0.3)
+    worker = CameraWorker(
+        NodeCameraConfig(id="cam_slow", name="Slow", rtsp_url="rtsp://192.168.1.10/s"),
+        make_settings(tmp_path),
+        source=source,
+    )
+    worker.start()
+    source.wait_until_reading()
+
+    worker.stop()
+
+    assert worker.is_alive() is False
+    assert source.closed is True
+    assert source.closed_during_read is False
+
+
+def test_camera_worker_stop_timeout_leaves_close_to_the_worker_thread(monkeypatch, tmp_path):
+    import campex_node.workers.camera_worker as camera_worker_module
+
+    monkeypatch.setattr(camera_worker_module, "STOP_JOIN_TIMEOUT_SECONDS", 0.05)
+    source = SlowReadSource(read_seconds=0.5)
+    worker = CameraWorker(
+        NodeCameraConfig(id="cam_slow", name="Slow", rtsp_url="rtsp://192.168.1.10/s"),
+        make_settings(tmp_path),
+        source=source,
+    )
+    worker.start()
+    source.wait_until_reading()
+
+    worker.stop()
+
+    assert worker.is_alive() is True
+    assert source.closed is False
+    worker._thread.join(timeout=2)
+    assert source.closed is True
+    assert source.closed_during_read is False

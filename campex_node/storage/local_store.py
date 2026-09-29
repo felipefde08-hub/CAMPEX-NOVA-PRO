@@ -10,6 +10,11 @@ from typing import Any
 from campex_node.core.config import NodeCameraConfig
 
 
+# Lower values are sent first: detection events must not wait behind telemetry.
+OUTBOUND_PRIORITY = {"event": 0, "heartbeat": 1, "metric": 2}
+DEFAULT_OUTBOUND_PRIORITY = 2
+
+
 SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS node_meta (
@@ -28,6 +33,7 @@ SCHEMA = (
         next_attempt_at TEXT,
         last_error TEXT,
         synced_at TEXT,
+        priority INTEGER NOT NULL DEFAULT 2,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
@@ -142,16 +148,25 @@ class LocalStore:
             summary[str(row["status"])] = int(row["total"])
         return summary
 
-    def enqueue_event(self, event_type: str, payload: dict[str, Any], event_id: str | None = None) -> str:
+    def enqueue_event(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        event_id: str | None = None,
+        priority: int | None = None,
+    ) -> str:
         event_id = event_id or str(payload.get("event_id") or payload.get("metric_id") or f"evt_{uuid.uuid4().hex}")
+        if priority is None:
+            priority = OUTBOUND_PRIORITY.get(event_type, DEFAULT_OUTBOUND_PRIORITY)
         now = _utc_now()
         with self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO outbound_events (
-                    id, type, payload_json, status, attempts, next_attempt_at, created_at, updated_at
+                    id, type, payload_json, status, attempts, next_attempt_at,
+                    priority, created_at, updated_at
                 )
-                VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)
+                VALUES (?, ?, ?, 'pending', 0, ?, ?, ?, ?)
                 ON CONFLICT(id) DO NOTHING
                 """,
                 (
@@ -159,6 +174,7 @@ class LocalStore:
                     event_type,
                     json.dumps(payload, separators=(",", ":")),
                     now,
+                    int(priority),
                     now,
                     now,
                 ),
@@ -174,7 +190,7 @@ class LocalStore:
                 SELECT * FROM outbound_events
                 WHERE status = 'pending'
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
-                ORDER BY created_at ASC
+                ORDER BY priority ASC, created_at ASC
                 LIMIT ?
                 """,
                 (now, limit),
@@ -231,10 +247,28 @@ class LocalStore:
             "next_attempt_at": "ALTER TABLE outbound_events ADD COLUMN next_attempt_at TEXT",
             "last_error": "ALTER TABLE outbound_events ADD COLUMN last_error TEXT",
             "synced_at": "ALTER TABLE outbound_events ADD COLUMN synced_at TEXT",
+            "priority": (
+                "ALTER TABLE outbound_events ADD COLUMN priority INTEGER NOT NULL "
+                f"DEFAULT {DEFAULT_OUTBOUND_PRIORITY}"
+            ),
         }
         for column, statement in migrations.items():
             if column not in columns:
                 connection.execute(statement)
+        if "priority" not in columns:
+            # Rows queued before the column existed get their type's priority.
+            for event_type, priority in OUTBOUND_PRIORITY.items():
+                connection.execute(
+                    "UPDATE outbound_events SET priority = ? WHERE type = ?",
+                    (priority, event_type),
+                )
+        # Created here, not in SCHEMA: older databases only gain the column above.
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_outbound_events_status_priority_created
+            ON outbound_events(status, priority, created_at)
+            """
+        )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=5.0)

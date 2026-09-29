@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import threading
+from typing import Any, Callable
 
 from backend.cameras.security import sanitize_error_message
 
@@ -23,11 +24,13 @@ class ConfigSyncService:
         cloud_client: CloudClient,
         camera_manager: CameraManager,
         store: LocalStore | None = None,
+        on_zones: Callable[[list[dict[str, Any]]], None] | None = None,
     ) -> None:
         self.settings = settings
         self.cloud_client = cloud_client
         self.camera_manager = camera_manager
         self.store = store
+        self.on_zones = on_zones
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
@@ -60,6 +63,7 @@ class ConfigSyncService:
                     "name": item["name"],
                     "rtsp_url": item["source_uri"],
                     "enabled": item.get("enabled", True),
+                    "vision_enabled": item.get("vision_enabled"),
                 }
             )
             for item in payload.get("cameras", [])
@@ -75,6 +79,7 @@ class ConfigSyncService:
                             "name": camera.name,
                             "rtsp_url": camera.rtsp_url,
                             "enabled": camera.enabled,
+                            "vision_enabled": camera.vision_enabled,
                         }
                         for camera in remote_cameras
                     ],
@@ -85,6 +90,14 @@ class ConfigSyncService:
         cameras_by_id.update({camera.id: camera for camera in remote_cameras})
         cameras = list(cameras_by_id.values())
         self.camera_manager.apply_configs(cameras)
+        # A cloud without the "zones" key predates zone sync; keep local zones.
+        if self.on_zones is not None and "zones" in payload:
+            try:
+                self.on_zones(list(payload.get("zones") or []))
+            except Exception as exc:
+                self.last_error = sanitize_error_message(f"Zone sync failed: {exc}")
+                logger.exception("Zone sync failed")
+                return cameras
         self.last_error = None
         self.last_count = len(cameras)
         logger.info("Config sync applied %s camera(s)", len(cameras))

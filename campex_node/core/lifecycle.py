@@ -14,6 +14,7 @@ from campex_node.cloud.sync import SyncService
 from campex_node.core.config import NodeSettings
 from campex_node.storage.local_store import LocalStore
 from campex_node.telemetry.collector import TelemetryCollector
+from campex_node.vision.service import NodeVisionService
 
 
 logger = logging.getLogger("campex.node.lifecycle")
@@ -27,11 +28,13 @@ class NodeLifecycle:
         store: LocalStore,
         cloud_client: CloudClient,
         camera_manager: CameraManager,
+        vision: NodeVisionService | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
         self.cloud_client = cloud_client
         self.camera_manager = camera_manager
+        self.vision = vision
         self.node_id = ""
         self.heartbeat: HeartbeatService | None = None
         self.config_sync: ConfigSyncService | None = None
@@ -44,6 +47,13 @@ class NodeLifecycle:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
         self.node_id = self._get_or_create_node_id()
+        if self.vision is not None:
+            try:
+                self.vision.initialize()
+            except Exception:
+                # Detection is optional: telemetry and sync must keep running.
+                logger.exception("Node vision database could not be initialized; vision disabled")
+                self.vision = None
         cloud_status = self.cloud_client.check_connection()
         if cloud_status.ok:
             logger.info("CAMPEX Cloud connection verified")
@@ -63,10 +73,16 @@ class NodeLifecycle:
             cloud_client=self.cloud_client,
             camera_manager=self.camera_manager,
             store=self.store,
+            on_zones=self.vision.apply_zones if self.vision is not None else None,
         )
         if self.cloud_client.is_configured():
             self.config_sync.sync_once()
         self.camera_manager.start()
+        if self.vision is not None:
+            try:
+                self.vision.start()
+            except Exception:
+                logger.exception("Node vision could not start; continuing without detection")
         if self.cloud_client.is_configured():
             self.config_sync.start()
         self.telemetry = TelemetryCollector(
@@ -115,6 +131,8 @@ class NodeLifecycle:
             self.stop()
 
     def stop(self) -> None:
+        if self.vision is not None:
+            self.vision.stop()
         if self.config_sync is not None:
             self.config_sync.stop()
         if self.sync is not None:

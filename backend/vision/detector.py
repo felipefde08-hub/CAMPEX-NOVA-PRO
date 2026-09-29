@@ -87,7 +87,7 @@ class VisionDetector(ABC):
 class RFDETRDetector(VisionDetector):
     name = "RF-DETR Nano"
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, fallback_context: str | None = None) -> None:
         self.settings = settings
         self._model: Any | None = None
         self._hog: Any | None = None
@@ -95,6 +95,8 @@ class RFDETRDetector(VisionDetector):
         self._class_names: list[str] | None = None
         self._load_lock = threading.Lock()
         self._loading = False
+        self._hog_reason: str | None = None
+        self._fallback_context = fallback_context
 
     @property
     def name(self) -> str:
@@ -122,7 +124,9 @@ class RFDETRDetector(VisionDetector):
 
     @property
     def fallback_reason(self) -> str | None:
-        return "RF-DETR unavailable; using OpenCV HOG" if self._hog is not None else None
+        if self._hog is None:
+            return None
+        return self._hog_reason or "RF-DETR unavailable; using OpenCV HOG"
 
     def load(self) -> None:
         if self._model is not None or self._hog is not None:
@@ -142,7 +146,7 @@ class RFDETRDetector(VisionDetector):
         logger.info("[CAMPEX][VISION] Loading RF-DETR Nano")
         RFDETRNano, source = _load_rfdetr_nano()
         if RFDETRNano is None:
-            self._load_hog_fallback()
+            self._load_hog_fallback(self._with_context(f"RF-DETR {source}"))
             return
 
         requested_device = self.settings.vision_device
@@ -171,7 +175,7 @@ class RFDETRDetector(VisionDetector):
                 "[CAMPEX][VISION] RF-DETR could not load; using OpenCV HOG CPU fallback: %s",
                 exc,
             )
-            self._load_hog_fallback()
+            self._load_hog_fallback(self._with_context(f"RF-DETR failed to load: {exc}"))
 
     def detect(self, frame: Any) -> tuple[list[Detection], float]:
         self.load()
@@ -217,9 +221,20 @@ class RFDETRDetector(VisionDetector):
             )
         return detections, inference_ms
 
-    def _load_hog_fallback(self) -> None:
+    def _with_context(self, reason: str) -> str:
+        if self._fallback_context:
+            return f"{self._fallback_context} | {reason}"
+        return reason
+
+    def _load_hog_fallback(self, reason: str | None = None) -> None:
+        self._hog_reason = reason or "RF-DETR unavailable; using OpenCV HOG"
         logger.warning(
-            "[CAMPEX][VISION] RF-DETR unavailable; using OpenCV HOG CPU person detector"
+            "\n%s\n[CAMPEX][VISION] !!! DETECTOR EM FALLBACK: OpenCV HOG !!!\n"
+            "[CAMPEX][VISION] Deteccao DEGRADADA: apenas pessoas, baixa precisao.\n"
+            "[CAMPEX][VISION] Motivo: %s\n%s",
+            "=" * 72,
+            self._hog_reason,
+            "=" * 72,
         )
         self._hog = cv2.HOGDescriptor()
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
@@ -262,11 +277,10 @@ class YOLODetector(VisionDetector):
 
     @property
     def fallback_reason(self) -> str | None:
-        if self._load_error:
-            return self._load_error
-        if self._fallback is not None:
-            return getattr(self._fallback, "fallback_reason", None)
-        return None
+        reason = getattr(self._fallback, "fallback_reason", None) if self._fallback else None
+        if reason and (not self._load_error or self._load_error in reason):
+            return reason
+        return self._load_error or reason
 
     @property
     def model_name(self) -> str | None:
@@ -316,7 +330,9 @@ class YOLODetector(VisionDetector):
                 "[CAMPEX][VISION] YOLO unavailable; falling back to secondary detector: %s",
                 exc,
             )
-            fallback = RFDETRDetector(self.settings)
+            fallback = RFDETRDetector(
+                self.settings, fallback_context=f"YOLO unavailable: {exc}"
+            )
             fallback.load()
             self._fallback = fallback
 
@@ -343,7 +359,9 @@ class YOLODetector(VisionDetector):
                 "[CAMPEX][VISION] YOLO inference failed; activating fallback: %s",
                 exc,
             )
-            fallback = RFDETRDetector(self.settings)
+            fallback = RFDETRDetector(
+                self.settings, fallback_context=f"YOLO unavailable: {exc}"
+            )
             fallback.load()
             self._fallback = fallback
             self._model = None
@@ -630,7 +648,7 @@ def create_detector(settings: Settings) -> VisionDetector:
         return RFDETRDetector(settings)
     if settings.vision_detector == "hog":
         detector = RFDETRDetector(settings)
-        detector._load_hog_fallback()
+        detector._load_hog_fallback("VISION_DETECTOR=hog configured")
         return detector
     raise DetectorUnavailable(f"Unsupported detector: {settings.vision_detector}")
 

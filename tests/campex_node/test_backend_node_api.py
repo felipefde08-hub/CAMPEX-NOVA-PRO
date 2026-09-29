@@ -326,3 +326,201 @@ def _settings(monkeypatch, tmp_path) -> Settings:
     settings = Settings.from_env()
     initialize_database(settings)
     return settings
+
+
+def _pair_node(client, headers, name: str) -> dict:
+    code = client.post("/api/v1/nodes/pair/request", headers=headers, json={}).json()["code"]
+    claim = client.post(
+        "/api/v1/nodes/pair/claim",
+        json={"code": code, "node_name": name},
+    ).json()
+    return {"Authorization": f"Bearer {claim['node_token']}"}
+
+
+def _detection_event(status: str, **overrides) -> dict:
+    payload = {
+        "event_id": "det_1",
+        "camera_id": "cam_1",
+        "event_type": "PERSON_RESTRICTED_ZONE",
+        "severity": "critical",
+        "status": status,
+        "timestamp": "2026-09-29T18:00:00+00:00",
+        "zone_id": "zone_a",
+        "track_id": 7,
+        "confidence": 0.91,
+        "metadata": {"zone_name": "Doca"},
+    }
+    if status == "CLOSED":
+        payload.update(
+            ended_at="2026-09-29T18:00:12+00:00",
+            duration=12.0,
+            metadata={"zone_name": "Doca", "closed": True},
+        )
+    payload.update(overrides)
+    return payload
+
+
+def _event_row(settings: Settings, event_id: str = "det_1"):
+    with connect(settings.sqlite_path) as connection:
+        return connection.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+
+
+def test_node_sync_event_close_updates_open_event(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        node_headers = _pair_node(client, headers, "Node Upsert")
+        opened = client.post(
+            "/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("OPEN")]
+        )
+        open_row = _event_row(settings)
+        closed = client.post(
+            "/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("CLOSED")]
+        )
+
+    assert opened.json() == {"ok": True, "accepted": 1, "duplicates": 0}
+    assert closed.json() == {"ok": True, "accepted": 0, "duplicates": 1}
+    assert open_row["status"] == "OPEN"
+    assert open_row["ended_at"] is None
+    row = _event_row(settings)
+    assert row["status"] == "CLOSED"
+    assert row["started_at"] == "2026-09-29T18:00:00+00:00"
+    assert row["ended_at"] == "2026-09-29T18:00:12+00:00"
+    assert row["duration"] == 12.0
+    assert row["zone_id"] == "zone_a"
+    assert row["track_id"] == 7
+    assert '"closed":true' in row["metadata"]
+
+
+def _mark_reviewed(settings: Settings, metadata: str) -> None:
+    with connect(settings.sqlite_path) as connection:
+        connection.execute(
+            "UPDATE events SET status = 'REVIEWED', metadata = ? WHERE id = 'det_1'",
+            (metadata,),
+        )
+        connection.commit()
+
+
+def test_node_sync_close_keeps_reviewed_status_but_records_end_and_duration(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        node_headers = _pair_node(client, headers, "Node Reviewed")
+        client.post("/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("OPEN")])
+        _mark_reviewed(settings, '{"operator_note":"checked"}')
+        response = client.post(
+            "/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("CLOSED")]
+        )
+
+    assert response.json() == {"ok": True, "accepted": 0, "duplicates": 1}
+    row = _event_row(settings)
+    assert row["status"] == "REVIEWED"
+    assert row["ended_at"] == "2026-09-29T18:00:12+00:00"
+    assert row["duration"] == 12.0
+    assert row["metadata"] == '{"operator_note":"checked"}'
+
+
+def test_node_sync_open_resend_does_not_clear_reviewed_event_closure(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        node_headers = _pair_node(client, headers, "Node Reviewed Resend")
+        client.post("/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("OPEN")])
+        _mark_reviewed(settings, "{}")
+        client.post("/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("CLOSED")])
+        client.post("/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("OPEN")])
+
+    row = _event_row(settings)
+    assert row["status"] == "REVIEWED"
+    assert row["ended_at"] == "2026-09-29T18:00:12+00:00"
+    assert row["duration"] == 12.0
+
+
+def test_node_sync_out_of_order_open_does_not_reopen_closed_event(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        node_headers = _pair_node(client, headers, "Node Order")
+        client.post("/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("CLOSED")])
+        client.post("/api/v1/node-sync/events", headers=node_headers, json=[_detection_event("OPEN")])
+
+    row = _event_row(settings)
+    assert row["status"] == "CLOSED"
+    assert row["ended_at"] == "2026-09-29T18:00:12+00:00"
+    assert row["duration"] == 12.0
+
+
+def test_node_sync_cannot_update_event_owned_by_another_node(monkeypatch, tmp_path):
+    settings = _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        owner = _pair_node(client, headers, "Node Owner")
+        intruder = _pair_node(client, headers, "Node Intruder")
+        client.post("/api/v1/node-sync/events", headers=owner, json=[_detection_event("OPEN")])
+        owner_node_id = _event_row(settings)["node_id"]
+        client.post(
+            "/api/v1/node-sync/events",
+            headers=intruder,
+            json=[_detection_event("CLOSED", metadata={"tampered": True})],
+        )
+
+    row = _event_row(settings)
+    assert row["node_id"] == owner_node_id
+    assert row["status"] == "OPEN"
+    assert "tampered" not in row["metadata"]
+
+
+def test_node_config_includes_zones_only_for_synced_cameras(monkeypatch, tmp_path):
+    _settings(monkeypatch, tmp_path)
+    headers = {"X-CAMPEX-Token": "cloud-secret"}
+
+    with TestClient(app) as client:
+        node_headers = _pair_node(client, headers, "Node Zones")
+        rtsp = client.post(
+            "/api/v1/cameras",
+            headers=headers,
+            json={
+                "name": "Doca",
+                "source_type": "rtsp",
+                "source_uri": "rtsp://192.168.1.20/stream",
+                "enabled": True,
+            },
+        ).json()
+        disabled = client.post(
+            "/api/v1/cameras",
+            headers=headers,
+            json={
+                "name": "Desligada",
+                "source_type": "rtsp",
+                "source_uri": "rtsp://192.168.1.21/stream",
+                "enabled": False,
+            },
+        ).json()
+        points = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
+        zone = client.post(
+            "/api/v1/zones",
+            headers=headers,
+            json={"camera_id": rtsp["id"], "name": "Frame inteiro", "type": "restricted", "points": points},
+        ).json()
+        client.post(
+            "/api/v1/zones",
+            headers=headers,
+            json={"camera_id": disabled["id"], "name": "Fora", "type": "monitored", "points": points},
+        )
+        node_id = client.get("/api/v1/nodes", headers=headers).json()[0]["id"]
+        config = client.get(f"/api/v1/nodes/{node_id}/config", headers=node_headers)
+        legacy = client.get("/api/v1/node/config", headers=node_headers)
+
+    assert config.status_code == 200
+    zones = config.json()["zones"]
+    assert [item["id"] for item in zones] == [zone["id"]]
+    assert zones[0]["camera_id"] == rtsp["id"]
+    assert zones[0]["type"] == "restricted"
+    assert zones[0]["points"] == points
+    assert legacy.status_code == 200
+    assert [item["id"] for item in legacy.json()["zones"]] == [zone["id"]]

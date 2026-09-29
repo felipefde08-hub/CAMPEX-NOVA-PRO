@@ -1566,3 +1566,60 @@ def test_vision_engine_session_recovers_when_camera_comes_back(tmp_path: Path):
     finally:
         engine.shutdown()
         manager.shutdown()
+
+
+def test_session_seconds_until_due_follows_vision_fps(tmp_path):
+    from dataclasses import replace
+
+    clock = {"now": 100.0}
+    settings = replace(make_settings(tmp_path / "due.sqlite3"), vision_fps=5.0)
+    session = VisionSession(
+        "cam_due", settings, FakeDetector(), tracker=FakeTracker(), monotonic=lambda: clock["now"]
+    )
+
+    assert session.seconds_until_due() == 0.0
+    assert session.should_process(datetime.now(timezone.utc), frame_id=1) is True
+    assert session.seconds_until_due() == pytest.approx(0.2)
+    clock["now"] += 0.15
+    assert session.seconds_until_due() == pytest.approx(0.05)
+    clock["now"] += 1.0
+    assert session.seconds_until_due() == 0.0
+
+
+def test_engine_idle_wait_never_sleeps_past_a_due_session():
+    from backend.vision import engine as engine_module
+
+    class Session:
+        def __init__(self, due_in: float, status: str = "RUNNING") -> None:
+            self.due_in = due_in
+            self.status = status
+
+        def seconds_until_due(self) -> float:
+            return self.due_in
+
+    wait = VisionEngine._idle_wait_seconds
+
+    assert wait([]) == engine_module.IDLE_WAIT_SECONDS
+    assert wait([Session(0.5)]) == engine_module.IDLE_WAIT_SECONDS
+    assert wait([Session(0.5), Session(0.004)]) == pytest.approx(0.004)
+    assert wait([Session(0.0)]) == engine_module.NEW_FRAME_POLL_SECONDS
+    assert wait([Session(0.0, status="STOPPED")]) == engine_module.IDLE_WAIT_SECONDS
+
+
+def test_engine_loop_does_not_spin_without_sessions(tmp_path):
+    settings = make_settings(tmp_path / "idle.sqlite3")
+    initialize_database(settings)
+
+    class NoCameras:
+        pass
+
+    engine = VisionEngine(settings, NoCameras())
+    try:
+        time.sleep(0.2)
+        started = time.process_time()
+        time.sleep(1.0)
+        cpu_seconds = time.process_time() - started
+    finally:
+        engine.shutdown()
+
+    assert cpu_seconds < 0.3
