@@ -275,6 +275,7 @@ class LocalNodeRuntime:
             "approximate_fps": None,
         }
         return {
+            "ok": True,
             "id": camera.id,
             "name": camera.name,
             "source_type": "rtsp",
