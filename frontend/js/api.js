@@ -5,11 +5,32 @@ const localApiBaseUrl = "http://127.0.0.1:8787/api";
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 const storedApiBaseUrl = localStorage.getItem("campex.backend_url") || "";
 const configuredApiBaseUrl = window.CAMPEX_API_BASE_URL || "";
+const sameOriginApiBaseUrl = window.location.origin ? `${window.location.origin}/api/v1` : "";
+const usableStoredApiBaseUrl = !isLocalFrontend && isLocalNodeApiBase(storedApiBaseUrl) ? "" : storedApiBaseUrl;
 const API_BASE_URL =
-  (queryApiBaseUrl || configuredApiBaseUrl || (!isLocalFrontend ? storedApiBaseUrl : "") || (isLocalFrontend ? localApiBaseUrl : "")).replace(/\/$/, "");
-const isLocalNodeApi = /^https?:\/\/(127\.0\.0\.1|localhost):8787\/api$/i.test(API_BASE_URL);
+  normalizeApiBaseUrl(
+    queryApiBaseUrl ||
+    configuredApiBaseUrl ||
+    (!isLocalFrontend ? usableStoredApiBaseUrl : "") ||
+    (!isLocalFrontend ? sameOriginApiBaseUrl : "") ||
+    (isLocalFrontend ? localApiBaseUrl : "")
+  );
+const isLocalNodeApi = isLocalNodeApiBase(API_BASE_URL);
 
 const mediaUrl = await createMediaUrl(API_BASE_URL, getApiToken);
+
+function normalizeApiBaseUrl(value) {
+  const trimmed = String(value || "").trim().replace(/\/$/, "");
+  if (!trimmed) return "";
+  if (isLocalNodeApiBase(trimmed)) {
+    return trimmed;
+  }
+  return trimmed.endsWith("/api") ? `${trimmed}/v1` : trimmed;
+}
+
+function isLocalNodeApiBase(value) {
+  return /^https?:\/\/(127\.0\.0\.1|localhost):8787\/api\/?$/i.test(String(value || "").trim());
+}
 
 function localNodeFallback(path) {
   const cleanPath = path.split("?")[0];

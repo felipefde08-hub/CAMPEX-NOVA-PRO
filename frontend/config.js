@@ -1,5 +1,8 @@
 window.CAMPEX_API_BASE_URL =
-  window.CAMPEX_API_BASE_URL || "http://127.0.0.1:8787/api";
+  window.CAMPEX_API_BASE_URL ||
+  (["localhost", "127.0.0.1"].includes(window.location.hostname)
+    ? "http://127.0.0.1:8787/api"
+    : `${window.location.origin}/api/v1`);
 
 window.CAMPEX_NODE_DOWNLOAD_URL =
   window.CAMPEX_NODE_DOWNLOAD_URL ||
