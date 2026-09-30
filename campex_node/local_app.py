@@ -74,7 +74,7 @@ class LocalNodeRuntime:
         self.lifecycle.stop()
         settings = replace(
             NodeSettings.from_env(),
-            cloud_url=payload.cloud_url.rstrip("/"),
+            cloud_url=_normalize_cloud_api_url(payload.cloud_url),
         )
         os.environ["CAMPEX_NODE_CLOUD_URL"] = settings.cloud_url or ""
         claim_lifecycle = build_lifecycle(settings)
@@ -332,7 +332,7 @@ class LocalNodeRuntime:
     def start_pairing(self, payload: PairingStartPayload) -> dict:
         from campex_node.main import build_lifecycle
 
-        cloud_url = (payload.cloud_url or "").strip().rstrip("/")
+        cloud_url = _normalize_cloud_api_url(payload.cloud_url)
         if not cloud_url:
             node_public_id = self.lifecycle.node_id
             pairing_code = _pairing_code()
@@ -523,7 +523,7 @@ class LocalNodeRuntime:
             return lifecycle
         settings = replace(
             lifecycle.settings,
-            cloud_url=lifecycle.settings.cloud_url or meta.get("cloud_url"),
+            cloud_url=_normalize_cloud_api_url(lifecycle.settings.cloud_url or meta.get("cloud_url")),
             node_id=lifecycle.settings.node_id or meta.get("node_id"),
             cloud_token=lifecycle.settings.cloud_token or meta.get("node_token"),
             organization_id=lifecycle.settings.organization_id or meta.get("organization_id"),
@@ -575,9 +575,17 @@ def create_app() -> FastAPI:
         return response
 
     app.state.runtime = runtime
-    assets_dir = Path(__file__).resolve().parents[1] / "frontend" / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+    frontend_dir = Path(__file__).resolve().parents[1] / "frontend"
+    assets_dir = frontend_dir / "assets"
+    static_dirs = {
+        "/assets": assets_dir,
+        "/css": frontend_dir / "css",
+        "/js": frontend_dir / "js",
+        "/vendor": frontend_dir / "vendor",
+    }
+    for route, directory in static_dirs.items():
+        if directory.exists():
+            app.mount(route, StaticFiles(directory=str(directory)), name=route.strip("/"))
 
     @app.on_event("shutdown")
     def shutdown() -> None:
@@ -586,6 +594,24 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return NODE_HTML
+
+    @app.get("/app", response_class=HTMLResponse)
+    def campex_app() -> str:
+        index_path = frontend_dir / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="CAMPEX frontend not found.")
+        return index_path.read_text(encoding="utf-8")
+
+    @app.get("/config.js")
+    def frontend_config() -> Response:
+        return Response(
+            content=(
+                'window.CAMPEX_API_BASE_URL = "http://127.0.0.1:8787/api";\n'
+                f'window.CAMPEX_NODE_DOWNLOAD_URL = "{_node_download_url()}";\n'
+            ),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/status")
     def status() -> dict:
@@ -907,6 +933,24 @@ def _frontend_origins() -> list[str]:
         "http://localhost:5500",
     ]
     return list(dict.fromkeys(configured + defaults))
+
+
+def _normalize_cloud_api_url(value: str | None) -> str:
+    raw_value = (value or "").strip().rstrip("/")
+    if not raw_value:
+        return ""
+    if raw_value.endswith("/api"):
+        return f"{raw_value}/v1"
+    if raw_value.endswith("/api/v1"):
+        return raw_value
+    return f"{raw_value}/api/v1"
+
+
+def _node_download_url() -> str:
+    return os.getenv(
+        "CAMPEX_NODE_DOWNLOAD_URL",
+        "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip",
+    )
 
 
 def _is_allowed_frontend_origin(origin: str) -> bool:

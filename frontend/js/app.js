@@ -85,6 +85,7 @@ import { currentRoute, routes } from "./state.js";
 
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
 const CAMPEX_NODE_LOCAL_URL = "http://127.0.0.1:8787";
+const CAMPEX_NODE_LOCAL_APP_URL = `${CAMPEX_NODE_LOCAL_URL}/app#live`;
 const CAMPEX_NODE_DOWNLOAD_URL =
   window.CAMPEX_NODE_DOWNLOAD_URL ||
   "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip";
@@ -1098,6 +1099,16 @@ function renderVideoElement(camera) {
 function renderNodeMjpegElement(camera, fallbackMessage = "") {
   const mediaHost = document.querySelector("#live-media-host");
   if (!mediaHost) return;
+  if (!canEmbedLocalNodeMedia()) {
+    mediaHost.innerHTML = `
+      <div class="media-placeholder">
+        <strong>Stream ao vivo pelo CAMPEX Node local</strong>
+        <span>O Chrome bloqueia imagem de 127.0.0.1 dentro do painel HTTPS da Vercel. Abra o painel local do Node para ver as câmeras em tempo real.</span>
+        <a class="primary-action" href="${CAMPEX_NODE_LOCAL_APP_URL}" target="_blank" rel="noopener">Abrir painel local</a>
+      </div>
+    `;
+    return;
+  }
   const streamUrl = `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(camera.id)}/stream?t=${Date.now()}`;
   mediaHost.innerHTML = `
     <img
@@ -1111,6 +1122,10 @@ function renderNodeMjpegElement(camera, fallbackMessage = "") {
   mediaHost.querySelector("img").addEventListener("error", () => {
     renderMediaPlaceholder("Aguardando frames do CAMPEX Node local. Verifique se o Node está aberto em http://127.0.0.1:8787 e se a câmera está online.");
   });
+}
+
+function canEmbedLocalNodeMedia() {
+  return ["localhost", "127.0.0.1"].includes(window.location.hostname);
 }
 
 
