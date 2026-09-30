@@ -32,7 +32,7 @@ a = Analysis(
         *ultralytics_binaries,
     ],
     datas=[
-        (str(ROOT / "frontend" / "assets"), "frontend/assets"),
+        (str(ROOT / "frontend"), "frontend"),
         (str(ROOT / "yolo11n.pt"), "."),
         *torch_datas,
         *torchvision_datas,
