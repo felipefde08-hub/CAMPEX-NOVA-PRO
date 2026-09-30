@@ -613,6 +613,17 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.get("/media-worker.js")
+    def media_worker() -> Response:
+        worker_path = frontend_dir / "media-worker.js"
+        if not worker_path.exists():
+            raise HTTPException(status_code=404, detail="CAMPEX media worker not found.")
+        return Response(
+            content=worker_path.read_text(encoding="utf-8"),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.get("/api/status")
     def status() -> dict:
         return runtime.status()

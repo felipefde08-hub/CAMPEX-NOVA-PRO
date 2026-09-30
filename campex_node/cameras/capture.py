@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from backend.cameras.security import sanitize_error_message
 from backend.cameras.base import CameraConfig, CameraSource
@@ -19,7 +20,30 @@ def create_rtsp_source(camera: NodeCameraConfig) -> CameraSource:
     )
 
 
-def test_rtsp_connection(rtsp_url: str) -> dict:
+def test_rtsp_connection(rtsp_url: str, *, timeout_seconds: float = 12.0) -> dict:
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="campex-node-camera-test")
+    future = executor.submit(_test_rtsp_connection_sync, rtsp_url)
+    try:
+        return future.result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        future.cancel()
+        return {
+            "ok": False,
+            "success": False,
+            "status": "OFFLINE",
+            "latency_ms": int(timeout_seconds * 1000),
+            "resolution": {"width": None, "height": None},
+            "frames_received": 0,
+            "error": (
+                "Timeout ao abrir o RTSP no CAMPEX Node local. Verifique IP, porta, "
+                "usuario/senha, canal/subtipo e se este computador acessa a rede da camera."
+            ),
+        }
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _test_rtsp_connection_sync(rtsp_url: str) -> dict:
     camera = NodeCameraConfig(
         id="test_connection",
         name="Teste RTSP",

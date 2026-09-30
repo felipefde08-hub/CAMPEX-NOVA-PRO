@@ -2,7 +2,10 @@ import { createMediaUrl } from "./media-auth.js";
 import { getApiToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
 const localApiBaseUrl = "http://127.0.0.1:8787/api";
+const localNodeApiBaseUrl = "http://127.0.0.1:8787/api";
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const isHttpFrontend = ["http:", "https:"].includes(window.location.protocol);
+const isHostedFrontend = isHttpFrontend && window.location.protocol === "https:" && !isLocalFrontend;
 const storedApiBaseUrl = localStorage.getItem("campex.backend_url") || "";
 const configuredApiBaseUrl = window.CAMPEX_API_BASE_URL || "";
 const usableStoredApiBaseUrl = !isLocalFrontend && isLocalNodeApiBase(storedApiBaseUrl) ? "" : storedApiBaseUrl;
@@ -28,6 +31,45 @@ function normalizeApiBaseUrl(value) {
 
 function isLocalNodeApiBase(value) {
   return /^https?:\/\/(127\.0\.0\.1|localhost):8787\/api\/?$/i.test(String(value || "").trim());
+}
+
+function shouldUseLocalNodeForCamera(payload = {}) {
+  return isHostedFrontend && ["rtsp", "ip_camera"].includes(String(payload.source_type || "").toLowerCase());
+}
+
+async function requestLocalNodeJson(path, options = {}) {
+  const response = await fetch(`${localNodeApiBaseUrl}${path}`, {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    signal: options.signal || AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const body = await response.json();
+      detail = body.detail || body.error || detail;
+    } catch {
+      detail = response.statusText || detail;
+    }
+    throw new Error(detail);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+async function maybeListLocalNodeCameras() {
+  if (!isHostedFrontend || isLocalNodeApi) return [];
+  try {
+    return await requestLocalNodeJson("/cameras", {
+      signal: AbortSignal.timeout(1500),
+    });
+  } catch {
+    return [];
+  }
 }
 
 function localNodeFallback(path) {
@@ -302,11 +344,30 @@ export async function deleteInvestigation(investigationId) {
   }
 }
 
-export function listCameras() {
-  return requestJson("/cameras");
+export async function listCameras() {
+  const [cloudResult, localResult] = await Promise.all([
+    requestJson("/cameras").catch(() => []),
+    maybeListLocalNodeCameras(),
+  ]);
+  const cloudCameras = Array.isArray(cloudResult) ? cloudResult : [];
+  const localCameras = Array.isArray(localResult) ? localResult : [];
+  const merged = new Map();
+  for (const camera of cloudCameras) {
+    merged.set(camera.id, camera);
+  }
+  for (const camera of localCameras) {
+    merged.set(camera.id, { ...camera, runtime: "local_node" });
+  }
+  return Array.from(merged.values());
 }
 
 export function createCamera(payload) {
+  if (shouldUseLocalNodeForCamera(payload)) {
+    return requestLocalNodeJson("/cameras", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
   return requestJson("/cameras", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -314,6 +375,12 @@ export function createCamera(payload) {
 }
 
 export function updateCamera(cameraId, payload) {
+  if (shouldUseLocalNodeForCamera(payload)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
   return requestJson(`/cameras/${cameraId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -321,6 +388,12 @@ export function updateCamera(cameraId, payload) {
 }
 
 export function testCameraSource(payload) {
+  if (shouldUseLocalNodeForCamera(payload)) {
+    return requestLocalNodeJson("/cameras/test-source", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
   return requestJson("/cameras/test-source", {
     method: "POST",
     body: JSON.stringify(payload),
