@@ -38,7 +38,7 @@ function shouldUseLocalNodeForCamera(payload = {}) {
 }
 
 function shouldUseLocalNodeCameraId(cameraId = "") {
-  return isHostedFrontend && String(cameraId || "").startsWith("local_");
+  return String(cameraId || "").startsWith("local_");
 }
 
 async function requestLocalNodeJson(path, options = {}) {
@@ -357,6 +357,7 @@ export async function listCameras() {
   const localCameras = Array.isArray(localResult) ? localResult : [];
   const merged = new Map();
   for (const camera of cloudCameras) {
+    if (isHostedFrontend && String(camera.id || "").startsWith("local_")) continue;
     merged.set(camera.id, camera);
   }
   for (const camera of localCameras) {
@@ -594,12 +595,18 @@ export function stopVision(cameraId) {
 }
 
 export function startMapping(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return Promise.reject(new Error("Mapeamento indisponivel para cameras do Node local."));
+  }
   return requestJson(`/cameras/${cameraId}/mapping/start`, {
     method: "POST",
   });
 }
 
 export function stopMapping(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return Promise.reject(new Error("Mapeamento indisponivel para cameras do Node local."));
+  }
   return requestJson(`/cameras/${cameraId}/mapping/stop`, {
     method: "POST",
   });
@@ -620,6 +627,7 @@ export function getVisionObjects(cameraId) {
 }
 
 export function getMappingPoses(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) return Promise.resolve([]);
   return requestJson(`/cameras/${cameraId}/mapping/poses`);
 }
 

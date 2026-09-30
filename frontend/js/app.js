@@ -1035,6 +1035,22 @@ async function renderLiveMedia(camera) {
 
   renderMediaPlaceholder("Abrindo stream...");
 
+  if (String(camera.id).startsWith("local_")) {
+    try {
+      const health = await getCameraHealth(camera.id);
+      if (activeMediaCameraId !== camera.id) return;
+      renderNodeMjpegElement(
+        camera,
+        health.last_error || "Aguardando imagem da camera.",
+        health.status !== "OFFLINE" && Number(health.frames_received || 0) > 0,
+      );
+    } catch (error) {
+      if (activeMediaCameraId !== camera.id) return;
+      renderNodeMjpegElement(camera, `Node local indisponivel: ${error.message}`, false);
+    }
+    return;
+  }
+
   if (camera.source_type === "video_file") {
     renderVideoElement(camera);
     return;
@@ -1097,17 +1113,22 @@ function renderVideoElement(camera) {
   });
 }
 
-function renderNodeMjpegElement(camera, fallbackMessage = "") {
+function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) {
   const mediaHost = document.querySelector("#live-media-host");
   if (!mediaHost) return;
+  mediaHost.dataset.localFrames = String(hasFrames);
   if (!canEmbedLocalNodeMedia()) {
     mediaHost.innerHTML = `
       <div class="media-placeholder">
         <strong>Stream ao vivo pelo CAMPEX Node local</strong>
-        <span>O Chrome bloqueia imagem de 127.0.0.1 dentro do painel HTTPS da Vercel. Abra o painel local do Node para ver as câmeras em tempo real.</span>
+        <span>${escapeHtml(hasFrames ? "Abra o painel local do Node para ver a imagem em tempo real." : fallbackMessage)}</span>
         <a class="primary-action" href="${localNodeLiveUrl(camera.id)}" target="_blank" rel="noopener">Abrir painel local</a>
       </div>
     `;
+    return;
+  }
+  if (!hasFrames) {
+    mediaHost.innerHTML = `<div class="media-placeholder">${escapeHtml(fallbackMessage)}</div>`;
     return;
   }
   const streamUrl = `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(camera.id)}/stream?t=${Date.now()}`;
@@ -1188,7 +1209,7 @@ async function handleStartVision() {
   // several seconds and the API call may time out on the client side).
   const camera = await selectedCamera();
   if (camera) {
-    renderMjpegElement(camera);
+    await renderLiveMedia(camera);
   }
   try {
     await startVision(cameraId);
@@ -1247,7 +1268,7 @@ async function handleStartMapping() {
   }
   const camera = await selectedCamera();
   if (camera) {
-    renderMjpegElement(camera);
+    await renderLiveMedia(camera);
   }
   try {
     await startMapping(cameraId);
@@ -1286,7 +1307,7 @@ async function handleRestartVision() {
   // seconds and the API call can time out on the client side).
   const camera = await selectedCamera();
   if (camera) {
-    renderMjpegElement(camera);
+    await renderLiveMedia(camera);
   }
   try {
     await restartVision(cameraId);
@@ -1316,6 +1337,14 @@ async function refreshLiveStatus() {
     const [objects, poses] = showDetections
       ? await Promise.all([getVisionObjects(cameraId), getMappingPoses(cameraId)])
       : [[], []];
+    if (document.querySelector("#live-camera-select")?.value !== cameraId) return null;
+    if (cameraId.startsWith("local_")) {
+      const mediaHost = document.querySelector("#live-media-host");
+      const hasFrames = health.status !== "OFFLINE" && Number(health.frames_received || 0) > 0;
+      if (mediaHost?.dataset.localFrames && mediaHost.dataset.localFrames !== String(hasFrames)) {
+        renderNodeMjpegElement({ id: cameraId }, health.last_error || "Aguardando imagem da camera.", hasFrames);
+      }
+    }
     // Apenas atualiza os elementos de status, nunca re-renderiza a mídia
     updateVisionStatusOnly(visionStatus, objects, health, poses);
     return visionStatus;
@@ -1357,7 +1386,7 @@ function renderVisionStatus(visionStatus, objects, health, poses = []) {
   setText("#live-vision-fps", metrics.vision_fps ?? "0");
   setText("#live-frame-count", `${metrics.frames_processed ?? 0}/${metrics.frames_received ?? 0}`);
   setText("#live-mapping-state", mappingLabel(mapping));
-  const error = visionStatus?.error || mapping.error;
+  const error = health?.last_error || visionStatus?.error || mapping.error;
   const errorLine = document.querySelector("#live-error-line");
   if (errorLine) {
     const newError = error || "Sem erros";
@@ -1402,7 +1431,7 @@ function updateVisionStatusOnly(visionStatus, objects, health, poses = []) {
   setText("#live-vision-fps", metrics.vision_fps ?? "0");
   setText("#live-frame-count", `${metrics.frames_processed ?? 0}/${metrics.frames_received ?? 0}`);
   setText("#live-mapping-state", mappingLabel(mapping));
-  const error = visionStatus?.error || mapping.error;
+  const error = health?.last_error || visionStatus?.error || mapping.error;
   const errorLine = document.querySelector("#live-error-line");
   if (errorLine) {
     const newError = error || "Sem erros";
@@ -1433,6 +1462,9 @@ function updateModeButtons(status, mapping) {
 
   const mappingButton = document.querySelector("#live-toggle-mapping");
   if (mappingButton && mappingButton.dataset.loading !== "true") {
+    const localCamera = document.querySelector("#live-camera-select")?.value.startsWith("local_");
+    mappingButton.disabled = Boolean(localCamera);
+    mappingButton.title = localCamera ? "Mapeamento indisponivel para cameras do Node local" : "";
     const mappingOn = mapping.state === "ACTIVE";
     mappingButton.dataset.active = String(mappingOn);
     mappingButton.textContent = `Mapeamento: ${mappingOn ? "ON" : "OFF"}`;
