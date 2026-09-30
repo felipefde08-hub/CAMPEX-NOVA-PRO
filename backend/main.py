@@ -141,6 +141,15 @@ async def lifespan(app_instance: FastAPI):
             )
 
             manager.start_enabled_cameras()
+            for camera in repository.list():
+                if camera.enabled and camera.vision_enabled:
+                    try:
+                        vision_engine.start_session(camera.id)
+                    except Exception:
+                        logger.exception(
+                            "Falha ao iniciar visão no boot: camera_id=%s",
+                            camera.id,
+                        )
             _warn_security_posture(settings)
 
             try:

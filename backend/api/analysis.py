@@ -92,7 +92,6 @@ def analysis_events(
     limit: int = Query(200, ge=1, le=1000),
     scope: OrganizationScope = Depends(get_organization_scope),
 ) -> list[dict]:
-    del request
     events = EventRepository.for_settings(request.app.state.settings).list(
         camera_id=camera_id,
         event_type=event_type,
