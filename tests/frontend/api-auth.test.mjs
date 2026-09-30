@@ -61,7 +61,7 @@ test('backend selection is saved only after successful authentication', async ()
   assert.ok(!sent.url.includes('test-local-token'));
 });
 
-test('published frontend ignores stale local node backend and uses same-origin v1 API', async () => {
+test('published frontend ignores stale local node backend without inventing same-origin API', async () => {
   globalThis.localStorage = storage();
   globalThis.sessionStorage = storage();
   globalThis.localStorage.setItem('campex.backend_url', 'http://127.0.0.1:8787/api');
@@ -75,5 +75,5 @@ test('published frontend ignores stale local node backend and uses same-origin v
     CAMPEX_API_BASE_URL: '',
   };
   const publishedApi = await import(moduleUrl(`${apiSource}\n// published-${Date.now()}`));
-  assert.equal(publishedApi.getBackendUrl(), 'https://campexfront.vercel.app/api/v1');
+  assert.equal(publishedApi.getBackendUrl(), '');
 });

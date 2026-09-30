@@ -5,14 +5,12 @@ const localApiBaseUrl = "http://127.0.0.1:8787/api";
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 const storedApiBaseUrl = localStorage.getItem("campex.backend_url") || "";
 const configuredApiBaseUrl = window.CAMPEX_API_BASE_URL || "";
-const sameOriginApiBaseUrl = window.location.origin ? `${window.location.origin}/api/v1` : "";
 const usableStoredApiBaseUrl = !isLocalFrontend && isLocalNodeApiBase(storedApiBaseUrl) ? "" : storedApiBaseUrl;
 const API_BASE_URL =
   normalizeApiBaseUrl(
     queryApiBaseUrl ||
     configuredApiBaseUrl ||
     (!isLocalFrontend ? usableStoredApiBaseUrl : "") ||
-    (!isLocalFrontend ? sameOriginApiBaseUrl : "") ||
     (isLocalFrontend ? localApiBaseUrl : "")
   );
 const isLocalNodeApi = isLocalNodeApiBase(API_BASE_URL);
