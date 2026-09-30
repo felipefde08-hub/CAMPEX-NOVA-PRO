@@ -3,7 +3,6 @@ dist/
 build/
 docs/
 tests/
-frontend/
 designer/
 storage/
 .tmp/
