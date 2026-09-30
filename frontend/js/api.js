@@ -37,6 +37,10 @@ function shouldUseLocalNodeForCamera(payload = {}) {
   return isHostedFrontend && ["rtsp", "ip_camera"].includes(String(payload.source_type || "").toLowerCase());
 }
 
+function shouldUseLocalNodeCameraId(cameraId = "") {
+  return isHostedFrontend && String(cameraId || "").startsWith("local_");
+}
+
 async function requestLocalNodeJson(path, options = {}) {
   const response = await fetch(`${localNodeApiBaseUrl}${path}`, {
     ...options,
@@ -525,6 +529,12 @@ export async function deleteZone(zoneId) {
 }
 
 export async function deleteCamera(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    await requestLocalNodeJson(`/cameras/${cameraId}`, {
+      method: "DELETE",
+    });
+    return;
+  }
   assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/cameras/${cameraId}`, {
     method: "DELETE",
@@ -537,12 +547,18 @@ export async function deleteCamera(cameraId) {
 }
 
 export function testCamera(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/health`);
+  }
   return requestJson(`/cameras/${cameraId}/test`, {
     method: "POST",
   });
 }
 
 export function getCameraHealth(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/health`);
+  }
   return requestJson(`/cameras/${cameraId}/health`);
 }
 
@@ -551,18 +567,27 @@ export function getCameraDiagnostics(cameraId) {
 }
 
 export function startVision(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/start`, { method: "POST" });
+  }
   return requestJson(`/cameras/${cameraId}/vision/start`, {
     method: "POST",
   });
 }
 
 export function restartVision(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/restart`, { method: "POST" });
+  }
   return requestJson(`/cameras/${cameraId}/vision/restart`, {
     method: "POST",
   });
 }
 
 export function stopVision(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/stop`, { method: "POST" });
+  }
   return requestJson(`/cameras/${cameraId}/vision/stop`, {
     method: "POST",
   });
@@ -581,10 +606,16 @@ export function stopMapping(cameraId) {
 }
 
 export function getVisionStatus(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/status`);
+  }
   return requestJson(`/cameras/${cameraId}/vision/status`);
 }
 
 export function getVisionObjects(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/objects`);
+  }
   return requestJson(`/cameras/${cameraId}/vision/objects`);
 }
 
@@ -597,6 +628,9 @@ export function getCameraProductivity(cameraId) {
 }
 
 export function getStreamInfo(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return Promise.resolve({ mode: "mjpeg", available: true });
+  }
   return requestJson(`/cameras/${cameraId}/stream/info`);
 }
 
