@@ -86,5 +86,8 @@ class SyncService:
     def _run(self) -> None:
         while not self._stop.is_set():
             if self.cloud_client.is_configured() and self.settings.cloud_token:
-                self.sync_once()
+                try:
+                    self.sync_once()
+                except Exception:
+                    logger.exception("Outbound sync failed")
             self._stop.wait(self.settings.sync_interval_seconds)

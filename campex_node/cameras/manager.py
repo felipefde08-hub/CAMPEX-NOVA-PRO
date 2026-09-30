@@ -33,16 +33,20 @@ class CameraManager:
             current = dict(self._cameras)
         for camera_id, camera in desired.items():
             previous = current.get(camera_id)
-            changed = previous != camera
+            # Name or vision toggles must not drop the live RTSP session.
+            source_changed = previous is None or previous.rtsp_url != camera.rtsp_url
             with self._lock:
                 self._cameras[camera_id] = camera
+                worker = self._workers.get(camera_id)
             if not camera.enabled:
                 self.stop_camera(camera_id)
-            elif changed:
+            elif source_changed:
                 self.stop_camera(camera_id)
                 self.start_camera(camera_id)
-            elif camera_id not in self._workers:
+            elif worker is None or not worker.is_alive():
                 self.start_camera(camera_id)
+            else:
+                worker.camera = camera
         with self._lock:
             self._cameras = desired
 
@@ -64,9 +68,13 @@ class CameraManager:
 
     def stop(self) -> None:
         with self._lock:
-            camera_ids = list(self._workers)
-        for camera_id in camera_ids:
-            self.stop_camera(camera_id)
+            workers = list(self._workers.values())
+            self._workers.clear()
+        # Signal every worker first so slow RTSP shutdowns overlap.
+        for worker in workers:
+            worker.request_stop()
+        for worker in workers:
+            worker.join()
 
     def configs(self) -> list[NodeCameraConfig]:
         with self._lock:

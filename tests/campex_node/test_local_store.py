@@ -30,3 +30,18 @@ def test_local_store_tracks_outbound_retry_and_synced_state(tmp_path):
 
     store.mark_outbound_synced(item_id)
     assert store.outbound_queue_size() == 0
+
+
+def test_local_store_prunes_oldest_pending_and_old_synced_items(tmp_path):
+    store = LocalStore(tmp_path / "node.sqlite3")
+    store.initialize()
+    for index in range(5):
+        store.enqueue_event("metric", {"n": index}, event_id=f"metric_{index}")
+    store.mark_outbound_synced("metric_0")
+
+    removed = store.prune_outbound(max_pending=2, synced_retention_seconds=0)
+
+    assert removed == 3
+    assert store.outbound_queue_size() == 2
+    assert [item["id"] for item in store.pending_outbound()] == ["metric_3", "metric_4"]
+    assert store.outbound_summary()["synced"] == 0

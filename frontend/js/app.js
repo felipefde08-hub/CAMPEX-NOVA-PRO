@@ -890,9 +890,17 @@ async function loadVideoWall() {
 }
 
 function videoWallTile(camera) {
-  const media = camera.source_type === "video_file"
-    ? `<video class="wall-media" src="${cameraVideoUrl(camera.id)}" autoplay muted playsinline loop></video>`
-    : `<img class="wall-media" src="${cameraStreamUrl(camera.id)}" alt="${camera.name}" />`;
+  let media;
+  if (String(camera.id).startsWith("local_")) {
+    // Node cameras are served by the local Node, never by the Cloud API.
+    media = canEmbedLocalNodeMedia()
+      ? `<img class="wall-media" src="${localNodeStreamUrl(camera.id)}" alt="${escapeHtml(camera.name)}" />`
+      : `<div class="media-placeholder"><a class="primary-action" href="${localNodeLiveUrl(camera.id)}" target="_blank" rel="noopener">Abrir no painel local</a></div>`;
+  } else if (camera.source_type === "video_file") {
+    media = `<video class="wall-media" src="${cameraVideoUrl(camera.id)}" autoplay muted playsinline loop></video>`;
+  } else {
+    media = `<img class="wall-media" src="${cameraStreamUrl(camera.id)}" alt="${camera.name}" />`;
+  }
   return `
     <article class="wall-tile">
       <header>
@@ -1117,6 +1125,7 @@ function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) 
   const mediaHost = document.querySelector("#live-media-host");
   if (!mediaHost) return;
   mediaHost.dataset.localFrames = String(hasFrames);
+  mediaHost.dataset.localMessage = fallbackMessage;
   if (!canEmbedLocalNodeMedia()) {
     mediaHost.innerHTML = `
       <div class="media-placeholder">
@@ -1131,7 +1140,7 @@ function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) 
     mediaHost.innerHTML = `<div class="media-placeholder">${escapeHtml(fallbackMessage)}</div>`;
     return;
   }
-  const streamUrl = `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(camera.id)}/stream?t=${Date.now()}`;
+  const streamUrl = localNodeStreamUrl(camera.id);
   mediaHost.innerHTML = `
     <img
       id="live-node-stream"
@@ -1142,8 +1151,14 @@ function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) 
     <div class="node-stream-hint">Stream via CAMPEX Node local - ${escapeHtml(fallbackMessage || "backend de vídeo indisponível")}</div>
   `;
   mediaHost.querySelector("img").addEventListener("error", () => {
+    // Mark as frameless so the next status refresh reopens the stream.
+    mediaHost.dataset.localFrames = "false";
     renderMediaPlaceholder("Aguardando frames do CAMPEX Node local. Verifique se o Node está aberto em http://127.0.0.1:8787 e se a câmera está online.");
   });
+}
+
+function localNodeStreamUrl(cameraId) {
+  return `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(cameraId)}/stream?t=${Date.now()}`;
 }
 
 function canEmbedLocalNodeMedia() {
@@ -1341,8 +1356,11 @@ async function refreshLiveStatus() {
     if (cameraId.startsWith("local_")) {
       const mediaHost = document.querySelector("#live-media-host");
       const hasFrames = health.status !== "OFFLINE" && Number(health.frames_received || 0) > 0;
-      if (mediaHost?.dataset.localFrames && mediaHost.dataset.localFrames !== String(hasFrames)) {
-        renderNodeMjpegElement({ id: cameraId }, health.last_error || "Aguardando imagem da camera.", hasFrames);
+      const message = health.last_error || "Aguardando imagem da camera.";
+      const framesChanged = mediaHost?.dataset.localFrames && mediaHost.dataset.localFrames !== String(hasFrames);
+      const messageChanged = !hasFrames && mediaHost?.dataset.localMessage !== message;
+      if (framesChanged || messageChanged) {
+        renderNodeMjpegElement({ id: cameraId }, message, hasFrames);
       }
     }
     // Apenas atualiza os elementos de status, nunca re-renderiza a mídia

@@ -125,6 +125,7 @@ class NodeSettings:
     camera_read_timeout_ms: int = 3000
     vision_interval_seconds: float = 0.35
     vision_confidence: float = 0.35
+    outbound_max_pending: int = 5000
     cameras: tuple[NodeCameraConfig, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -164,6 +165,7 @@ class NodeSettings:
             camera_read_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_READ_TIMEOUT_MS", 3000),
             vision_interval_seconds=_env_float("CAMPEX_NODE_VISION_INTERVAL_SECONDS", 0.35),
             vision_confidence=_env_float("CAMPEX_NODE_VISION_CONFIDENCE", 0.35),
+            outbound_max_pending=_env_int("CAMPEX_NODE_QUEUE_MAX_ITEMS", 5000),
             cameras=tuple(_load_camera_configs()),
         )
 
@@ -186,6 +188,8 @@ class NodeSettings:
             raise ValueError("CAMPEX_NODE_VISION_INTERVAL_SECONDS must be greater than zero.")
         if not 0.0 <= self.vision_confidence <= 1.0:
             raise ValueError("CAMPEX_NODE_VISION_CONFIDENCE must be between 0 and 1.")
+        if self.outbound_max_pending < 1:
+            raise ValueError("CAMPEX_NODE_QUEUE_MAX_ITEMS must be at least 1.")
 
 
 def _load_camera_configs() -> list[NodeCameraConfig]:

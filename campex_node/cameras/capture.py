@@ -5,24 +5,36 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from backend.cameras.security import sanitize_error_message
 from backend.cameras.base import CameraConfig, CameraSource
-from backend.cameras.factory import create_camera_source
+from backend.cameras.opencv_source import RTSPSource
 
-from campex_node.core.config import NodeCameraConfig
+from campex_node.core.config import NodeCameraConfig, NodeSettings
 
 
-def create_rtsp_source(camera: NodeCameraConfig) -> CameraSource:
-    return create_camera_source(
+def create_rtsp_source(camera: NodeCameraConfig, settings: NodeSettings | None = None) -> CameraSource:
+    timeouts = {}
+    if settings is not None:
+        timeouts = {
+            "open_timeout_ms": settings.camera_open_timeout_ms,
+            "read_timeout_ms": settings.camera_read_timeout_ms,
+        }
+    return RTSPSource(
         CameraConfig(
             id=camera.id,
             source_type="rtsp",
             source_uri=camera.rtsp_url,
-        )
+        ),
+        **timeouts,
     )
 
 
-def test_rtsp_connection(rtsp_url: str, *, timeout_seconds: float = 12.0) -> dict:
+def test_rtsp_connection(
+    rtsp_url: str,
+    *,
+    settings: NodeSettings | None = None,
+    timeout_seconds: float = 12.0,
+) -> dict:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="campex-node-camera-test")
-    future = executor.submit(_test_rtsp_connection_sync, rtsp_url)
+    future = executor.submit(_test_rtsp_connection_sync, rtsp_url, settings)
     try:
         return future.result(timeout=timeout_seconds)
     except FutureTimeoutError:
@@ -43,14 +55,14 @@ def test_rtsp_connection(rtsp_url: str, *, timeout_seconds: float = 12.0) -> dic
         executor.shutdown(wait=False, cancel_futures=True)
 
 
-def _test_rtsp_connection_sync(rtsp_url: str) -> dict:
+def _test_rtsp_connection_sync(rtsp_url: str, settings: NodeSettings | None = None) -> dict:
     camera = NodeCameraConfig(
         id="test_connection",
         name="Teste RTSP",
         rtsp_url=rtsp_url,
         enabled=False,
     )
-    source = create_rtsp_source(camera)
+    source = create_rtsp_source(camera, settings)
     started_at = time.monotonic()
     try:
         connected = source.connect()

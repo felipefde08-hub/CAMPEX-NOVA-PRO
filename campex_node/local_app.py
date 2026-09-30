@@ -122,7 +122,7 @@ class LocalNodeRuntime:
             vision_enabled=bool(payload.vision_enabled),
         )
         self.lifecycle.store.save_local_camera(camera)
-        self._restart_with_persisted_connection()
+        self._upsert_camera_config(camera)
         return self._camera_response(camera)
 
     def update_camera(self, camera_id: str, payload: LocalCameraPayload) -> dict:
@@ -139,12 +139,27 @@ class LocalNodeRuntime:
             vision_enabled=current.vision_enabled if payload.vision_enabled is None else bool(payload.vision_enabled),
         )
         self.lifecycle.store.save_local_camera(camera)
-        self._restart_with_persisted_connection()
+        self._upsert_camera_config(camera)
         return self._camera_response(camera)
 
     def delete_camera(self, camera_id: str) -> None:
         self.lifecycle.store.delete_local_camera(camera_id)
-        self._restart_with_persisted_connection()
+        cameras = [camera for camera in self.lifecycle.camera_manager.configs() if camera.id != camera_id]
+        self._apply_camera_configs(cameras)
+
+    def _upsert_camera_config(self, camera: NodeCameraConfig) -> None:
+        cameras = {item.id: item for item in self.lifecycle.camera_manager.configs()}
+        cameras[camera.id] = camera
+        self._apply_camera_configs(list(cameras.values()))
+
+    def _apply_camera_configs(self, cameras: list[NodeCameraConfig]) -> None:
+        # Only the affected camera workers restart; a full lifecycle restart
+        # would drop every live stream and could leave RTSP sessions open.
+        settings = replace(self.lifecycle.settings, cameras=tuple(cameras))
+        self.lifecycle.settings = settings
+        if self.lifecycle.config_sync is not None:
+            self.lifecycle.config_sync.settings = settings
+        self.lifecycle.camera_manager.apply_configs(cameras)
 
     def test_camera(self, payload: CameraTestPayload) -> dict:
         from campex_node.cameras.capture import test_rtsp_connection
@@ -152,7 +167,7 @@ class LocalNodeRuntime:
         rtsp_url = (payload.rtsp_url or payload.source_uri or "").strip()
         if not rtsp_url:
             return {"ok": False, "success": False, "status": "OFFLINE", "error": "RTSP URL is required."}
-        result = test_rtsp_connection(rtsp_url)
+        result = test_rtsp_connection(rtsp_url, settings=self.lifecycle.settings)
         return result
 
     def cameras(self) -> list[dict]:
@@ -262,7 +277,7 @@ class LocalNodeRuntime:
                 (item for item in self.lifecycle.camera_manager.summary()["cameras"] if item["id"] == camera.id),
                 None,
             )
-        status = (state or {}).get("status") or ("ONLINE" if camera.enabled else "OFFLINE")
+        status = (state or {}).get("status") or ("CONNECTING" if camera.enabled else "OFFLINE")
         health = {
             "status": status,
             "last_successful_frame": (state or {}).get("last_frame_at"),
@@ -301,8 +316,7 @@ class LocalNodeRuntime:
             vision_enabled=enabled,
         )
         self.lifecycle.store.save_local_camera(updated)
-        cameras[camera_id] = updated
-        self.lifecycle.camera_manager.apply_configs(list(cameras.values()))
+        self._upsert_camera_config(updated)
         if self.lifecycle.vision is None:
             return {"camera_id": camera_id, "status": "DISABLED", "enabled": enabled}
         return self.lifecycle.vision.status(camera_id)
@@ -535,12 +549,6 @@ class LocalNodeRuntime:
         os.environ["CAMPEX_NODE_TOKEN"] = settings.cloud_token or ""
         os.environ["CAMPEX_NODE_ORGANIZATION_ID"] = settings.organization_id or ""
         return build_lifecycle(settings)
-
-    def _restart_with_persisted_connection(self) -> None:
-        self.lifecycle.stop()
-        self.lifecycle = self._build_from_persisted_connection()
-        self.lifecycle.initialize()
-        self.lifecycle.start()
 
 
 def create_app() -> FastAPI:

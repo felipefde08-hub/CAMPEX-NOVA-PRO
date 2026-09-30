@@ -32,16 +32,21 @@ class OpenCVCameraSource(CameraSource):
         capture_target: int | str,
         *,
         prefer_ffmpeg: bool = False,
+        open_timeout_ms: int = 5000,
+        read_timeout_ms: int = 5000,
     ) -> None:
         super().__init__(config)
         self.capture_target = capture_target
         self.prefer_ffmpeg = prefer_ffmpeg
+        self.open_timeout_ms = open_timeout_ms
+        self.read_timeout_ms = read_timeout_ms
         self.capture: cv2.VideoCapture | None = None
         self._health = CameraHealth(
             camera_id=config.id,
             status=CameraStatus.OFFLINE,
         )
         self._first_frame_logged = False
+        self._pending_frame = None
 
     def connect(self) -> bool:
         self.close()
@@ -85,6 +90,8 @@ class OpenCVCameraSource(CameraSource):
             )
             return False
 
+        # Hand the validation frame to the next read() instead of dropping it.
+        self._pending_frame = frame_result.frame
         self._health.status = CameraStatus.ONLINE
         self._health.connection_state = CameraStatus.ONLINE.value
         self._health.last_connected_at = utc_now()
@@ -103,6 +110,10 @@ class OpenCVCameraSource(CameraSource):
             self._health.last_disconnected_at = utc_now()
             self._health.last_error = "Capture is not open."
             return FrameResult(success=False, error=self._health.last_error)
+
+        if self._pending_frame is not None:
+            frame, self._pending_frame = self._pending_frame, None
+            return FrameResult(success=True, frame=frame)
 
         success, frame = self.capture.read()
         if not success or frame is None or getattr(frame, "size", 0) == 0:
@@ -142,6 +153,7 @@ class OpenCVCameraSource(CameraSource):
         return self.connect()
 
     def close(self) -> None:
+        self._pending_frame = None
         if self.capture is not None:
             self.capture.release()
             self.capture = None
@@ -157,14 +169,23 @@ class OpenCVCameraSource(CameraSource):
     def _configure_capture(self, capture: cv2.VideoCapture) -> None:
         try:
             capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            capture.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)
-            capture.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 3000)
         except Exception:
-            logger.debug("OpenCV timeout properties are not available.")
+            logger.debug("OpenCV buffer size property is not available.")
 
     def _open_capture(self) -> cv2.VideoCapture:
         if self.prefer_ffmpeg and isinstance(self.capture_target, str):
-            return cv2.VideoCapture(self.capture_target, cv2.CAP_FFMPEG)
+            # Timeouts only take effect when passed at open time; setting them
+            # afterwards leaves FFmpeg on its ~30s default and blocks workers.
+            params = [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+                self.open_timeout_ms,
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+                self.read_timeout_ms,
+            ]
+            try:
+                return cv2.VideoCapture(self.capture_target, cv2.CAP_FFMPEG, params)
+            except TypeError:
+                return cv2.VideoCapture(self.capture_target, cv2.CAP_FFMPEG)
         return cv2.VideoCapture(self.capture_target)
 
     def _prepare_backend(self) -> None:
@@ -215,8 +236,20 @@ class VideoFileSource(OpenCVCameraSource):
 
 
 class RTSPSource(OpenCVCameraSource):
-    def __init__(self, config: CameraConfig) -> None:
-        super().__init__(config, config.source_uri, prefer_ffmpeg=True)
+    def __init__(
+        self,
+        config: CameraConfig,
+        *,
+        open_timeout_ms: int = 5000,
+        read_timeout_ms: int = 5000,
+    ) -> None:
+        super().__init__(
+            config,
+            config.source_uri,
+            prefer_ffmpeg=True,
+            open_timeout_ms=open_timeout_ms,
+            read_timeout_ms=read_timeout_ms,
+        )
 
     def connect(self) -> bool:
         parsed = urlsplit(self.config.source_uri)

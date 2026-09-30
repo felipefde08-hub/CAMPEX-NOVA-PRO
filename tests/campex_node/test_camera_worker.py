@@ -78,3 +78,47 @@ def test_camera_worker_reconnects_without_exposing_rtsp_credentials(tmp_path):
     assert source.closed is True
     assert source.reconnects >= 1
     assert worker.state().last_error in {None, "rtsp://***:***@192.168.1.10/stream failed"}
+
+
+class CountingWorker:
+    instances = []
+
+    def __init__(self, camera, settings):
+        self.camera = camera
+        self.stopped = False
+        CountingWorker.instances.append(self)
+
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return not self.stopped
+
+    def request_stop(self):
+        self.stopped = True
+
+    def join(self):
+        pass
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_camera_manager_keeps_stream_when_only_vision_changes(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from campex_node.cameras import manager as manager_module
+
+    CountingWorker.instances = []
+    monkeypatch.setattr(manager_module, "CameraWorker", CountingWorker)
+    camera = NodeCameraConfig(id="cam_1", name="Cam", rtsp_url="rtsp://host/a")
+    manager = manager_module.CameraManager(replace(make_settings(tmp_path), cameras=(camera,)))
+    manager.start()
+
+    manager.apply_configs([replace(camera, vision_enabled=True, name="Cam renamed")])
+    assert len(CountingWorker.instances) == 1
+    assert CountingWorker.instances[0].camera.name == "Cam renamed"
+
+    manager.apply_configs([replace(camera, rtsp_url="rtsp://host/b")])
+    assert len(CountingWorker.instances) == 2
+    assert CountingWorker.instances[0].stopped is True
