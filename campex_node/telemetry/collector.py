@@ -65,6 +65,9 @@ class TelemetryCollector:
                 events += 1
         if metrics or events:
             logger.debug("Telemetry queued", extra={"metrics": metrics, "events": events})
+        removed = self.store.prune_outbound(max_pending=self.settings.outbound_max_pending)
+        if removed:
+            logger.info("Pruned %s outbound item(s) to keep the local queue bounded", removed)
         return {"metrics": metrics, "events": events}
 
     def _metric_payloads(self, state: dict[str, Any], captured_at: str) -> list[dict[str, Any]]:

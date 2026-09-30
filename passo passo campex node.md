@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 Resultado esperado:
 
 ```text
-dist\CAMPEX-Node\CAMPEX-Node.exe
+dist\CampexNode\CampexNode.exe
 ```
 
 O build usa PyInstaller em modo `onedir`, sem console visivel.
@@ -78,13 +78,13 @@ O build usa PyInstaller em modo `onedir`, sem console visivel.
 Abrir manualmente:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe
+dist\CampexNode\CampexNode.exe
 ```
 
 Executar em background:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8787
+dist\CampexNode\CampexNode.exe --no-browser --host 127.0.0.1 --port 8787
 ```
 
 A interface local fica em:
@@ -93,6 +93,14 @@ A interface local fica em:
 http://127.0.0.1:8787
 ```
 
+Em desenvolvimento, prefira iniciar com o script abaixo para evitar erro por Node antigo ainda preso na porta `8787`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\packaging\windows\start_node_local.ps1
+```
+
+Ele encerra qualquer processo antigo escutando a porta `8787` e sobe o Node atual do repositorio.
+
 ## 5.1. Usar o frontend local com o Node
 
 Enquanto nao houver backend Cloud, use o frontend da pasta `frontend/` apontando para o Node local.
@@ -100,7 +108,13 @@ Enquanto nao houver backend Cloud, use o frontend da pasta `frontend/` apontando
 1. Inicie o Node:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8787
+dist\CampexNode\CampexNode.exe --no-browser --host 127.0.0.1 --port 8787
+```
+
+Ou, durante o desenvolvimento:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\packaging\windows\start_node_local.ps1
 ```
 
 2. Abra `frontend/index.html` pelo Live Server.
@@ -121,13 +135,15 @@ http://127.0.0.1:8787/api
 - consultar health;
 - abrir snapshot/stream quando houver frame.
 
-Se o navegador ainda tentar chamar `campexback.vercel.app`, limpe o `localStorage` do site no DevTools ou abra com:
+Se o navegador ainda tentar chamar um backend antigo, limpe o `localStorage` do site no DevTools ou abra com:
 
 ```text
 http://127.0.0.1:5500/frontend/index.html?api=http://127.0.0.1:8787/api
 ```
 
 No modo local sem CAMPEX Cloud, o codigo gerado na tela do Node nao autoriza nada na nuvem. Ele serve apenas para manter o fluxo preparado para quando a Cloud voltar. Para testar cameras agora, mantenha o Node rodando em `127.0.0.1:8787` e use o frontend local apontando para `http://127.0.0.1:8787/api`.
+
+Na tela `Configuracoes > Nodes` do frontend local, o botao `Adicionar Node` chama o proprio Node local em `/api/nodes/pair/request`. Se aparecer erro de CORS ou `422`, pare o Node antigo, rode `git pull`, reinicie o Node e, se estiver usando executavel, gere o build novamente.
 
 ## 6. Instalar como tarefa agendada
 
@@ -143,7 +159,7 @@ Remover a tarefa:
 powershell -ExecutionPolicy Bypass -File packaging\windows\uninstall_task.ps1
 ```
 
-A tarefa usa o executavel se ele existir em `dist\CAMPEX-Node\CAMPEX-Node.exe`.
+A tarefa usa o executavel se ele existir em `dist\CampexNode\CampexNode.exe`.
 Caso contrario, pode usar o Python de desenvolvimento informado pelo parametro `-Python`.
 
 ## 7. Pareamento com CAMPEX Cloud
@@ -210,6 +226,6 @@ python -m campex_node.main --once
 Smoke test do executavel:
 
 ```powershell
-dist\CAMPEX-Node\CAMPEX-Node.exe --no-browser --host 127.0.0.1 --port 8799
+dist\CampexNode\CampexNode.exe --no-browser --host 127.0.0.1 --port 8799
 Invoke-RestMethod http://127.0.0.1:8799/api/status
 ```

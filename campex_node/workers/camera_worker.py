@@ -28,7 +28,7 @@ class CameraWorker:
     ) -> None:
         self.camera = camera
         self.settings = settings
-        self.source = source or create_rtsp_source(camera)
+        self.source = source or create_rtsp_source(camera, settings)
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
@@ -42,20 +42,26 @@ class CameraWorker:
         if not self._thread.is_alive():
             self._thread.start()
 
-    def stop(self) -> None:
+    def request_stop(self) -> None:
         self._stop.set()
+
+    def join(self) -> None:
+        # The capture is closed by the worker thread itself: releasing it from
+        # here while read() is blocked in FFmpeg can crash the process.
         if self._thread.is_alive():
-            self._thread.join(timeout=STOP_JOIN_TIMEOUT_SECONDS)
+            self._thread.join(timeout=self._stop_timeout_seconds())
         if self._thread.is_alive():
-            # Releasing the capture while the thread is inside read() crashes
-            # the process (native SIGTRAP/SIGSEGV). _run closes the source
-            # itself once the pending read returns.
-            logger.warning(
-                "Camera worker did not stop before timeout; it will close the camera when its read returns",
-                extra={"camera_id": self.camera.id},
-            )
-            return
-        self.source.close()
+            logger.warning("Camera worker did not stop before timeout", extra={"camera_id": self.camera.id})
+        elif not self._thread.ident:
+            self.source.close()
+
+    def stop(self) -> None:
+        self.request_stop()
+        self.join()
+
+    def _stop_timeout_seconds(self) -> float:
+        # Worst case is a connect in progress: TCP probe + open + first read.
+        return 2.0 + (self.settings.camera_open_timeout_ms + self.settings.camera_read_timeout_ms) / 1000 + 1.0
 
     def is_alive(self) -> bool:
         return self._thread.is_alive()

@@ -88,6 +88,9 @@ class ConfigSyncService:
             )
         cameras_by_id = {camera.id: camera for camera in self.settings.cameras}
         cameras_by_id.update({camera.id: camera for camera in remote_cameras})
+        if self.store is not None:
+            # Local overrides (e.g. vision toggled on this Node) win over the Cloud copy.
+            cameras_by_id.update({camera.id: camera for camera in self.store.get_local_cameras()})
         cameras = list(cameras_by_id.values())
         self.camera_manager.apply_configs(cameras)
         # A cloud without the "zones" key predates zone sync; keep local zones.
@@ -105,5 +108,8 @@ class ConfigSyncService:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self.sync_once()
+            try:
+                self.sync_once()
+            except Exception:
+                logger.exception("Config sync loop failed")
             self._stop.wait(self.settings.config_sync_interval_seconds)

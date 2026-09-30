@@ -126,6 +126,9 @@ class NodeSettings:
     camera_read_failure_limit: int = 3
     camera_open_timeout_ms: int = 3000
     camera_read_timeout_ms: int = 3000
+    vision_interval_seconds: float = 0.35
+    vision_confidence: float = 0.35
+    outbound_max_pending: int = 5000
     cameras: tuple[NodeCameraConfig, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -139,7 +142,7 @@ class NodeSettings:
         ).resolve()
         return cls(
             environment=os.getenv("CAMPEX_NODE_ENV", os.getenv("CAMPEX_ENV", "development")),
-            version=os.getenv("CAMPEX_NODE_VERSION", "0.1.0"),
+            version=os.getenv("CAMPEX_NODE_VERSION", "0.2.0"),
             log_level=os.getenv("CAMPEX_NODE_LOG_LEVEL", os.getenv("CAMPEX_LOG_LEVEL", "INFO")),
             data_dir=data_dir,
             database_path=database_path,
@@ -163,6 +166,9 @@ class NodeSettings:
             camera_read_failure_limit=_env_int("CAMPEX_NODE_CAMERA_READ_FAILURE_LIMIT", 3),
             camera_open_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_OPEN_TIMEOUT_MS", 3000),
             camera_read_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_READ_TIMEOUT_MS", 3000),
+            vision_interval_seconds=_env_float("CAMPEX_NODE_VISION_INTERVAL_SECONDS", 0.35),
+            vision_confidence=_env_float("CAMPEX_NODE_VISION_CONFIDENCE", 0.35),
+            outbound_max_pending=_env_int("CAMPEX_NODE_QUEUE_MAX_ITEMS", 5000),
             cameras=tuple(_load_camera_configs()),
         )
 
@@ -181,6 +187,12 @@ class NodeSettings:
             raise ValueError("CAMPEX_NODE_CAMERA_READ_FAILURE_LIMIT must be at least 1.")
         if self.camera_open_timeout_ms <= 0 or self.camera_read_timeout_ms <= 0:
             raise ValueError("Camera timeout values must be greater than zero.")
+        if self.vision_interval_seconds <= 0:
+            raise ValueError("CAMPEX_NODE_VISION_INTERVAL_SECONDS must be greater than zero.")
+        if not 0.0 <= self.vision_confidence <= 1.0:
+            raise ValueError("CAMPEX_NODE_VISION_CONFIDENCE must be between 0 and 1.")
+        if self.outbound_max_pending < 1:
+            raise ValueError("CAMPEX_NODE_QUEUE_MAX_ITEMS must be at least 1.")
 
 
 def _load_camera_configs() -> list[NodeCameraConfig]:

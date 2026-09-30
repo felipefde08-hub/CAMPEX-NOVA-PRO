@@ -71,5 +71,9 @@ class HeartbeatService:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self.send_once()
+            try:
+                self.send_once()
+            except Exception:
+                # e.g. "database or disk is full": keep the loop alive for recovery.
+                logger.exception("Heartbeat failed")
             self._stop.wait(self.settings.heartbeat_interval_seconds)

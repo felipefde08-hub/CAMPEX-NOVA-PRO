@@ -4,9 +4,10 @@ CAMPEX Node is the local, long-running service that stays inside the customer's
 network. It connects to existing RTSP cameras, keeps camera workers alive, stores
 temporary data locally, and prepares heartbeat communication with CAMPEX Cloud.
 
-This version does not run AI models. It only builds the runtime foundation:
-configuration, logging, node identity, camera capture, reconnects, local SQLite
-storage, heartbeat delivery, sync outbox, and operational telemetry.
+This version runs a lightweight offline Edge Vision loop using OpenCV HOG for
+person detection. It also includes the runtime foundation: configuration,
+logging, node identity, camera capture, reconnects, local SQLite storage,
+heartbeat delivery, sync outbox, and operational telemetry.
 
 ## Configuration
 
@@ -30,7 +31,7 @@ export CAMPEX_NODE_CAMERAS_JSON='[
 Optional Cloud settings:
 
 ```bash
-export CAMPEX_NODE_CLOUD_URL="https://campexback.vercel.app/api/v1"
+export CAMPEX_NODE_CLOUD_URL=""
 export CAMPEX_NODE_ID="node_a81f28"
 export CAMPEX_NODE_TOKEN="token_privado_do_node"
 export CAMPEX_NODE_ORGANIZATION_ID="default"
@@ -64,6 +65,26 @@ python -m campex_node.main --app
 `--once` initializes the node, sends one heartbeat attempt, prints the payload,
 and stops. Running without `--once` keeps the service alive for 24/7 operation.
 `--app` opens the lightweight local app at `http://127.0.0.1:8787`.
+
+## Offline Edge Vision
+
+The local Node can process camera frames without internet access when a camera
+has `vision_enabled` set to `true`. The first offline detector is intentionally
+lightweight:
+
+- Detector: OpenCV HOG person detector
+- Device: CPU
+- Network/API dependency: none
+- Overlay: `GET /api/cameras/{camera_id}/stream?overlay=true`
+
+Useful local endpoints:
+
+```text
+POST /api/cameras/{camera_id}/vision/start
+POST /api/cameras/{camera_id}/vision/stop
+GET  /api/cameras/{camera_id}/vision/status
+GET  /api/cameras/{camera_id}/vision/objects
+```
 
 ## Cloud Behavior
 
@@ -111,6 +132,8 @@ never prints camera credentials, API keys or tokens intentionally.
 Service-ready packaging files are available in `packaging/`:
 
 - macOS LaunchAgent: `packaging/macos/install_launch_agent.sh`
+- macOS status helper: `packaging/macos/status_launch_agent.sh`
+- macOS package build: `packaging/macos/build.sh`
 - Linux systemd: `packaging/linux/install_systemd.sh`
 - Windows Scheduled Task: `packaging/windows/install_task.ps1`
 

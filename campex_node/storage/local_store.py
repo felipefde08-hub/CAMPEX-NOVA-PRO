@@ -129,6 +129,7 @@ class LocalStore:
                 "name": item.name,
                 "rtsp_url": item.rtsp_url,
                 "enabled": item.enabled,
+                "vision_enabled": item.vision_enabled,
             }
             for item in sorted(camera_items, key=lambda item: item.name.lower())
         ]
@@ -230,6 +231,32 @@ class LocalStore:
                 (error[:1000], next_attempt, now, item_id),
             )
             connection.commit()
+
+    def prune_outbound(self, *, max_pending: int, synced_retention_seconds: float = 86400.0) -> int:
+        """Bound the outbox so an unpaired or long-offline Node cannot fill the disk."""
+        cutoff = datetime.fromtimestamp(
+            datetime.now(timezone.utc).timestamp() - max(0.0, synced_retention_seconds),
+            tz=timezone.utc,
+        ).isoformat()
+        with self._connect() as connection:
+            removed = connection.execute(
+                "DELETE FROM outbound_events WHERE status = 'synced' AND synced_at < ?",
+                (cutoff,),
+            ).rowcount
+            removed += connection.execute(
+                """
+                DELETE FROM outbound_events
+                WHERE id IN (
+                    SELECT id FROM outbound_events
+                    WHERE status = 'pending'
+                    ORDER BY created_at DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (max(0, max_pending),),
+            ).rowcount
+            connection.commit()
+        return removed
 
     def outbound_queue_size(self) -> int:
         with self._connect() as connection:

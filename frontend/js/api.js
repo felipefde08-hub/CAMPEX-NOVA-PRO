@@ -2,13 +2,175 @@ import { createMediaUrl } from "./media-auth.js";
 import { getApiToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
 const localApiBaseUrl = "http://127.0.0.1:8787/api";
+const localNodeApiBaseUrl = "http://127.0.0.1:8787/api";
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+const isHttpFrontend = ["http:", "https:"].includes(window.location.protocol);
+const isHostedFrontend = isHttpFrontend && window.location.protocol === "https:" && !isLocalFrontend;
 const storedApiBaseUrl = localStorage.getItem("campex.backend_url") || "";
 const configuredApiBaseUrl = window.CAMPEX_API_BASE_URL || "";
+const usableStoredApiBaseUrl = !isLocalFrontend && isLocalNodeApiBase(storedApiBaseUrl) ? "" : storedApiBaseUrl;
 const API_BASE_URL =
-  (queryApiBaseUrl || configuredApiBaseUrl || (!isLocalFrontend ? storedApiBaseUrl : "") || (isLocalFrontend ? localApiBaseUrl : "")).replace(/\/$/, "");
+  normalizeApiBaseUrl(
+    queryApiBaseUrl ||
+    configuredApiBaseUrl ||
+    (!isLocalFrontend ? usableStoredApiBaseUrl : "") ||
+    (isLocalFrontend ? localApiBaseUrl : "")
+  );
+const isLocalNodeApi = isLocalNodeApiBase(API_BASE_URL);
 
 const mediaUrl = await createMediaUrl(API_BASE_URL, getApiToken);
+
+function normalizeApiBaseUrl(value) {
+  const trimmed = String(value || "").trim().replace(/\/$/, "");
+  if (!trimmed) return "";
+  if (isLocalNodeApiBase(trimmed)) {
+    return trimmed;
+  }
+  return trimmed.endsWith("/api") ? `${trimmed}/v1` : trimmed;
+}
+
+function isLocalNodeApiBase(value) {
+  return /^https?:\/\/(127\.0\.0\.1|localhost):8787\/api\/?$/i.test(String(value || "").trim());
+}
+
+function shouldUseLocalNodeForCamera(payload = {}) {
+  return isHostedFrontend && ["rtsp", "ip_camera"].includes(String(payload.source_type || "").toLowerCase());
+}
+
+function shouldUseLocalNodeCameraId(cameraId = "") {
+  return String(cameraId || "").startsWith("local_");
+}
+
+async function requestLocalNodeJson(path, options = {}) {
+  const response = await fetch(`${localNodeApiBaseUrl}${path}`, {
+    ...options,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    signal: options.signal || AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const body = await response.json();
+      detail = body.detail || body.error || detail;
+    } catch {
+      detail = response.statusText || detail;
+    }
+    throw new Error(detail);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+async function maybeListLocalNodeCameras() {
+  if (!isHostedFrontend || isLocalNodeApi) return [];
+  try {
+    return await requestLocalNodeJson("/cameras", {
+      signal: AbortSignal.timeout(1500),
+    });
+  } catch {
+    return [];
+  }
+}
+
+function localNodeFallback(path) {
+  const cleanPath = path.split("?")[0];
+  const emptySummary = {
+    kpis: {
+      cameras_online: 0,
+      cameras_total: 0,
+      cameras_active: 0,
+      events_open: 0,
+      events_critical: 0,
+      investigations_open: 0,
+    },
+    recent_events: [],
+    areas: [],
+    intelligence: {
+      event_groups: [],
+      triage: [],
+      findings: [],
+      impacts: [],
+      comparisons: {},
+    },
+  };
+  const fallbacks = {
+    "/settings/runtime": {
+      service_name: "CAMPEX Node Local",
+      version: "local",
+      environment: "offline/local",
+      database_url: "SQLite local do Node",
+      vision: { detector: "Edge Vision", device: "CPU", fps: 0, confidence: 0 },
+      camera: { stale_seconds: 30, read_failure_limit: 3 },
+      frontend_origins: ["Frontend local"],
+      log_level: "INFO",
+    },
+    "/operations/summary": emptySummary,
+    "/operations/diagnostics": {
+      sqlite: true,
+      database_path: "Banco local do Node",
+      cameras_online: 0,
+      ia_ativa: 0,
+      zonas_ativas: 0,
+      regras_ativas: 0,
+      eventos_abertos: 0,
+      investigacoes_abertas: 0,
+      disco_livre_percentual: 0,
+      evidence_mb: 0,
+      ultima_entrega: null,
+    },
+    "/operations/productivity": {
+      score: null,
+      counts: { people: 0, signals: 0, machines: 0, cameras: 0, phones: 0 },
+      mapped_machines_total: 0,
+      cameras: [],
+      machine_classes: ["pessoa"],
+      behavior_signals: ["Edge Vision local"],
+    },
+    "/operations/evidence": [],
+    "/operations/rules": [],
+    "/operations/taxonomy": { event_types: [], severities: [], zones: [], actions: [] },
+    "/investigations": [],
+    "/camera-templates": [],
+    "/monitors": [],
+    "/events": [],
+    "/zones": [],
+    "/machines": [],
+    "/videos": [],
+    "/notifications/preferences": {
+      enabled: false,
+      telegram_enabled: false,
+      telegram_chat_id: "",
+      email_enabled: false,
+      email_recipients: [],
+      reports_enabled: false,
+      report_frequency: "DAILY",
+      report_time: "18:00",
+      timezone: "America/Sao_Paulo",
+      immediate_alerts_enabled: false,
+      alert_types: [],
+      email_configured: false,
+      telegram_configured: false,
+    },
+    "/notifications/deliveries": [],
+  };
+  if (cleanPath.endsWith("/diagnostics")) {
+    return { status: "UNKNOWN", checks: [], message: "Diagnostico detalhado indisponivel neste Node." };
+  }
+  if (cleanPath.endsWith("/mapping/poses")) {
+    return [];
+  }
+  if (cleanPath.endsWith("/productivity")) {
+    return { score: null, counts: {}, signals: [], machines: [] };
+  }
+  if (cleanPath.endsWith("/stream/info")) {
+    return { mode: "mjpeg", available: true };
+  }
+  return Object.prototype.hasOwnProperty.call(fallbacks, cleanPath) ? fallbacks[cleanPath] : undefined;
+}
 
 function assertApiBaseUrl() {
   if (!API_BASE_URL) {
@@ -39,12 +201,21 @@ function uploadHeaders(extra = {}) {
 
 async function requestJson(path, options = {}) {
   assertApiBaseUrl();
+  const method = String(options.method || "GET").toUpperCase();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: apiHeaders(options.headers || {}),
   });
 
   if (!response.ok) {
+    const fallback = method === "GET" && response.status === 404 && isLocalNodeApi
+      ? localNodeFallback(path)
+      : undefined;
+    if (fallback !== undefined) {
+      return typeof structuredClone === "function"
+        ? structuredClone(fallback)
+        : JSON.parse(JSON.stringify(fallback));
+    }
     let detail = `HTTP ${response.status}`;
     try {
       const body = await response.json();
@@ -177,11 +348,31 @@ export async function deleteInvestigation(investigationId) {
   }
 }
 
-export function listCameras() {
-  return requestJson("/cameras");
+export async function listCameras() {
+  const [cloudResult, localResult] = await Promise.all([
+    requestJson("/cameras").catch(() => []),
+    maybeListLocalNodeCameras(),
+  ]);
+  const cloudCameras = Array.isArray(cloudResult) ? cloudResult : [];
+  const localCameras = Array.isArray(localResult) ? localResult : [];
+  const merged = new Map();
+  for (const camera of cloudCameras) {
+    if (isHostedFrontend && String(camera.id || "").startsWith("local_")) continue;
+    merged.set(camera.id, camera);
+  }
+  for (const camera of localCameras) {
+    merged.set(camera.id, { ...camera, runtime: "local_node" });
+  }
+  return Array.from(merged.values());
 }
 
 export function createCamera(payload) {
+  if (shouldUseLocalNodeForCamera(payload)) {
+    return requestLocalNodeJson("/cameras", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
   return requestJson("/cameras", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -189,6 +380,12 @@ export function createCamera(payload) {
 }
 
 export function updateCamera(cameraId, payload) {
+  if (shouldUseLocalNodeForCamera(payload)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  }
   return requestJson(`/cameras/${cameraId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
@@ -196,6 +393,12 @@ export function updateCamera(cameraId, payload) {
 }
 
 export function testCameraSource(payload) {
+  if (shouldUseLocalNodeForCamera(payload)) {
+    return requestLocalNodeJson("/cameras/test-source", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
   return requestJson("/cameras/test-source", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -327,6 +530,12 @@ export async function deleteZone(zoneId) {
 }
 
 export async function deleteCamera(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    await requestLocalNodeJson(`/cameras/${cameraId}`, {
+      method: "DELETE",
+    });
+    return;
+  }
   assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/cameras/${cameraId}`, {
     method: "DELETE",
@@ -339,12 +548,18 @@ export async function deleteCamera(cameraId) {
 }
 
 export function testCamera(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/health`);
+  }
   return requestJson(`/cameras/${cameraId}/test`, {
     method: "POST",
   });
 }
 
 export function getCameraHealth(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/health`);
+  }
   return requestJson(`/cameras/${cameraId}/health`);
 }
 
@@ -353,44 +568,66 @@ export function getCameraDiagnostics(cameraId) {
 }
 
 export function startVision(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/start`, { method: "POST" });
+  }
   return requestJson(`/cameras/${cameraId}/vision/start`, {
     method: "POST",
   });
 }
 
 export function restartVision(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/restart`, { method: "POST" });
+  }
   return requestJson(`/cameras/${cameraId}/vision/restart`, {
     method: "POST",
   });
 }
 
 export function stopVision(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/stop`, { method: "POST" });
+  }
   return requestJson(`/cameras/${cameraId}/vision/stop`, {
     method: "POST",
   });
 }
 
 export function startMapping(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return Promise.reject(new Error("Mapeamento indisponivel para cameras do Node local."));
+  }
   return requestJson(`/cameras/${cameraId}/mapping/start`, {
     method: "POST",
   });
 }
 
 export function stopMapping(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return Promise.reject(new Error("Mapeamento indisponivel para cameras do Node local."));
+  }
   return requestJson(`/cameras/${cameraId}/mapping/stop`, {
     method: "POST",
   });
 }
 
 export function getVisionStatus(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/status`);
+  }
   return requestJson(`/cameras/${cameraId}/vision/status`);
 }
 
 export function getVisionObjects(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return requestLocalNodeJson(`/cameras/${cameraId}/vision/objects`);
+  }
   return requestJson(`/cameras/${cameraId}/vision/objects`);
 }
 
 export function getMappingPoses(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) return Promise.resolve([]);
   return requestJson(`/cameras/${cameraId}/mapping/poses`);
 }
 
@@ -399,6 +636,9 @@ export function getCameraProductivity(cameraId) {
 }
 
 export function getStreamInfo(cameraId) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
+    return Promise.resolve({ mode: "mjpeg", available: true });
+  }
   return requestJson(`/cameras/${cameraId}/stream/info`);
 }
 

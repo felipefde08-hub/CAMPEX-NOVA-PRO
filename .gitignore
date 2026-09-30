@@ -38,3 +38,7 @@ nvidia.js
 
 # Third-party reference repositories (own licenses; not part of CAMPEX)
 REPOGIT/
+
+.vercel
+.vercel-backend-deploy-*
+.vercel-front-deploy-*

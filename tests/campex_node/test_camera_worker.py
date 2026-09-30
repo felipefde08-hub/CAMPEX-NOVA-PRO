@@ -134,15 +134,13 @@ def test_camera_worker_stop_waits_for_read_before_closing_camera(tmp_path):
 
 
 def test_camera_worker_stop_timeout_leaves_close_to_the_worker_thread(monkeypatch, tmp_path):
-    import campex_node.workers.camera_worker as camera_worker_module
-
-    monkeypatch.setattr(camera_worker_module, "STOP_JOIN_TIMEOUT_SECONDS", 0.05)
     source = SlowReadSource(read_seconds=0.5)
     worker = CameraWorker(
         NodeCameraConfig(id="cam_slow", name="Slow", rtsp_url="rtsp://192.168.1.10/s"),
         make_settings(tmp_path),
         source=source,
     )
+    monkeypatch.setattr(worker, "_stop_timeout_seconds", lambda: 0.05)
     worker.start()
     source.wait_until_reading()
 
@@ -153,3 +151,47 @@ def test_camera_worker_stop_timeout_leaves_close_to_the_worker_thread(monkeypatc
     worker._thread.join(timeout=2)
     assert source.closed is True
     assert source.closed_during_read is False
+
+
+class CountingWorker:
+    instances = []
+
+    def __init__(self, camera, settings):
+        self.camera = camera
+        self.stopped = False
+        CountingWorker.instances.append(self)
+
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return not self.stopped
+
+    def request_stop(self):
+        self.stopped = True
+
+    def join(self):
+        pass
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_camera_manager_keeps_stream_when_only_vision_changes(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from campex_node.cameras import manager as manager_module
+
+    CountingWorker.instances = []
+    monkeypatch.setattr(manager_module, "CameraWorker", CountingWorker)
+    camera = NodeCameraConfig(id="cam_1", name="Cam", rtsp_url="rtsp://host/a")
+    manager = manager_module.CameraManager(replace(make_settings(tmp_path), cameras=(camera,)))
+    manager.start()
+
+    manager.apply_configs([replace(camera, vision_enabled=True, name="Cam renamed")])
+    assert len(CountingWorker.instances) == 1
+    assert CountingWorker.instances[0].camera.name == "Cam renamed"
+
+    manager.apply_configs([replace(camera, rtsp_url="rtsp://host/b")])
+    assert len(CountingWorker.instances) == 2
+    assert CountingWorker.instances[0].stopped is True

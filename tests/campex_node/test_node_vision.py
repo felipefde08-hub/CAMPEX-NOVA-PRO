@@ -104,7 +104,11 @@ class FakeCameraManager:
 
 
 def test_node_camera_manager_exposes_backend_frame_interface(monkeypatch, tmp_path):
-    monkeypatch.setattr(camera_worker_module, "create_rtsp_source", lambda camera: FrameSource(camera.id))
+    monkeypatch.setattr(
+        camera_worker_module,
+        "create_rtsp_source",
+        lambda camera, settings=None: FrameSource(camera.id),
+    )
     manager = CameraManager(_settings(tmp_path, [_camera("cam_1")]))
     manager.start()
     try:
@@ -127,7 +131,11 @@ def test_node_camera_manager_exposes_backend_frame_interface(monkeypatch, tmp_pa
 def test_real_vision_engine_processes_node_frames(monkeypatch, tmp_path):
     monkeypatch.setenv("VISION_ENABLED", "true")
     monkeypatch.setenv("VISION_DETECTOR", "hog")
-    monkeypatch.setattr(camera_worker_module, "create_rtsp_source", lambda camera: FrameSource(camera.id))
+    monkeypatch.setattr(
+        camera_worker_module,
+        "create_rtsp_source",
+        lambda camera, settings=None: FrameSource(camera.id),
+    )
     manager = CameraManager(_settings(tmp_path, [_camera("cam_1")]))
     vision = NodeVisionService(_settings(tmp_path), manager, poll_seconds=0.1)
     vision.initialize()

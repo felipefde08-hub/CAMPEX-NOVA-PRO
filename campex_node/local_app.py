@@ -10,13 +10,13 @@ from pathlib import Path
 
 import time
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.cameras.security import sanitize_error_message
+from backend.middleware.cors import LocalNetworkCORSMiddleware
 
 from campex_node.core.config import NodeCameraConfig, NodeSettings
 
@@ -40,12 +40,21 @@ class LocalCameraPayload(BaseModel):
     source_type: str = Field(default="rtsp", max_length=40)
     enabled: bool = True
     area_id: str | None = None
-    vision_enabled: bool = False
+    vision_enabled: bool | None = None
 
 
 class CameraTestPayload(BaseModel):
     rtsp_url: str | None = Field(default=None, max_length=1000)
     source_uri: str | None = Field(default=None, max_length=1000)
+
+
+class PairingLookupPayload(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+
+
+class PairingAuthorizePayload(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+    node_name: str | None = Field(default=None, max_length=120)
 
 
 class LocalNodeRuntime:
@@ -65,7 +74,7 @@ class LocalNodeRuntime:
         self.lifecycle.stop()
         settings = replace(
             NodeSettings.from_env(),
-            cloud_url=payload.cloud_url.rstrip("/"),
+            cloud_url=_normalize_cloud_api_url(payload.cloud_url),
         )
         os.environ["CAMPEX_NODE_CLOUD_URL"] = settings.cloud_url or ""
         claim_lifecycle = build_lifecycle(settings)
@@ -110,9 +119,10 @@ class LocalNodeRuntime:
             name=payload.name.strip(),
             rtsp_url=rtsp_url,
             enabled=payload.enabled,
+            vision_enabled=bool(payload.vision_enabled),
         )
         self.lifecycle.store.save_local_camera(camera)
-        self._restart_with_persisted_connection()
+        self._upsert_camera_config(camera)
         return self._camera_response(camera)
 
     def update_camera(self, camera_id: str, payload: LocalCameraPayload) -> dict:
@@ -126,14 +136,30 @@ class LocalNodeRuntime:
             name=payload.name.strip() if payload.name else current.name,
             rtsp_url=rtsp_url,
             enabled=payload.enabled,
+            vision_enabled=current.vision_enabled if payload.vision_enabled is None else bool(payload.vision_enabled),
         )
         self.lifecycle.store.save_local_camera(camera)
-        self._restart_with_persisted_connection()
+        self._upsert_camera_config(camera)
         return self._camera_response(camera)
 
     def delete_camera(self, camera_id: str) -> None:
         self.lifecycle.store.delete_local_camera(camera_id)
-        self._restart_with_persisted_connection()
+        cameras = [camera for camera in self.lifecycle.camera_manager.configs() if camera.id != camera_id]
+        self._apply_camera_configs(cameras)
+
+    def _upsert_camera_config(self, camera: NodeCameraConfig) -> None:
+        cameras = {item.id: item for item in self.lifecycle.camera_manager.configs()}
+        cameras[camera.id] = camera
+        self._apply_camera_configs(list(cameras.values()))
+
+    def _apply_camera_configs(self, cameras: list[NodeCameraConfig]) -> None:
+        # Only the affected camera workers restart; a full lifecycle restart
+        # would drop every live stream and could leave RTSP sessions open.
+        settings = replace(self.lifecycle.settings, cameras=tuple(cameras))
+        self.lifecycle.settings = settings
+        if self.lifecycle.config_sync is not None:
+            self.lifecycle.config_sync.settings = settings
+        self.lifecycle.camera_manager.apply_configs(cameras)
 
     def test_camera(self, payload: CameraTestPayload) -> dict:
         from campex_node.cameras.capture import test_rtsp_connection
@@ -141,7 +167,7 @@ class LocalNodeRuntime:
         rtsp_url = (payload.rtsp_url or payload.source_uri or "").strip()
         if not rtsp_url:
             return {"ok": False, "success": False, "status": "OFFLINE", "error": "RTSP URL is required."}
-        result = test_rtsp_connection(rtsp_url)
+        result = test_rtsp_connection(rtsp_url, settings=self.lifecycle.settings)
         return result
 
     def cameras(self) -> list[dict]:
@@ -188,13 +214,70 @@ class LocalNodeRuntime:
             "cameras": summary["cameras"],
         }
 
+    def node_summary(self) -> dict:
+        data = self.status()
+        hostname = platform.node()
+        return {
+            "id": data["node_id"],
+            "node_id": data["node_id"],
+            "name": self.lifecycle.store.get_meta("node_name") or hostname or "CAMPEX Node",
+            "hostname": hostname,
+            "platform": platform.system().lower(),
+            "version": self.lifecycle.settings.version,
+            "status": "online",
+            "paired": data["paired"],
+            "cloud_configured": data["cloud_configured"],
+            "last_seen_at": data["last_heartbeat_at"] or datetime.now(timezone.utc).isoformat(),
+            "cameras_total": data["cameras_total"],
+            "cameras_online": data["cameras_online"],
+            "queue_size": data["queue_size"],
+        }
+
+    def node_telemetry(self) -> dict:
+        data = self.status()
+        cameras = [
+            {
+                "camera_id": camera["id"],
+                "name": camera["name"],
+                "online": camera["status"] == "ONLINE",
+                "status": camera["status"],
+                "frames_received": camera.get("frames_received", 0),
+                "reconnect_attempts": camera.get("reconnect_attempts", 0),
+                "consecutive_failures": camera.get("consecutive_failures", 0),
+                "last_frame_at": camera.get("last_frame_at"),
+            }
+            for camera in data["cameras"]
+        ]
+        latest_metric_at = data["last_heartbeat_at"] or data["last_sync_at"]
+        metrics = []
+        if latest_metric_at:
+            metrics.append(
+                {
+                    "created_at": latest_metric_at,
+                    "cpu_percent": data["cpu_percent"],
+                    "ram_percent": data["ram_percent"],
+                    "queue_size": data["queue_size"],
+                }
+            )
+        return {
+            "node_id": data["node_id"],
+            "summary": {
+                "latest_metric_at": latest_metric_at,
+                "metrics_count": len(metrics),
+                "events_count": data["queue_size"],
+            },
+            "cameras": cameras,
+            "events": [],
+            "metrics": metrics,
+        }
+
     def _camera_response(self, camera: NodeCameraConfig, state: dict | None = None) -> dict:
         if state is None:
             state = next(
                 (item for item in self.lifecycle.camera_manager.summary()["cameras"] if item["id"] == camera.id),
                 None,
             )
-        status = (state or {}).get("status") or ("ONLINE" if camera.enabled else "OFFLINE")
+        status = (state or {}).get("status") or ("CONNECTING" if camera.enabled else "OFFLINE")
         health = {
             "status": status,
             "last_successful_frame": (state or {}).get("last_frame_at"),
@@ -207,16 +290,51 @@ class LocalNodeRuntime:
             "approximate_fps": None,
         }
         return {
+            "ok": True,
             "id": camera.id,
             "name": camera.name,
             "source_type": "rtsp",
             "source_uri": camera.rtsp_url,
             "rtsp_url": camera.rtsp_url,
             "enabled": camera.enabled,
-            "vision_enabled": False,
+            "vision_enabled": camera.vision_enabled,
+            "edge_vision": self.lifecycle.vision.status(camera.id) if self.lifecycle.vision else None,
             "status": status,
             "health": health,
         }
+
+    def set_camera_vision(self, camera_id: str, enabled: bool) -> dict:
+        cameras = {camera.id: camera for camera in self.lifecycle.camera_manager.configs()}
+        current = cameras.get(camera_id)
+        if current is None:
+            raise ValueError("Camera not found.")
+        updated = NodeCameraConfig(
+            id=current.id,
+            name=current.name,
+            rtsp_url=current.rtsp_url,
+            enabled=current.enabled,
+            vision_enabled=enabled,
+        )
+        self.lifecycle.store.save_local_camera(updated)
+        self._upsert_camera_config(updated)
+        if self.lifecycle.vision is None:
+            return {"camera_id": camera_id, "status": "DISABLED", "enabled": enabled}
+        return self.lifecycle.vision.status(camera_id)
+
+    def vision_status(self, camera_id: str) -> dict:
+        if self.lifecycle.vision is None:
+            return {
+                "camera_id": camera_id,
+                "status": "DISABLED",
+                "enabled": False,
+                "error": "Edge vision service is not running.",
+            }
+        return self.lifecycle.vision.status(camera_id)
+
+    def vision_objects(self, camera_id: str) -> list[dict]:
+        if self.lifecycle.vision is None:
+            return []
+        return self.lifecycle.vision.objects(camera_id)
 
     def sync_now(self) -> dict:
         if self.lifecycle.config_sync is None:
@@ -229,7 +347,7 @@ class LocalNodeRuntime:
     def start_pairing(self, payload: PairingStartPayload) -> dict:
         from campex_node.main import build_lifecycle
 
-        cloud_url = (payload.cloud_url or "").strip().rstrip("/")
+        cloud_url = _normalize_cloud_api_url(payload.cloud_url)
         if not cloud_url:
             node_public_id = self.lifecycle.node_id
             pairing_code = _pairing_code()
@@ -239,6 +357,7 @@ class LocalNodeRuntime:
             self.lifecycle.store.set_meta("pairing_node_public_id", node_public_id)
             self.lifecycle.store.set_meta("pairing_code", pairing_code)
             self.lifecycle.store.set_meta("pairing_expires_at", expires_at.isoformat())
+            self.lifecycle.store.set_meta("node_name", payload.node_name.strip() or "CAMPEX Node")
             self.lifecycle.store.set_meta("cloud_url", "")
             return {
                 "ok": True,
@@ -329,6 +448,45 @@ class LocalNodeRuntime:
             self.lifecycle.start()
         return {"ok": True, **data, **self.status()}
 
+    def lookup_local_pairing_code(self, code: str) -> dict:
+        stored_code = (self.lifecycle.store.get_meta("pairing_code") or "").strip().upper()
+        requested_code = code.strip().upper()
+        expires_at = self.lifecycle.store.get_meta("pairing_expires_at")
+        if not stored_code or requested_code != stored_code:
+            raise ValueError("Codigo de pareamento nao encontrado.")
+        if expires_at:
+            try:
+                expired = datetime.fromisoformat(expires_at) <= datetime.now(timezone.utc)
+            except ValueError:
+                expired = False
+            if expired:
+                raise ValueError("Codigo de pareamento expirado.")
+        return {
+            "ok": True,
+            "code": stored_code,
+            "node_id": self.lifecycle.node_id,
+            "node_public_id": self.lifecycle.node_id,
+            "node_name": self.lifecycle.store.get_meta("node_name") or "CAMPEX Node",
+            "hostname": platform.node(),
+            "platform": platform.system().lower(),
+            "version": self.lifecycle.settings.version,
+            "expires_at": expires_at,
+        }
+
+    def authorize_local_pairing_code(self, payload: PairingAuthorizePayload) -> dict:
+        found = self.lookup_local_pairing_code(payload.code)
+        if payload.node_name:
+            self.lifecycle.store.set_meta("node_name", payload.node_name.strip())
+        return {
+            "ok": True,
+            "mode": "local",
+            "id": self.lifecycle.node_id,
+            "node_id": self.lifecycle.node_id,
+            "name": self.lifecycle.store.get_meta("node_name") or found["node_name"],
+            "status": "online",
+            "message": "Node local autorizado para teste sem CAMPEX Cloud.",
+        }
+
     def diagnostics(self) -> dict:
         settings = self.lifecycle.settings
         return {
@@ -356,6 +514,7 @@ class LocalNodeRuntime:
                 "sync": self.lifecycle.sync is not None,
                 "telemetry": self.lifecycle.telemetry is not None,
                 "heartbeat": self.lifecycle.heartbeat is not None,
+                "edge_vision": self.lifecycle.vision is not None,
             },
             "cameras": self.lifecycle.camera_manager.summary(),
         }
@@ -379,7 +538,7 @@ class LocalNodeRuntime:
             return lifecycle
         settings = replace(
             lifecycle.settings,
-            cloud_url=lifecycle.settings.cloud_url or meta.get("cloud_url"),
+            cloud_url=_normalize_cloud_api_url(lifecycle.settings.cloud_url or meta.get("cloud_url")),
             node_id=lifecycle.settings.node_id or meta.get("node_id"),
             cloud_token=lifecycle.settings.cloud_token or meta.get("node_token"),
             organization_id=lifecycle.settings.organization_id or meta.get("organization_id"),
@@ -391,27 +550,51 @@ class LocalNodeRuntime:
         os.environ["CAMPEX_NODE_ORGANIZATION_ID"] = settings.organization_id or ""
         return build_lifecycle(settings)
 
-    def _restart_with_persisted_connection(self) -> None:
-        self.lifecycle.stop()
-        self.lifecycle = self._build_from_persisted_connection()
-        self.lifecycle.initialize()
-        self.lifecycle.start()
-
 
 def create_app() -> FastAPI:
     runtime = LocalNodeRuntime()
-    app = FastAPI(title="CAMPEX Node Local", version="0.1.0")
+    app = FastAPI(title="CAMPEX Node Local", version="0.2.0")
+    allowed_frontend_origins = _frontend_origins()
     app.add_middleware(
-        CORSMiddleware,
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        LocalNetworkCORSMiddleware,
+        local_runtime=True,
+        allow_origins=allowed_frontend_origins,
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def local_cors_fallback(request, call_next):
+        origin = request.headers.get("origin", "")
+        if request.method == "OPTIONS" and _is_allowed_frontend_origin(origin):
+            response = Response(status_code=204)
+        else:
+            response = await call_next(request)
+        if _is_allowed_frontend_origin(origin):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = request.headers.get(
+                "access-control-request-headers",
+                "authorization,content-type,accept,x-campex-token",
+            )
+            if request.headers.get("access-control-request-private-network") == "true":
+                response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+
     app.state.runtime = runtime
-    assets_dir = Path(__file__).resolve().parents[1] / "frontend" / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+    frontend_dir = Path(__file__).resolve().parents[1] / "frontend"
+    assets_dir = frontend_dir / "assets"
+    static_dirs = {
+        "/assets": assets_dir,
+        "/css": frontend_dir / "css",
+        "/js": frontend_dir / "js",
+        "/vendor": frontend_dir / "vendor",
+    }
+    for route, directory in static_dirs.items():
+        if directory.exists():
+            app.mount(route, StaticFiles(directory=str(directory)), name=route.strip("/"))
 
     @app.on_event("shutdown")
     def shutdown() -> None:
@@ -420,6 +603,35 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return NODE_HTML
+
+    @app.get("/app", response_class=HTMLResponse)
+    def campex_app() -> str:
+        index_path = frontend_dir / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="CAMPEX frontend not found.")
+        return index_path.read_text(encoding="utf-8")
+
+    @app.get("/config.js")
+    def frontend_config() -> Response:
+        return Response(
+            content=(
+                'window.CAMPEX_API_BASE_URL = "http://127.0.0.1:8787/api";\n'
+                f'window.CAMPEX_NODE_DOWNLOAD_URL = "{_node_download_url()}";\n'
+            ),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/media-worker.js")
+    def media_worker() -> Response:
+        worker_path = frontend_dir / "media-worker.js"
+        if not worker_path.exists():
+            raise HTTPException(status_code=404, detail="CAMPEX media worker not found.")
+        return Response(
+            content=worker_path.read_text(encoding="utf-8"),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/status")
     def status() -> dict:
@@ -465,14 +677,56 @@ def create_app() -> FastAPI:
     def pairing_status() -> dict:
         return runtime.pairing_status()
 
+    @app.get("/api/nodes")
+    def list_nodes() -> list[dict]:
+        return [runtime.node_summary()]
+
+    @app.get("/api/nodes/{node_id}/telemetry")
+    def node_telemetry(node_id: str) -> dict:
+        if node_id != runtime.lifecycle.node_id:
+            raise HTTPException(status_code=404, detail="Node not found.")
+        return runtime.node_telemetry()
+
+    @app.post("/api/nodes/pair/request")
+    def request_node_pairing_code() -> dict:
+        try:
+            result = runtime.start_pairing(PairingStartPayload(cloud_url=None, node_name="CAMPEX Node"))
+            return {
+                "ok": True,
+                "code": result["pairing_code"],
+                "pairing_code": result["pairing_code"],
+                "expires_at": result["expires_at"],
+                "node_id": result["node_id"],
+                "node_public_id": result["node_public_id"],
+                "mode": result.get("mode", "local"),
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/nodes/pairing/lookup")
+    def lookup_node_pairing_code(payload: PairingLookupPayload) -> dict:
+        try:
+            return runtime.lookup_local_pairing_code(payload.code)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/nodes/pairing/authorize")
+    def authorize_node_pairing_code(payload: PairingAuthorizePayload) -> dict:
+        try:
+            return runtime.authorize_local_pairing_code(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
 
     @app.get("/api/cameras/{camera_id}/snapshot")
-    def camera_snapshot(camera_id: str):
+    def camera_snapshot(camera_id: str, overlay: bool = Query(False)):
         import cv2
 
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is None:
             raise HTTPException(status_code=404, detail="Frame ainda não disponível para esta câmera.")
+        if overlay and runtime.lifecycle.vision is not None:
+            frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
         if not ok:
             raise HTTPException(status_code=500, detail="Não foi possível codificar o frame.")
@@ -483,12 +737,42 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/cameras/{camera_id}/stream")
-    def camera_stream(camera_id: str):
+    def camera_stream(camera_id: str, overlay: bool = Query(False)):
         return StreamingResponse(
-            _mjpeg_frames(runtime, camera_id),
+            _mjpeg_frames(runtime, camera_id, overlay=overlay),
             media_type="multipart/x-mixed-replace; boundary=frame",
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post("/api/cameras/{camera_id}/vision/start")
+    def start_camera_vision(camera_id: str) -> dict:
+        try:
+            return runtime.set_camera_vision(camera_id, True)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/cameras/{camera_id}/vision/stop")
+    def stop_camera_vision(camera_id: str) -> dict:
+        try:
+            return runtime.set_camera_vision(camera_id, False)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/cameras/{camera_id}/vision/restart")
+    def restart_camera_vision(camera_id: str) -> dict:
+        try:
+            runtime.set_camera_vision(camera_id, False)
+            return runtime.set_camera_vision(camera_id, True)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/cameras/{camera_id}/vision/status")
+    def camera_vision_status(camera_id: str) -> dict:
+        return runtime.vision_status(camera_id)
+
+    @app.get("/api/cameras/{camera_id}/vision/objects")
+    def camera_vision_objects(camera_id: str) -> list[dict]:
+        return runtime.vision_objects(camera_id)
 
     @app.post("/api/sync")
     def sync() -> dict:
@@ -539,13 +823,15 @@ def create_app() -> FastAPI:
     return app
 
 
-def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str):
+def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str, *, overlay: bool = False):
     import cv2
 
     last_payload: bytes | None = None
     while True:
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is not None:
+            if overlay and runtime.lifecycle.vision is not None:
+                frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
             ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 68])
             if ok:
                 last_payload = encoded.tobytes()
@@ -590,7 +876,7 @@ NODE_HTML = """<!doctype html>
       </div><p class="note">O painel web lê a Cloud. Ele não precisa acessar este PC diretamente.</p></section>
       <div class="grid">
         <section class="panel"><h2>Pareamento com a Cloud</h2><form id="connect-form">
-          <label>Backend Cloud</label><input name="cloud_url" placeholder="https://campexback.vercel.app/api/v1" />
+          <label>Backend Cloud</label><input name="cloud_url" placeholder="Opcional: URL da Cloud CAMPEX" />
           <label>Código de pareamento</label><input name="pairing_code" autocomplete="off" placeholder="CXP-7KQ2-N91P" />
           <label>Nome deste Node</label><input name="node_name" placeholder="RBA-NODE-01" />
           <div class="actions"><button type="submit">Parear Node</button><button class="secondary" type="button" id="sync-button">Sincronizar agora</button><button class="secondary" type="button" id="diagnostics-button">Diagnóstico</button></div>
@@ -649,6 +935,46 @@ def _camera_id(value: str | None) -> str:
 def _pairing_code() -> str:
     raw_value = uuid.uuid4().hex[:8].upper()
     return f"CXP-{raw_value[:4]}-{raw_value[4:]}"
+
+
+def _frontend_origins() -> list[str]:
+    configured = [
+        item.strip()
+        for item in os.getenv("CAMPEX_FRONTEND_ORIGINS", "").split(",")
+        if item.strip()
+    ]
+    defaults = [
+        "https://campexfront.vercel.app",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+    ]
+    return list(dict.fromkeys(configured + defaults))
+
+
+def _normalize_cloud_api_url(value: str | None) -> str:
+    raw_value = (value or "").strip().rstrip("/")
+    if not raw_value:
+        return ""
+    if raw_value.endswith("/api"):
+        return f"{raw_value}/v1"
+    if raw_value.endswith("/api/v1"):
+        return raw_value
+    return f"{raw_value}/api/v1"
+
+
+def _node_download_url() -> str:
+    return os.getenv(
+        "CAMPEX_NODE_DOWNLOAD_URL",
+        "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip",
+    )
+
+
+def _is_allowed_frontend_origin(origin: str) -> bool:
+    return origin in _frontend_origins()
 
 
 def _system_resources() -> dict:

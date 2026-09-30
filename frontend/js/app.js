@@ -85,6 +85,10 @@ import { currentRoute, routes } from "./state.js";
 
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
 const CAMPEX_NODE_LOCAL_URL = "http://127.0.0.1:8787";
+const CAMPEX_NODE_LOCAL_APP_URL = `${CAMPEX_NODE_LOCAL_URL}/app`;
+const CAMPEX_NODE_DOWNLOAD_URL =
+  window.CAMPEX_NODE_DOWNLOAD_URL ||
+  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip";
 
 const statusElement = document.querySelector("#backend-status");
 const statusText = statusElement.querySelector(".status-text");
@@ -886,9 +890,17 @@ async function loadVideoWall() {
 }
 
 function videoWallTile(camera) {
-  const media = camera.source_type === "video_file"
-    ? `<video class="wall-media" src="${cameraVideoUrl(camera.id)}" autoplay muted playsinline loop></video>`
-    : `<img class="wall-media" src="${cameraStreamUrl(camera.id)}" alt="${camera.name}" />`;
+  let media;
+  if (String(camera.id).startsWith("local_")) {
+    // Node cameras are served by the local Node, never by the Cloud API.
+    media = canEmbedLocalNodeMedia()
+      ? `<img class="wall-media" src="${localNodeStreamUrl(camera.id)}" alt="${escapeHtml(camera.name)}" />`
+      : `<div class="media-placeholder"><a class="primary-action" href="${localNodeLiveUrl(camera.id)}" target="_blank" rel="noopener">Abrir no painel local</a></div>`;
+  } else if (camera.source_type === "video_file") {
+    media = `<video class="wall-media" src="${cameraVideoUrl(camera.id)}" autoplay muted playsinline loop></video>`;
+  } else {
+    media = `<img class="wall-media" src="${cameraStreamUrl(camera.id)}" alt="${camera.name}" />`;
+  }
   return `
     <article class="wall-tile">
       <header>
@@ -967,15 +979,15 @@ async function loadLiveCameras() {
       return;
     }
 
-    const savedCameraId = localStorage.getItem("campex.live_camera_id");
+    const requestedCameraId = new URLSearchParams(window.location.search).get("camera");
+    const savedCameraId = requestedCameraId || localStorage.getItem("campex.live_camera_id");
     if (savedCameraId && cameras.some((camera) => camera.id === savedCameraId)) {
       select.value = savedCameraId;
     }
     await selectLiveCamera();
   } catch (error) {
-    select.innerHTML = `<option value="">Backend indisponivel</option>`;
+    select.innerHTML = `<option value="">Node local indisponivel</option>`;
     renderVisionStatus(null, [], null);
-    console.error(error);
   }
 }
 
@@ -1000,8 +1012,8 @@ async function selectLiveCamera() {
     await renderLiveMedia(camera);
   } catch (error) {
     const nameElement = document.querySelector("#live-camera-name");
-    if (nameElement && nameElement.textContent !== "Backend indisponivel") {
-      nameElement.textContent = "Backend indisponivel";
+    if (nameElement && nameElement.textContent !== "Node local indisponivel") {
+      nameElement.textContent = "Node local indisponivel";
     }
     const statusElement = document.querySelector("#live-camera-status");
     if (statusElement) {
@@ -1010,7 +1022,6 @@ async function selectLiveCamera() {
     }
     renderMediaPlaceholder("Stream indisponivel");
     renderVisionStatus(null, [], null);
-    console.error(error);
   }
 }
 
@@ -1031,6 +1042,22 @@ async function renderLiveMedia(camera) {
   }
 
   renderMediaPlaceholder("Abrindo stream...");
+
+  if (String(camera.id).startsWith("local_")) {
+    try {
+      const health = await getCameraHealth(camera.id);
+      if (activeMediaCameraId !== camera.id) return;
+      renderNodeMjpegElement(
+        camera,
+        health.last_error || "Aguardando imagem da camera.",
+        health.status !== "OFFLINE" && Number(health.frames_received || 0) > 0,
+      );
+    } catch (error) {
+      if (activeMediaCameraId !== camera.id) return;
+      renderNodeMjpegElement(camera, `Node local indisponivel: ${error.message}`, false);
+    }
+    return;
+  }
 
   if (camera.source_type === "video_file") {
     renderVideoElement(camera);
@@ -1094,10 +1121,26 @@ function renderVideoElement(camera) {
   });
 }
 
-function renderNodeMjpegElement(camera, fallbackMessage = "") {
+function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) {
   const mediaHost = document.querySelector("#live-media-host");
   if (!mediaHost) return;
-  const streamUrl = `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(camera.id)}/stream?t=${Date.now()}`;
+  mediaHost.dataset.localFrames = String(hasFrames);
+  mediaHost.dataset.localMessage = fallbackMessage;
+  if (!canEmbedLocalNodeMedia()) {
+    mediaHost.innerHTML = `
+      <div class="media-placeholder">
+        <strong>Stream ao vivo pelo CAMPEX Node local</strong>
+        <span>${escapeHtml(hasFrames ? "Abra o painel local do Node para ver a imagem em tempo real." : fallbackMessage)}</span>
+        <a class="primary-action" href="${localNodeLiveUrl(camera.id)}" target="_blank" rel="noopener">Abrir painel local</a>
+      </div>
+    `;
+    return;
+  }
+  if (!hasFrames) {
+    mediaHost.innerHTML = `<div class="media-placeholder">${escapeHtml(fallbackMessage)}</div>`;
+    return;
+  }
+  const streamUrl = localNodeStreamUrl(camera.id);
   mediaHost.innerHTML = `
     <img
       id="live-node-stream"
@@ -1108,8 +1151,27 @@ function renderNodeMjpegElement(camera, fallbackMessage = "") {
     <div class="node-stream-hint">Stream via CAMPEX Node local - ${escapeHtml(fallbackMessage || "backend de vídeo indisponível")}</div>
   `;
   mediaHost.querySelector("img").addEventListener("error", () => {
+    // Mark as frameless so the next status refresh reopens the stream.
+    mediaHost.dataset.localFrames = "false";
     renderMediaPlaceholder("Aguardando frames do CAMPEX Node local. Verifique se o Node está aberto em http://127.0.0.1:8787 e se a câmera está online.");
   });
+}
+
+function localNodeStreamUrl(cameraId) {
+  return `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(cameraId)}/stream?t=${Date.now()}`;
+}
+
+function canEmbedLocalNodeMedia() {
+  return ["localhost", "127.0.0.1"].includes(window.location.hostname);
+}
+
+function localNodeLiveUrl(cameraId = "") {
+  const url = new URL(CAMPEX_NODE_LOCAL_APP_URL);
+  if (cameraId) {
+    url.searchParams.set("camera", cameraId);
+  }
+  url.hash = "live";
+  return url.toString();
 }
 
 
@@ -1162,13 +1224,12 @@ async function handleStartVision() {
   // several seconds and the API call may time out on the client side).
   const camera = await selectedCamera();
   if (camera) {
-    renderMjpegElement(camera);
+    await renderLiveMedia(camera);
   }
   try {
     await startVision(cameraId);
     notify("Vision ligada", "A análise da câmera foi iniciada.", "success");
   } catch (error) {
-    console.error("Start vision failed:", error);
     notifyError("Falha ao ligar Vision", error);
   }
   await refreshLiveStatus();
@@ -1222,13 +1283,12 @@ async function handleStartMapping() {
   }
   const camera = await selectedCamera();
   if (camera) {
-    renderMjpegElement(camera);
+    await renderLiveMedia(camera);
   }
   try {
     await startMapping(cameraId);
     notify("Mapeamento ligado", "O mapeamento corporal foi solicitado.", "success");
   } catch (error) {
-    console.error("Start mapping failed:", error);
     notifyError("Falha ao ligar mapeamento", error);
   } finally {
     if (button) {
@@ -1262,13 +1322,12 @@ async function handleRestartVision() {
   // seconds and the API call can time out on the client side).
   const camera = await selectedCamera();
   if (camera) {
-    renderMjpegElement(camera);
+    await renderLiveMedia(camera);
   }
   try {
     await restartVision(cameraId);
     notify("Vision reiniciada", "A sessão de análise foi reiniciada.", "success");
   } catch (error) {
-    console.error("Restart vision failed:", error);
     notifyError("Falha ao reiniciar Vision", error);
   }
   await refreshLiveStatus();
@@ -1293,6 +1352,17 @@ async function refreshLiveStatus() {
     const [objects, poses] = showDetections
       ? await Promise.all([getVisionObjects(cameraId), getMappingPoses(cameraId)])
       : [[], []];
+    if (document.querySelector("#live-camera-select")?.value !== cameraId) return null;
+    if (cameraId.startsWith("local_")) {
+      const mediaHost = document.querySelector("#live-media-host");
+      const hasFrames = health.status !== "OFFLINE" && Number(health.frames_received || 0) > 0;
+      const message = health.last_error || "Aguardando imagem da camera.";
+      const framesChanged = mediaHost?.dataset.localFrames && mediaHost.dataset.localFrames !== String(hasFrames);
+      const messageChanged = !hasFrames && mediaHost?.dataset.localMessage !== message;
+      if (framesChanged || messageChanged) {
+        renderNodeMjpegElement({ id: cameraId }, message, hasFrames);
+      }
+    }
     // Apenas atualiza os elementos de status, nunca re-renderiza a mídia
     updateVisionStatusOnly(visionStatus, objects, health, poses);
     return visionStatus;
@@ -1334,7 +1404,7 @@ function renderVisionStatus(visionStatus, objects, health, poses = []) {
   setText("#live-vision-fps", metrics.vision_fps ?? "0");
   setText("#live-frame-count", `${metrics.frames_processed ?? 0}/${metrics.frames_received ?? 0}`);
   setText("#live-mapping-state", mappingLabel(mapping));
-  const error = visionStatus?.error || mapping.error;
+  const error = health?.last_error || visionStatus?.error || mapping.error;
   const errorLine = document.querySelector("#live-error-line");
   if (errorLine) {
     const newError = error || "Sem erros";
@@ -1379,7 +1449,7 @@ function updateVisionStatusOnly(visionStatus, objects, health, poses = []) {
   setText("#live-vision-fps", metrics.vision_fps ?? "0");
   setText("#live-frame-count", `${metrics.frames_processed ?? 0}/${metrics.frames_received ?? 0}`);
   setText("#live-mapping-state", mappingLabel(mapping));
-  const error = visionStatus?.error || mapping.error;
+  const error = health?.last_error || visionStatus?.error || mapping.error;
   const errorLine = document.querySelector("#live-error-line");
   if (errorLine) {
     const newError = error || "Sem erros";
@@ -1410,6 +1480,9 @@ function updateModeButtons(status, mapping) {
 
   const mappingButton = document.querySelector("#live-toggle-mapping");
   if (mappingButton && mappingButton.dataset.loading !== "true") {
+    const localCamera = document.querySelector("#live-camera-select")?.value.startsWith("local_");
+    mappingButton.disabled = Boolean(localCamera);
+    mappingButton.title = localCamera ? "Mapeamento indisponivel para cameras do Node local" : "";
     const mappingOn = mapping.state === "ACTIVE";
     mappingButton.dataset.active = String(mappingOn);
     mappingButton.textContent = `Mapeamento: ${mappingOn ? "ON" : "OFF"}`;
@@ -3973,6 +4046,7 @@ async function renderNodesPage() {
           <p>Instalacoes locais CAMPEX Node, cameras RTSP, fila de sincronizacao e saude de operacao.</p>
         </div>
         <div class="actions-row">
+          <a class="secondary-action" id="nodes-download-node" href="${CAMPEX_NODE_DOWNLOAD_URL}" download><i data-lucide="download"></i>Instalar Node</a>
           <button type="button" class="secondary-action" id="nodes-refresh"><i data-lucide="refresh-cw"></i>Atualizar</button>
           <button type="button" class="primary-action" id="nodes-open-pairing"><i data-lucide="link"></i>Conectar Node</button>
         </div>
@@ -4386,6 +4460,7 @@ function nodesSettingsMarkup() {
     ${settingsCard("CAMPEX Nodes", "Softwares locais pareados com esta organização.", "server", `
       <div id="settings-node-list" class="settings-integration-list">${emptyState("Carregando Nodes", "Buscando instalações pareadas.")}</div>
     `, `
+      <a class="secondary-action" href="${CAMPEX_NODE_DOWNLOAD_URL}" download><i data-lucide="download"></i>Instalar Node</a>
       <button type="button" class="secondary-action" data-settings-action="refresh-nodes"><i data-lucide="refresh-cw"></i>Atualizar</button>
       <button type="button" class="primary-action" data-settings-action="create-node-code"><i data-lucide="plus"></i>Adicionar Node</button>
     `)}
@@ -5381,7 +5456,7 @@ async function refreshBackendStatus() {
   try {
     if (lastBackendState !== "online") {
       statusElement.dataset.state = "checking";
-      statusText.textContent = "Verificando backend";
+      statusText.textContent = "Verificando Node local";
     }
     const health = await getHealth();
     backendFailureCount = 0;
@@ -5393,29 +5468,27 @@ async function refreshBackendStatus() {
     }
     lastBackendState = newState;
     if (backendSummary) {
-      backendSummary.textContent = "Conectado via /api/v1/health";
+      backendSummary.textContent = "Conectado via Node local /api/health";
     }
   } catch (error) {
     backendFailureCount += 1;
     if (lastBackendState === "online" && backendFailureCount < 3) {
-      console.warn("[CAMPEX] health check transient failure", error);
       return;
     }
     const newState = backendFailureCount < 3 ? "checking" : "offline";
     if (lastBackendState !== newState) {
       statusElement.dataset.state = newState;
-      statusText.textContent = backendFailureCount < 3 ? "Verificando backend" : "Backend indisponível";
+      statusText.textContent = backendFailureCount < 3 ? "Verificando Node local" : "Node local indisponível";
       if (backendFailureCount >= 3) {
-        notify("Backend indisponível", "Confira a URL configurada da API no arquivo frontend/config.js.", "error", 8000);
+        notify("Node local indisponível", "Abra o CampexNode.exe e confirme que ele esta rodando em 127.0.0.1:8787.", "error", 8000);
       }
     }
     if (backendFailureCount >= 3) {
       lastBackendState = "offline";
     }
     if (backendSummary) {
-      backendSummary.textContent = backendFailureCount < 3 ? "Tentando reconectar" : "Sem resposta do backend";
+      backendSummary.textContent = backendFailureCount < 3 ? "Tentando reconectar" : "Sem resposta do Node local";
     }
-    console.error(error);
   } finally {
     backendStatusRefreshInFlight = false;
   }

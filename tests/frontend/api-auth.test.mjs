@@ -9,7 +9,7 @@ const storage = () => {
 const moduleUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 globalThis.localStorage = storage();
 globalThis.sessionStorage = storage();
-globalThis.window = { location: { search: '', protocol: 'http:', hostname: 'localhost' } };
+globalThis.window = { location: { search: '', protocol: 'http:', hostname: 'localhost', origin: 'http://localhost' } };
 const tokenSource = await readFile(new URL('../../frontend/js/api-token.js', import.meta.url), 'utf8');
 const tokenUrl = moduleUrl(tokenSource);
 const tokens = await import(tokenUrl);
@@ -55,8 +55,25 @@ test('backend selection is saved only after successful authentication', async ()
     sent = { url, options };
     return new Response('[]', { status: 200 });
   };
-  assert.equal(await api.connectBackend('local', 'test-local-token'), 'http://127.0.0.1:8000/api/v1');
+  assert.equal(await api.connectBackend('local', 'test-local-token'), 'http://127.0.0.1:8787/api');
   assert.equal(sent.options.headers['X-CAMPEX-Token'], 'test-local-token');
-  assert.equal(localStorage.getItem('campex.backend_url'), 'http://127.0.0.1:8000/api/v1');
+  assert.equal(localStorage.getItem('campex.backend_url'), 'http://127.0.0.1:8787/api');
   assert.ok(!sent.url.includes('test-local-token'));
+});
+
+test('published frontend ignores stale local node backend without inventing same-origin API', async () => {
+  globalThis.localStorage = storage();
+  globalThis.sessionStorage = storage();
+  globalThis.localStorage.setItem('campex.backend_url', 'http://127.0.0.1:8787/api');
+  globalThis.window = {
+    location: {
+      search: '',
+      protocol: 'https:',
+      hostname: 'campexfront.vercel.app',
+      origin: 'https://campexfront.vercel.app',
+    },
+    CAMPEX_API_BASE_URL: '',
+  };
+  const publishedApi = await import(moduleUrl(`${apiSource}\n// published-${Date.now()}`));
+  assert.equal(publishedApi.getBackendUrl(), '');
 });
