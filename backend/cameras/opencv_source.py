@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -14,6 +15,14 @@ from backend.cameras.security import sanitize_source_uri
 
 
 logger = logging.getLogger("campex.cameras")
+
+
+def _can_open_tcp(host: str, port: int, timeout_seconds: float = 2.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
 
 
 class OpenCVCameraSource(CameraSource):
@@ -208,6 +217,26 @@ class VideoFileSource(OpenCVCameraSource):
 class RTSPSource(OpenCVCameraSource):
     def __init__(self, config: CameraConfig) -> None:
         super().__init__(config, config.source_uri, prefer_ffmpeg=True)
+
+    def connect(self) -> bool:
+        parsed = urlsplit(self.config.source_uri)
+        if parsed.scheme.lower() == "rtsp" and parsed.hostname:
+            port = parsed.port or 554
+            if not _can_open_tcp(parsed.hostname, port):
+                self._health.status = CameraStatus.OFFLINE
+                self._health.connection_state = CameraStatus.OFFLINE.value
+                self._health.last_disconnected_at = utc_now()
+                self._health.last_error = (
+                    f"RTSP port {port} is not responding on {parsed.hostname}. "
+                    "Enable RTSP on the camera/NVR or use the correct stream port."
+                )
+                logger.warning(
+                    "[camera:%s] rtsp_port_unavailable",
+                    self.config.id,
+                    extra={"camera_id": self.config.id, "source_uri": sanitize_source_uri(self.config.source_uri)},
+                )
+                return False
+        return super().connect()
 
 
 class IPCameraSource(OpenCVCameraSource):
