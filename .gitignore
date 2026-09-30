@@ -35,3 +35,6 @@ storage/video_uploads/*
 Thumbs.db
 *.log
 nvidia.js
+
+.vercel
+.vercel-backend-deploy-*
