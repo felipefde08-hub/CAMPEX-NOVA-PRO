@@ -376,6 +376,43 @@ SCHEMA_STATEMENTS = (
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS camera_live_state (
+        camera_id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'OFFLINE',
+        last_error TEXT,
+        frames_received INTEGER NOT NULL DEFAULT 0,
+        approximate_fps REAL,
+        width INTEGER,
+        height INTEGER,
+        last_frame_at TEXT,
+        reported_at TEXT NOT NULL,
+        vision_json TEXT NOT NULL DEFAULT '{}',
+        objects_json TEXT NOT NULL DEFAULT '[]',
+        poses_json TEXT NOT NULL DEFAULT '[]',
+        frame_jpeg BYTEA,
+        frame_captured_at TEXT,
+        viewer_seen_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS camera_test_jobs (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        source_uri TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+            CHECK(status IN ('pending', 'running', 'done', 'expired')),
+        result_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT NOT NULL,
+        completed_at TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_camera_live_state_org ON camera_live_state(organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_camera_test_jobs_node ON camera_test_jobs(node_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization_id)",
     "CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id)",
@@ -404,7 +441,7 @@ SCHEMA_STATEMENTS = (
 
 CAMERAS_SCHEMA = SCHEMA_STATEMENTS[1]
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "8"
 
 # Columns that SQLite databases received through the _migrate_* helpers after
 # their tables were first created. A Postgres database is always created fresh,
@@ -416,6 +453,12 @@ _POSTGRES_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_machines_org_camera ON machines(organization_id, camera_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_org_node_started ON events(organization_id, node_id, started_at DESC)",
 )
+# Which CAMPEX Node captures the camera (NULL: any Node of the organization)
+# and whether body mapping was requested; both are read by the Node relay.
+_CAMERA_NODE_COLUMNS = {
+    "node_id": "TEXT",
+    "mapping_enabled": "INTEGER NOT NULL DEFAULT 0",
+}
 # Serializes schema setup when several serverless instances cold start at once.
 _POSTGRES_SCHEMA_LOCK_ID = 7_242_617
 
@@ -447,6 +490,7 @@ def initialize_database(settings: Settings) -> Path | str:
             connection.execute(statement)
         _migrate_camera_source_types(connection)
         _migrate_camera_runtime_state(connection)
+        _migrate_camera_node_columns(connection)
         _migrate_organization_scope(connection, settings.intelligence_default_organization_id)
         _migrate_video_analysis_debug_columns(connection)
         _migrate_node_columns(connection)
@@ -487,6 +531,8 @@ def _initialize_postgres(settings: Settings) -> None:
             connection.execute(
                 f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS organization_id TEXT NOT NULL DEFAULT '{safe_default}'"
             )
+        for column, definition in _CAMERA_NODE_COLUMNS.items():
+            connection.execute(f"ALTER TABLE cameras ADD COLUMN IF NOT EXISTS {column} {definition}")
         for statement in _POSTGRES_INDEXES:
             connection.execute(statement)
         _ensure_default_organization(connection, default_organization_id)
@@ -542,6 +588,16 @@ def _migrate_camera_runtime_state(connection: sqlite3.Connection) -> None:
     for column, statement in migrations.items():
         if column not in columns:
             connection.execute(statement)
+
+
+def _migrate_camera_node_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(cameras)").fetchall()
+    }
+    for column, definition in _CAMERA_NODE_COLUMNS.items():
+        if column not in columns:
+            connection.execute(f"ALTER TABLE cameras ADD COLUMN {column} {definition}")
 
 
 def _migrate_organization_scope(

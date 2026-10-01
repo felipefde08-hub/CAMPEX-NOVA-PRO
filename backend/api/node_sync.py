@@ -7,6 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from backend.cameras.cloud_runtime import CameraReport, CloudCameraRuntime, decode_frame
 from backend.cloud.nodes import NodeIdentity, get_node_identity
 from backend.config import get_settings
 from backend.database.db import connect
@@ -40,6 +41,66 @@ class NodeMetricPayload(BaseModel):
 class NodeSyncBatch(BaseModel):
     events: list[NodeEventPayload] = Field(default_factory=list)
     metrics: list[NodeMetricPayload] = Field(default_factory=list)
+
+
+class CameraLiveReport(BaseModel):
+    camera_id: str = Field(min_length=1, max_length=120)
+    status: str = Field(default="OFFLINE", max_length=20)
+    last_error: str | None = Field(default=None, max_length=500)
+    frames_received: int = Field(default=0, ge=0)
+    approximate_fps: float | None = None
+    width: int | None = Field(default=None, ge=0)
+    height: int | None = Field(default=None, ge=0)
+    last_frame_at: str | None = Field(default=None, max_length=40)
+    vision: dict[str, Any] = Field(default_factory=dict)
+    objects: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    poses: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    frame_jpeg_base64: str | None = Field(default=None, max_length=2_100_000)
+
+
+class CameraTestResult(BaseModel):
+    job_id: str = Field(min_length=1, max_length=80)
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class NodeLiveBatch(BaseModel):
+    cameras: list[CameraLiveReport] = Field(default_factory=list, max_length=64)
+    test_results: list[CameraTestResult] = Field(default_factory=list, max_length=16)
+
+
+@router.post("/cameras/live")
+def sync_camera_live_state(
+    batch: NodeLiveBatch,
+    identity: NodeIdentity = Depends(get_node_identity),
+) -> dict:
+    """Camera status, Vision results and frames from the Node.
+
+    The response carries the camera toggles set in the dashboard and pending
+    connection tests, so the Node reacts within one upload interval.
+    """
+    reports = [
+        CameraReport(
+            camera_id=item.camera_id,
+            status=item.status.upper(),
+            last_error=item.last_error,
+            frames_received=item.frames_received,
+            approximate_fps=item.approximate_fps,
+            width=item.width,
+            height=item.height,
+            last_frame_at=item.last_frame_at,
+            vision=item.vision,
+            objects=item.objects,
+            poses=item.poses,
+            frame_jpeg=decode_frame(item.frame_jpeg_base64),
+        )
+        for item in batch.cameras
+    ]
+    return CloudCameraRuntime(get_settings()).record_reports(
+        identity.organization_id,
+        identity.node_id,
+        reports,
+        test_results=[(item.job_id, item.result) for item in batch.test_results],
+    )
 
 
 @router.post("/events")

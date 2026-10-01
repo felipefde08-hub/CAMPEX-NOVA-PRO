@@ -60,6 +60,8 @@ class ConfigSyncService:
                     "name": item["name"],
                     "rtsp_url": item["source_uri"],
                     "enabled": item.get("enabled", True),
+                    "vision_enabled": item.get("vision_enabled", False),
+                    "mapping_enabled": item.get("mapping_enabled", False),
                 }
             )
             for item in payload.get("cameras", [])
@@ -75,6 +77,8 @@ class ConfigSyncService:
                             "name": camera.name,
                             "rtsp_url": camera.rtsp_url,
                             "enabled": camera.enabled,
+                            "vision_enabled": camera.vision_enabled,
+                            "mapping_enabled": camera.mapping_enabled,
                         }
                         for camera in remote_cameras
                     ],

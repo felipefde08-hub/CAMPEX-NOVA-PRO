@@ -8,6 +8,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
+from backend.cameras.cloud_runtime import CloudCameraRuntime
 from backend.cameras.repository import CameraRepository
 from backend.cloud.nodes import NodeIdentity, NodeRepository, get_node_identity
 from backend.config import get_settings
@@ -331,16 +332,9 @@ def node_config(
     if node_id != identity.node_id:
         raise HTTPException(status_code=403, detail="Node token does not match requested node.")
     cameras = [
-        {
-            "id": camera.id,
-            "name": camera.name,
-            "source_type": camera.source_type,
-            "source_uri": camera.source_uri,
-            "enabled": camera.enabled,
-            "updated_at": camera.updated_at,
-        }
-        for camera in repository.list(identity.organization_id)
-        if camera.source_type in {"rtsp", "ip_camera"} and camera.enabled
+        camera
+        for camera in CloudCameraRuntime(get_settings()).node_cameras(identity.organization_id, identity.node_id)
+        if camera["enabled"]
     ]
     return {
         "organization_id": identity.organization_id,

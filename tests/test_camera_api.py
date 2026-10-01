@@ -268,7 +268,8 @@ def test_serverless_explains_private_camera_connection(monkeypatch, tmp_path):
             json={"source_type": "rtsp", "source_uri": "rtsp://192.168.1.10:554/stream"})
     assert response.status_code == 200
     assert response.json()["success"] is False
-    assert "backend CAMPEX local" in response.json()["error"]
+    # The test is delegated to the organization's CAMPEX Node; none is paired here.
+    assert "Nenhum CAMPEX Node conectado" in response.json()["error"]
 
 
 def test_local_network_preflight_is_limited_to_allowed_origins():

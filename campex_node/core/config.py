@@ -78,6 +78,7 @@ class NodeCameraConfig:
     rtsp_url: str
     enabled: bool = True
     vision_enabled: bool = False
+    mapping_enabled: bool = False
 
     @classmethod
     def from_mapping(cls, item: dict[str, Any]) -> "NodeCameraConfig":
@@ -98,6 +99,7 @@ class NodeCameraConfig:
             rtsp_url=rtsp_url,
             enabled=bool(item.get("enabled", True)),
             vision_enabled=bool(item.get("vision_enabled", False)),
+            mapping_enabled=bool(item.get("mapping_enabled", False)),
         )
 
 
@@ -125,6 +127,13 @@ class NodeSettings:
     camera_read_timeout_ms: int = 3000
     vision_interval_seconds: float = 0.35
     vision_confidence: float = 0.35
+    # Ultralytics weights: the detector ships with the package; the pose model
+    # is downloaded into <data_dir>/models on first use when it is missing.
+    vision_model: str = "yolo11n.pt"
+    pose_model: str = "yolo11n-pose.pt"
+    vision_input_size: int = 640
+    live_frame_max_width: int = 960
+    live_frame_jpeg_quality: int = 70
     outbound_max_pending: int = 5000
     cameras: tuple[NodeCameraConfig, ...] = field(default_factory=tuple)
 
@@ -165,6 +174,11 @@ class NodeSettings:
             camera_read_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_READ_TIMEOUT_MS", 3000),
             vision_interval_seconds=_env_float("CAMPEX_NODE_VISION_INTERVAL_SECONDS", 0.35),
             vision_confidence=_env_float("CAMPEX_NODE_VISION_CONFIDENCE", 0.35),
+            vision_model=os.getenv("CAMPEX_NODE_VISION_MODEL", "yolo11n.pt"),
+            pose_model=os.getenv("CAMPEX_NODE_POSE_MODEL", "yolo11n-pose.pt"),
+            vision_input_size=_env_int("CAMPEX_NODE_VISION_INPUT_SIZE", 640),
+            live_frame_max_width=_env_int("CAMPEX_NODE_LIVE_FRAME_MAX_WIDTH", 960),
+            live_frame_jpeg_quality=_env_int("CAMPEX_NODE_LIVE_FRAME_JPEG_QUALITY", 70),
             outbound_max_pending=_env_int("CAMPEX_NODE_QUEUE_MAX_ITEMS", 5000),
             cameras=tuple(_load_camera_configs()),
         )

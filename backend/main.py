@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hmac
 import logging
@@ -289,7 +289,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "X-CAMPEX-Frame"],
 )
 app.include_router(health_router)
 app.include_router(auth_router)

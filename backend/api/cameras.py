@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
+from backend.cameras.cloud_runtime import NODE_CAMERA_SOURCE_TYPES, CloudCameraError, CloudCameraRuntime
 from backend.cameras.manager import CameraManager, test_camera_connection
 from backend.cameras.models import Camera
 from backend.cameras.repository import CameraRepository
@@ -48,6 +49,24 @@ class CameraTestPayload(BaseModel):
     vision_enabled: bool = False
 
 
+def is_node_camera(camera: Camera) -> bool:
+    """In the Cloud, RTSP/IP cameras are captured by the customer's CAMPEX Node."""
+    return get_settings().runtime == "serverless" and camera.source_type in NODE_CAMERA_SOURCE_TYPES
+
+
+def camera_health(camera: Camera, scope: OrganizationScope, manager: CameraManager) -> dict:
+    if is_node_camera(camera):
+        return CloudCameraRuntime(get_settings()).health(camera, scope.organization_id)
+    return manager.health(camera).as_dict()
+
+
+def _start_node_test(scope: OrganizationScope, source_uri: str) -> dict:
+    try:
+        return CloudCameraRuntime(get_settings()).create_test_job(scope.organization_id, source_uri)
+    except CloudCameraError as exc:
+        return {"ok": False, "success": False, "pending": False, "status": "OFFLINE", "error": exc.message}
+
+
 def serialize_camera(camera, health: dict | None = None) -> dict:
     runtime_status = (health or {}).get("status") or camera.status
     return {
@@ -80,7 +99,7 @@ def list_cameras(
     manager: CameraManager = Depends(get_camera_manager),
 ) -> list[dict]:
     return [
-        serialize_camera(camera, manager.health(camera).as_dict())
+        serialize_camera(camera, camera_health(camera, scope, manager))
         for camera in repository.list(scope.organization_id)
     ]
 
@@ -103,9 +122,11 @@ def create_camera(
         "Camera registered",
         extra={"camera_id": camera.id, "source_type": camera.source_type},
     )
-    if camera.enabled and manager.settings.runtime != "serverless":
+    if is_node_camera(camera):
+        CloudCameraRuntime(get_settings()).assign_default_node(camera.id, scope.organization_id)
+    elif camera.enabled and manager.settings.runtime != "serverless":
         manager.start_camera(camera)
-    return serialize_camera(camera, manager.health(camera).as_dict())
+    return serialize_camera(camera, camera_health(camera, scope, manager))
 
 
 @router.post("/test-source")
@@ -129,7 +150,20 @@ def test_camera_source(
         created_at="",
         updated_at="",
     )
+    if is_node_camera(camera):
+        return _start_node_test(scope, camera.source_uri)
     return test_camera_connection(camera, get_settings())
+
+
+@router.get("/test-source/{job_id}")
+def camera_test_result(
+    job_id: str,
+    scope: OrganizationScope = Depends(get_organization_scope),
+) -> dict:
+    result = CloudCameraRuntime(get_settings()).get_test_job(scope.organization_id, job_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Teste não encontrado.")
+    return result
 
 
 @router.get("/{camera_id}")
@@ -142,7 +176,7 @@ def get_camera(
     camera = repository.get(camera_id, scope.organization_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found.")
-    return serialize_camera(camera, manager.health(camera).as_dict())
+    return serialize_camera(camera, camera_health(camera, scope, manager))
 
 
 @router.patch("/{camera_id}")
@@ -170,7 +204,7 @@ def update_camera(
 
     if manager.settings.runtime != "serverless":
         manager.restart_camera(camera)
-    return serialize_camera(camera, manager.health(camera).as_dict())
+    return serialize_camera(camera, camera_health(camera, scope, manager))
 
 
 @router.delete(
@@ -188,6 +222,7 @@ def delete_camera(
     deleted = repository.delete(camera_id, scope.organization_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Camera not found.")
+    CloudCameraRuntime(get_settings()).forget(camera_id, scope.organization_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -200,6 +235,8 @@ def test_camera(
     camera = repository.get(camera_id, scope.organization_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found.")
+    if is_node_camera(camera):
+        return _start_node_test(scope, camera.source_uri)
     return test_camera_connection(camera, get_settings())
 
 
@@ -213,4 +250,4 @@ def get_camera_health(
     camera = repository.get(camera_id, scope.organization_id)
     if camera is None:
         raise HTTPException(status_code=404, detail="Camera not found.")
-    return manager.health(camera).as_dict()
+    return camera_health(camera, scope, manager)

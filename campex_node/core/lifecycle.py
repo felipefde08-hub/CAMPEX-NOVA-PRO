@@ -10,6 +10,7 @@ from campex_node.cameras.manager import CameraManager
 from campex_node.cloud.client import CloudClient
 from campex_node.cloud.config_sync import ConfigSyncService
 from campex_node.cloud.heartbeat import HeartbeatService
+from campex_node.cloud.live_relay import LiveRelayService
 from campex_node.cloud.sync import SyncService
 from campex_node.core.config import NodeSettings
 from campex_node.storage.local_store import LocalStore
@@ -39,6 +40,7 @@ class NodeLifecycle:
         self.sync: SyncService | None = None
         self.telemetry: TelemetryCollector | None = None
         self.vision: EdgeVisionService | None = None
+        self.live_relay: LiveRelayService | None = None
         self._running = False
         self.started_at: datetime | None = None
 
@@ -95,6 +97,15 @@ class NodeLifecycle:
             store=self.store,
         )
         self.heartbeat.start()
+        self.live_relay = LiveRelayService(
+            settings=self.settings,
+            cloud_client=self.cloud_client,
+            camera_manager=self.camera_manager,
+            vision=self.vision,
+            config_sync=self.config_sync,
+        )
+        if self.cloud_client.is_configured():
+            self.live_relay.start()
         self._running = True
         self.started_at = datetime.now(timezone.utc)
         logger.info("CAMPEX Node started")
@@ -119,6 +130,8 @@ class NodeLifecycle:
             self.stop()
 
     def stop(self) -> None:
+        if self.live_relay is not None:
+            self.live_relay.stop()
         if self.config_sync is not None:
             self.config_sync.stop()
         if self.sync is not None:
