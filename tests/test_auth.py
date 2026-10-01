@@ -118,6 +118,82 @@ def test_user_session_passes_api_token_guard(monkeypatch, tmp_path):
         assert client.get("/api/v1/cameras", headers=_session(token)).status_code == 200
 
 
+CAMERA = {
+    "name": "Doca 1",
+    "source_type": "rtsp",
+    "source_uri": "rtsp://203.0.113.10:554/stream",
+    "enabled": False,
+    "vision_enabled": False,
+}
+
+
+def _register(client, name: str, email: str) -> str:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"name": name, "email": email, "password": "senha-forte-123"},
+    )
+    assert response.status_code == 201
+    return response.json()["token"]
+
+
+def test_require_login_blocks_anonymous_access_but_keeps_public_routes(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAMPEX_REQUIRE_LOGIN", "true")
+    _configure_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        anonymous = client.get("/api/v1/cameras")
+        assert anonymous.status_code == 401
+        assert anonymous.json()["detail"] == "Faça login para continuar."
+        assert client.get("/api/v1/cameras", headers=_session("cxs_forjado")).status_code == 401
+
+        assert client.get("/api/v1/health").status_code == 200
+        pairing = client.post(
+            "/api/v1/nodes/pairing/start",
+            json={"node_public_id": "node_public_1", "node_name": "Node Doca"},
+        )
+        assert pairing.status_code == 201
+
+        token = _register(client, "Ana", "ana@empresa.com")
+        assert client.get("/api/v1/cameras", headers=_session(token)).status_code == 200
+
+
+def test_require_login_still_accepts_organization_tokens(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAMPEX_REQUIRE_LOGIN", "true")
+    monkeypatch.setenv("CAMPEX_ALLOWED_ORGANIZATION_IDS", "org_a")
+    monkeypatch.setenv("CAMPEX_DEFAULT_ORGANIZATION_ID", "org_a")
+    monkeypatch.setenv("CAMPEX_ORGANIZATION_TOKENS", "org_a:token-a")
+    _configure_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        assert client.get("/api/v1/cameras", headers={"Authorization": "Bearer token-a"}).status_code == 200
+        assert client.get("/api/v1/cameras", headers={"Authorization": "Bearer errado"}).status_code == 401
+
+
+def test_logged_in_users_only_see_their_own_organization(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAMPEX_REQUIRE_LOGIN", "true")
+    _configure_db(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        ana = _register(client, "Ana", "ana@empresa.com")
+        carlos = _register(client, "Carlos", "carlos@outra.com")
+
+        created = client.post("/api/v1/cameras", json=CAMERA, headers=_session(ana))
+        assert created.status_code == 201
+        camera_id = created.json()["id"]
+
+        assert [camera["id"] for camera in client.get("/api/v1/cameras", headers=_session(ana)).json()] == [camera_id]
+        assert client.get("/api/v1/cameras", headers=_session(carlos)).json() == []
+        assert client.get(f"/api/v1/cameras/{camera_id}", headers=_session(carlos)).status_code == 404
+        assert client.delete(f"/api/v1/cameras/{camera_id}", headers=_session(carlos)).status_code == 404
+
+        # A header cannot move a logged-in user into another tenant.
+        spoofed = client.get(
+            "/api/v1/cameras",
+            headers={**_session(carlos), "X-CAMPEX-Organization-Id": "default"},
+        )
+        assert spoofed.json() == []
+
+
 def test_password_hash_round_trip():
     encoded = hash_password("senha-forte-123")
 

@@ -11,6 +11,16 @@ def _request_settings(request: Request):
 
 
 async def get_organization_scope(request: Request) -> OrganizationScope:
+    # Set by the API guard middleware after validating X-CAMPEX-Session. A
+    # logged-in user always works inside their own organization; request
+    # headers cannot point them at another tenant.
+    user = getattr(request.state, "auth_user", None)
+    if user is not None:
+        return OrganizationScope(
+            organization_id=user.organization_id,
+            authenticated=True,
+            source="user_session",
+        )
     settings = _request_settings(request)
     authorization = request.headers.get("authorization")
     organization_token = request.headers.get("x-campex-organization-token")

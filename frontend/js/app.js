@@ -5521,6 +5521,9 @@ window.addEventListener("keydown", (event) => {
 });
 
 accountButton?.addEventListener("click", handleSignOut);
+window.addEventListener("campex:session-expired", () => {
+  if (getCurrentUser()) handleSignOut();
+});
 startAuthenticatedApp();
 // Render right away from the stored session, then drop it if the server revoked it.
 verifySession().then((valid) => {

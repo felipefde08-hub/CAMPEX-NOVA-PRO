@@ -5,7 +5,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from backend.middleware.cors import LocalNetworkCORSMiddleware
@@ -34,6 +34,7 @@ from backend.config import get_settings
 from backend.database.db import initialize_database
 from backend.logging_config import configure_logging
 from backend.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
+from backend.security.organization_scope import resolve_organization_scope
 from backend.vision.engine import VisionEngine
 from backend.vision.detector import create_detector
 
@@ -230,37 +231,53 @@ async def api_token_guard(request: Request, call_next):
         )
         and not path.startswith("/api/v1/nodes/pair/")
     ) and auth_header.lower().startswith("bearer ")
-    if request.method == "OPTIONS":
+    if request.method == "OPTIONS" or not path.startswith("/api/v1"):
         return await call_next(request)
-    if (
-        token
-        and path.startswith("/api/v1")
-        and path not in PUBLIC_API_PATHS
-        and not has_node_bearer
-        and not hmac.compare_digest(
-            request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),
-            token.encode("utf-8"),
-        )
-        and not await _has_valid_user_session(request, settings)
-    ):
-        response = JSONResponse(
-            {"detail": "Token de API ausente ou inválido."},
-            status_code=401,
-        )
-        return response
+
+    # The logged-in user (if any) is shared with the route dependencies, which
+    # scope every query to the user's organization.
+    user = await _authenticate_user_session(request, settings)
+    request.state.auth_user = user
+    if path in PUBLIC_API_PATHS or has_node_bearer or user is not None:
+        return await call_next(request)
+
+    api_token_valid = bool(token) and hmac.compare_digest(
+        request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),
+        token.encode("utf-8"),
+    )
+    if token and not api_token_valid:
+        return JSONResponse({"detail": "Token de API ausente ou inválido."}, status_code=401)
+    if settings.require_login and not api_token_valid and not _has_valid_organization_token(request, settings):
+        return JSONResponse({"detail": "Faça login para continuar."}, status_code=401)
     return await call_next(request)
 
 
-async def _has_valid_user_session(request: Request, settings) -> bool:
+async def _authenticate_user_session(request: Request, settings):
     session_token = request.headers.get(SESSION_HEADER)
     if not session_token:
-        return False
+        return None
     try:
-        user = await run_in_threadpool(AuthService(settings).authenticate, session_token)
+        return await run_in_threadpool(AuthService(settings).authenticate, session_token)
     except Exception:
         logger.warning("User session check failed", exc_info=True)
+        return None
+
+
+def _has_valid_organization_token(request: Request, settings) -> bool:
+    # Integrations configured with CAMPEX_ORGANIZATION_TOKENS keep working
+    # without a user login.
+    if not settings.intelligence_organization_tokens:
         return False
-    return user is not None
+    try:
+        scope = resolve_organization_scope(
+            settings,
+            authorization=request.headers.get("authorization"),
+            organization_token=request.headers.get("x-campex-organization-token"),
+            requested_organization_id=request.headers.get("x-campex-organization-id"),
+        )
+    except HTTPException:
+        return False
+    return scope.authenticated
 
 
 # CORS wraps authentication, including preflight and error responses.

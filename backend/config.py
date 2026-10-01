@@ -133,6 +133,9 @@ class Settings:
     runtime: str = "local"
     frontend_origin_regex: str | None = None
     api_token: str | None = None
+    # When true, /api/v1 requires a logged-in user (or the API/organization
+    # token). On by default in the cloud, off for the single-user local runtime.
+    require_login: bool = False
     vision_model: str = "yolo11n.pt"
     vision_input_size: int = 960
     vision_full_scan_seconds: float = 6.0
@@ -309,6 +312,11 @@ class Settings:
             vision_video_loop=os.getenv("VISION_VIDEO_LOOP", "true").lower()
             in {"1", "true", "yes", "on"},
             api_token=os.getenv("CAMPEXTOKEN") or os.getenv("CAMPEX_API_TOKEN") or None,
+            require_login=os.getenv(
+                "CAMPEX_REQUIRE_LOGIN",
+                "true" if os.getenv("CAMPEX_RUNTIME", _default_runtime()).lower() == "serverless" else "false",
+            ).lower()
+            in {"1", "true", "yes", "on"},
             vision_full_scan_seconds=float(
                 os.getenv("VISION_FULL_SCAN_SECONDS", "6")
             ),

@@ -18,7 +18,10 @@ const API_BASE_URL =
   );
 const isLocalNodeApi = isLocalNodeApiBase(API_BASE_URL);
 
-const mediaUrl = await createMediaUrl(API_BASE_URL, getApiToken);
+const mediaUrl = await createMediaUrl(API_BASE_URL, () => ({
+  token: getApiToken(),
+  session: getSessionToken(),
+}));
 
 function normalizeApiBaseUrl(value) {
   const trimmed = String(value || "").trim().replace(/\/$/, "");
@@ -234,6 +237,10 @@ async function requestJson(path, options = {}) {
     }
     const error = new Error(detail);
     error.status = response.status;
+    if (response.status === 401 && getSessionToken() && !path.startsWith("/auth/")) {
+      // The server revoked or expired the login; let the app return to the login screen.
+      window.dispatchEvent?.(new CustomEvent("campex:session-expired"));
+    }
     throw error;
   }
 
