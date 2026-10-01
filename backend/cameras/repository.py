@@ -25,7 +25,7 @@ def _row_to_camera(row) -> Camera:
 
 class CameraRepository:
     def __init__(self, settings: Settings) -> None:
-        self.database_path: Path = settings.sqlite_path
+        self.database_path: Path | str = settings.database_target
 
     def list(self, organization_id: str | None = None) -> list[Camera]:
         with connect(self.database_path) as connection:

@@ -73,6 +73,26 @@ dist\CampexNode\CampexNode.exe
 
 O build usa PyInstaller em modo `onedir`, sem console visivel.
 
+### 4.1. Assinatura do executavel
+
+Sem assinatura digital, antivirus e SmartScreen costumam bloquear o `CampexNode.exe` no cliente
+(erro "O Windows nao pode acessar o dispositivo, caminho ou arquivo especificado").
+Com um certificado de assinatura de codigo (OV/EV) emitido por uma autoridade confiavel:
+
+```powershell
+# Opcao 1: arquivo .pfx
+$env:CAMPEX_SIGN_PFX_PATH = "C:\certificados\campex.pfx"
+$env:CAMPEX_SIGN_PFX_PASSWORD = "<senha do pfx>"
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
+
+# Opcao 2: certificado ja instalado no Windows (ou token USB EV)
+powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1 -CertificateThumbprint "<thumbprint>"
+```
+
+O executavel e assinado (SHA-256 + carimbo de tempo) antes de gerar o `.zip`. Sem certificado,
+o build continua e mostra um aviso. Certificados autoassinados sao recusados, porque nao
+resolvem o bloqueio no cliente.
+
 ## 5. Executar o CAMPEX Node
 
 Abrir manualmente:

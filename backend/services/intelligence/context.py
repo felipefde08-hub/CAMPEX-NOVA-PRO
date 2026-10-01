@@ -15,7 +15,7 @@ def build_intelligence_context(
     *,
     limit_events: int = 100,
 ) -> dict[str, Any]:
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         cameras = [
             dict(row)
             for row in connection.execute(

@@ -1,14 +1,17 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from backend.middleware.cors import LocalNetworkCORSMiddleware
 
+from backend.api.auth import SESSION_HEADER
+from backend.api.auth import router as auth_router
 from backend.api.cameras import router as cameras_router
 from backend.api.analysis import router as analysis_router
 from backend.api.health import router as health_router
@@ -26,10 +29,12 @@ from backend.api.zones import router as zones_router
 from backend.api.events import router as events_router
 from backend.cameras.manager import CameraManager
 from backend.cameras.repository import CameraRepository
+from backend.auth.service import AuthService
 from backend.config import get_settings
 from backend.database.db import initialize_database
 from backend.logging_config import configure_logging
 from backend.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
+from backend.security.organization_scope import resolve_organization_scope
 from backend.vision.engine import VisionEngine
 from backend.vision.detector import create_detector
 
@@ -197,6 +202,18 @@ app.add_middleware(
 )
 
 
+PUBLIC_API_PATHS = frozenset(
+    {
+        "/api/v1/health",
+        "/api/v1/nodes/pair/claim",
+        "/api/v1/nodes/pairing/start",
+        "/api/v1/nodes/pairing/status",
+        "/api/v1/auth/register",
+        "/api/v1/auth/login",
+    }
+)
+
+
 @app.middleware("http")
 async def api_token_guard(request: Request, call_next):
     settings = getattr(request.app.state, "settings", startup_settings)
@@ -214,27 +231,53 @@ async def api_token_guard(request: Request, call_next):
         )
         and not path.startswith("/api/v1/nodes/pair/")
     ) and auth_header.lower().startswith("bearer ")
-    if request.method == "OPTIONS":
+    if request.method == "OPTIONS" or not path.startswith("/api/v1"):
         return await call_next(request)
-    if (
-        token
-        and path.startswith("/api/v1")
-        and path != "/api/v1/health"
-        and path != "/api/v1/nodes/pair/claim"
-        and path != "/api/v1/nodes/pairing/start"
-        and path != "/api/v1/nodes/pairing/status"
-        and not has_node_bearer
-        and not hmac.compare_digest(
-            request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),
-            token.encode("utf-8"),
-        )
-    ):
-        response = JSONResponse(
-            {"detail": "Token de API ausente ou inválido."},
-            status_code=401,
-        )
-        return response
+
+    # The logged-in user (if any) is shared with the route dependencies, which
+    # scope every query to the user's organization.
+    user = await _authenticate_user_session(request, settings)
+    request.state.auth_user = user
+    if path in PUBLIC_API_PATHS or has_node_bearer or user is not None:
+        return await call_next(request)
+
+    api_token_valid = bool(token) and hmac.compare_digest(
+        request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),
+        token.encode("utf-8"),
+    )
+    if token and not api_token_valid:
+        return JSONResponse({"detail": "Token de API ausente ou inválido."}, status_code=401)
+    if settings.require_login and not api_token_valid and not _has_valid_organization_token(request, settings):
+        return JSONResponse({"detail": "Faça login para continuar."}, status_code=401)
     return await call_next(request)
+
+
+async def _authenticate_user_session(request: Request, settings):
+    session_token = request.headers.get(SESSION_HEADER)
+    if not session_token:
+        return None
+    try:
+        return await run_in_threadpool(AuthService(settings).authenticate, session_token)
+    except Exception:
+        logger.warning("User session check failed", exc_info=True)
+        return None
+
+
+def _has_valid_organization_token(request: Request, settings) -> bool:
+    # Integrations configured with CAMPEX_ORGANIZATION_TOKENS keep working
+    # without a user login.
+    if not settings.intelligence_organization_tokens:
+        return False
+    try:
+        scope = resolve_organization_scope(
+            settings,
+            authorization=request.headers.get("authorization"),
+            organization_token=request.headers.get("x-campex-organization-token"),
+            requested_organization_id=request.headers.get("x-campex-organization-id"),
+        )
+    except HTTPException:
+        return False
+    return scope.authenticated
 
 
 # CORS wraps authentication, including preflight and error responses.
@@ -246,9 +289,10 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
-    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
+    expose_headers=["Content-Range", "Accept-Ranges", "Content-Length", "X-CAMPEX-Frame"],
 )
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(analysis_router)
 app.include_router(cameras_router)
 app.include_router(vision_router)

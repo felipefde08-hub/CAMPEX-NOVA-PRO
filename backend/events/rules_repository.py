@@ -18,7 +18,7 @@ DEFAULT_RULE_DATA = [
 
 class RuleRepository:
     def __init__(self, settings: Settings) -> None:
-        self.database_path = settings.sqlite_path
+        self.database_path = settings.database_target
 
     def ensure_defaults(self) -> None:
         with connect(self.database_path) as connection:

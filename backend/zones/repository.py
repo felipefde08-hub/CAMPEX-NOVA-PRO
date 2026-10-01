@@ -15,7 +15,7 @@ logger = logging.getLogger("campex.zones.repository")
 
 class ZoneRepository:
     def __init__(self, settings: Settings | None = None) -> None:
-        self.database_path = settings.sqlite_path if settings else None
+        self.database_path = settings.database_target if settings else None
 
     @classmethod
     def for_settings(cls, settings: Settings) -> "ZoneRepository":
@@ -165,7 +165,7 @@ class ZoneRepository:
             return cursor.rowcount > 0
 
     @property
-    def _db_path(self) -> Path:
+    def _db_path(self) -> Path | str:
         """Resolve database path from settings."""
         if self.database_path is None:
             raise RuntimeError("ZoneRepository requires database settings.")

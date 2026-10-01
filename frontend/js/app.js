@@ -62,6 +62,7 @@ import {
   simulateRule as simulateRuleRequest,
   testCamera,
   testCameraSource,
+  fetchCameraSnapshot,
   testEmailNotification,
   testTelegramNotification,
   updateCamera,
@@ -75,11 +76,12 @@ import {
   uploadedVideoUrl,
 } from "./api.js";
 import {
-  createLocalAccount,
+  createAccount,
   getCurrentUser,
-  listLocalUsers,
-  signInLocal,
-  signOutLocal,
+  listUsers,
+  signIn,
+  signOut,
+  verifySession,
 } from "./auth.js";
 import { currentRoute, routes } from "./state.js";
 
@@ -231,7 +233,7 @@ function renderAuthScreen(mode = "login") {
           <span>Senha</span>
           <div>
             <i data-lucide="lock-keyhole" aria-hidden="true"></i>
-            <input name="password" type="password" autocomplete="new-password" placeholder="Mínimo de 6 caracteres" required minlength="6" />
+            <input name="password" type="password" autocomplete="new-password" placeholder="Mínimo de 8 caracteres" required minlength="8" />
           </div>
         </label>
         <p class="auth-error" data-auth-error="signup"></p>
@@ -262,7 +264,7 @@ function setAuthMode(mode) {
   }
   if (subtitle) {
     subtitle.textContent = nextMode === "signup"
-      ? "Cadastre seu acesso local em poucos segundos."
+      ? "Cadastre seu acesso em poucos segundos."
       : "Entre para acompanhar câmeras, eventos e evidências.";
   }
   const loginForm = document.querySelector("#login-form");
@@ -274,7 +276,7 @@ function setAuthMode(mode) {
 async function handleLoginSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  await submitAuthForm(form, "login", () => signInLocal({
+  await submitAuthForm(form, "login", () => signIn({
     email: form.elements.email.value,
     password: form.elements.password.value,
   }));
@@ -283,7 +285,7 @@ async function handleLoginSubmit(event) {
 async function handleSignupSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  await submitAuthForm(form, "signup", () => createLocalAccount({
+  await submitAuthForm(form, "signup", () => createAccount({
     name: form.elements.name.value,
     email: form.elements.email.value,
     password: form.elements.password.value,
@@ -331,7 +333,7 @@ function startAuthenticatedApp(user = getCurrentUser()) {
 }
 
 function handleSignOut() {
-  signOutLocal();
+  signOut();
   operationsStream?.close();
   operationsStream = null;
   clearInterval(backendStatusTimer);
@@ -884,6 +886,7 @@ async function loadVideoWall() {
     grid.innerHTML = visible.length
       ? visible.map(videoWallTile).join("")
       : emptyState("Nenhuma câmera cadastrada", "Cadastre uma câmera para montar o mural operacional.");
+    startRelayImages(grid, 2000);
   } catch (error) {
     grid.innerHTML = emptyState("Falha ao carregar mural", error.message);
   }
@@ -898,6 +901,8 @@ function videoWallTile(camera) {
       : `<div class="media-placeholder"><a class="primary-action" href="${localNodeLiveUrl(camera.id)}" target="_blank" rel="noopener">Abrir no painel local</a></div>`;
   } else if (camera.source_type === "video_file") {
     media = `<video class="wall-media" src="${cameraVideoUrl(camera.id)}" autoplay muted playsinline loop></video>`;
+  } else if (isNodeRelayCamera(camera)) {
+    media = `<img class="wall-media" data-relay-camera="${escapeHtml(camera.id)}" alt="${escapeHtml(camera.name)}" />`;
   } else {
     media = `<img class="wall-media" src="${cameraStreamUrl(camera.id)}" alt="${camera.name}" />`;
   }
@@ -1070,6 +1075,11 @@ async function renderLiveMedia(camera) {
       return;
     }
 
+    if (info.mode === "node_relay") {
+      renderRelayElement(camera, info);
+      return;
+    }
+
     if (info.available === false) {
       renderNodeMjpegElement(camera, info.message);
       return;
@@ -1084,6 +1094,82 @@ async function renderLiveMedia(camera) {
   } catch (error) {
     renderNodeMjpegElement(camera, error.message);
   }
+}
+
+// Cameras captured by a CAMPEX Node: the Cloud stores the frames the Node
+// relays, and the dashboard polls the latest one.
+function isNodeRelayCamera(camera) {
+  return camera?.health?.runtime === "campex_node";
+}
+
+function renderRelayElement(camera, info = {}) {
+  const mediaHost = document.querySelector("#live-media-host");
+  if (!mediaHost) return;
+  mediaHost.innerHTML = `
+    <img id="live-node-relay" class="live-media" alt="Vídeo ao vivo da câmera via CAMPEX Node" hidden />
+    <div class="media-placeholder" id="live-node-relay-waiting">Conectando ao CAMPEX Node...</div>
+  `;
+  const img = mediaHost.querySelector("#live-node-relay");
+  const waiting = mediaHost.querySelector("#live-node-relay-waiting");
+  startSnapshotLoop(img, camera.id, {
+    intervalMs: Number(info.refresh_ms) || 1000,
+    overlay: () => liveDetectionsVisible(),
+    isActive: () => activeMediaCameraId === camera.id && img.isConnected,
+    onFrame: (isWaiting) => {
+      img.hidden = isWaiting;
+      waiting.hidden = !isWaiting;
+      if (isWaiting) {
+        waiting.textContent = "Aguardando imagem do CAMPEX Node. A primeira imagem chega em até 10 segundos.";
+      }
+    },
+    onError: (error) => {
+      img.hidden = true;
+      waiting.hidden = false;
+      waiting.textContent = `Não foi possível carregar a imagem: ${error.message}`;
+    },
+  });
+}
+
+function startRelayImages(root, intervalMs) {
+  root.querySelectorAll("img[data-relay-camera]").forEach((img) => {
+    startSnapshotLoop(img, img.dataset.relayCamera, {
+      intervalMs,
+      isActive: () => img.isConnected,
+    });
+  });
+}
+
+function startSnapshotLoop(img, cameraId, { intervalMs = 1000, overlay = () => false, isActive, onFrame, onError } = {}) {
+  let objectUrl = null;
+  const release = () => {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+  };
+  const tick = async () => {
+    if (!isActive()) {
+      release();
+      return;
+    }
+    try {
+      const { blob, waiting } = await fetchCameraSnapshot(cameraId, { overlay: overlay() });
+      if (!isActive()) {
+        release();
+        return;
+      }
+      if (!waiting || !objectUrl) {
+        const nextUrl = URL.createObjectURL(blob);
+        img.src = nextUrl;
+        release();
+        objectUrl = nextUrl;
+      }
+      onFrame?.(waiting);
+    } catch (error) {
+      onError?.(error);
+      if (error?.status === 401) return;
+    }
+    setTimeout(tick, intervalMs);
+  };
+  tick();
 }
 
 function renderVideoElement(camera) {
@@ -1877,7 +1963,7 @@ async function handleTestCameraSource() {
   if (!form || !result) return;
   result.hidden = false;
   result.dataset.state = "loading";
-  result.textContent = "Testando conexão e aguardando frame válido...";
+  result.textContent = "Testando conexão pelo CAMPEX Node. Isso pode levar alguns segundos...";
   if (preview) {
     preview.hidden = true;
     preview.removeAttribute("src");
@@ -1919,7 +2005,7 @@ async function handleSimpleCameraTest() {
   if (!form || !result) return;
   result.hidden = false;
   result.dataset.state = "loading";
-  result.textContent = "Testando conexão e aguardando frame válido...";
+  result.textContent = "Testando conexão pelo CAMPEX Node. Isso pode levar alguns segundos...";
   if (preview) {
     preview.hidden = true;
     preview.removeAttribute("src");
@@ -3067,15 +3153,19 @@ function renderZoneMedia(camera) {
     return;
   }
 
-  const source = camera.source_type === "video_file" ? cameraVideoUrl(camera.id) : cameraStreamUrl(camera.id);
+  const relay = isNodeRelayCamera(camera);
+  const source = camera.source_type === "video_file" ? cameraVideoUrl(camera.id) : relay ? "" : cameraStreamUrl(camera.id);
   const media = camera.source_type === "video_file"
     ? `<video id="zone-media" class="zone-media" src="${source}" autoplay muted playsinline loop controls></video>`
-    : `<img id="zone-media" class="zone-media" src="${source}" alt="Preview da câmera" />`;
+    : relay
+      ? `<img id="zone-media" class="zone-media" data-relay-camera="${escapeHtml(camera.id)}" alt="Preview da câmera" />`
+      : `<img id="zone-media" class="zone-media" src="${source}" alt="Preview da câmera" />`;
 
   host.innerHTML = `
     ${media}
     <canvas id="zone-draw-canvas" class="zone-draw-canvas" aria-label="Desenho de zona"></canvas>
   `;
+  startRelayImages(host, 2000);
   const canvas = document.querySelector("#zone-draw-canvas");
   canvas.addEventListener("pointerdown", addZonePoint);
   window.addEventListener("resize", drawZoneCanvas, { once: true });
@@ -3405,11 +3495,15 @@ function renderMachineMedia(camera) {
     host.innerHTML = `<div class="media-placeholder">Cadastre ou selecione uma câmera</div>`;
     return;
   }
-  const source = camera.source_type === "video_file" ? cameraVideoUrl(camera.id) : cameraStreamUrl(camera.id);
+  const relay = isNodeRelayCamera(camera);
+  const source = camera.source_type === "video_file" ? cameraVideoUrl(camera.id) : relay ? "" : cameraStreamUrl(camera.id);
   const media = camera.source_type === "video_file"
     ? `<video id="machine-media" class="zone-media" src="${source}" autoplay muted playsinline loop controls></video>`
-    : `<img id="machine-media" class="zone-media" src="${source}" alt="Preview da câmera" />`;
+    : relay
+      ? `<img id="machine-media" class="zone-media" data-relay-camera="${escapeHtml(camera.id)}" alt="Preview da câmera" />`
+      : `<img id="machine-media" class="zone-media" src="${source}" alt="Preview da câmera" />`;
   host.innerHTML = `${media}<canvas id="machine-draw-canvas" class="zone-draw-canvas" aria-label="Desenho de máquina"></canvas>`;
+  startRelayImages(host, 2000);
   const canvas = document.querySelector("#machine-draw-canvas");
   canvas.addEventListener("pointerdown", addMachinePoint);
   window.addEventListener("resize", drawMachineCanvas, { once: true });
@@ -4591,12 +4685,12 @@ function securitySettingsMarkup() {
 }
 
 function usersSettingsMarkup() {
-  const users = listLocalUsers();
+  const users = listUsers();
   const invites = readStoredSettings("campex.user_invites", { items: [] }).items || [];
   return `
-    ${settingsCard("Usuários", "Gerencie usuários locais e convites operacionais.", "users", `
+    ${settingsCard("Usuários", "Gerencie os usuários da sua organização e convites operacionais.", "users", `
       <div class="settings-integration-list">
-        ${users.map((user) => settingsUserLine(user.name, user.email, user.role || "operator", "Ativo")).join("") || emptyState("Nenhum usuário local", "Crie uma conta na tela de acesso.")}
+        ${users.map((user) => settingsUserLine(user.name, user.email, user.role || "operator", "Ativo")).join("") || emptyState("Nenhum usuário", "Crie uma conta na tela de acesso.")}
       </div>
     `)}
     ${settingsCard("Convidar usuário", "Registre convites para liberação operacional.", "user-plus", `
@@ -5520,5 +5614,11 @@ window.addEventListener("keydown", (event) => {
 });
 
 accountButton?.addEventListener("click", handleSignOut);
+window.addEventListener("campex:session-expired", () => {
+  if (getCurrentUser()) handleSignOut();
+});
 startAuthenticatedApp();
-
+// Render right away from the stored session, then drop it if the server revoked it.
+verifySession().then((valid) => {
+  if (!valid) handleSignOut();
+});

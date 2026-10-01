@@ -121,6 +121,13 @@ class CloudClient:
             return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
         return self._send("POST", "/node-sync/metrics", payload=metrics)
 
+    def send_live_state(self, payload: dict[str, Any]) -> CloudResult:
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        if not self.settings.cloud_token:
+            return CloudResult(ok=False, error="Node is not paired.")
+        return self._send("POST", "/node-sync/cameras/live", payload=payload)
+
     def send_batch(self, *, events: list[dict[str, Any]], metrics: list[dict[str, Any]]) -> CloudResult:
         if not self.settings.cloud_url:
             return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")

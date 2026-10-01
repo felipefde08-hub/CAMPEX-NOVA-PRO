@@ -15,7 +15,7 @@ logger = logging.getLogger("campex.events.repository")
 
 class EventRepository:
     def __init__(self, settings: Settings) -> None:
-        self.database_path = settings.sqlite_path
+        self.database_path = settings.database_target
 
     @classmethod
     def for_settings(cls, settings: Settings) -> "EventRepository":

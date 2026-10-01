@@ -1,6 +1,14 @@
+// getCredentials returns the API token string, or { token, session } with the
+// API token and the login session token.
+function readCredentials(getCredentials) {
+  const value = getCredentials();
+  if (value && typeof value === 'object') return { token: value.token || '', session: value.session || '' };
+  return { token: value || '', session: '' };
+}
+
 // Native media elements cannot set authentication headers. A same-origin
-// service worker forwards their requests with the current tab's credential.
-export async function createMediaUrl(apiBaseUrl, getToken) {
+// service worker forwards their requests with the current tab's credentials.
+export async function createMediaUrl(apiBaseUrl, getCredentials) {
   const workerUrl = new URL('../media-worker.js', import.meta.url);
   const proxyUrl = new URL('./__campex_media__', workerUrl);
   let available = false;
@@ -16,7 +24,7 @@ export async function createMediaUrl(apiBaseUrl, getToken) {
         if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname) || !permitted) {
           throw new Error('Invalid media destination');
         }
-        event.ports[0].postMessage({ token: getToken() });
+        event.ports[0].postMessage(readCredentials(getCredentials));
       } catch {
         event.ports[0].postMessage({ error: true });
       }
@@ -45,7 +53,8 @@ export async function createMediaUrl(apiBaseUrl, getToken) {
   }
   return (url) => {
     if (!available) {
-      if (getToken()) throw new Error('Para abrir mídia protegida, use HTTPS ou localhost e permita service workers no navegador.');
+      const { token, session } = readCredentials(getCredentials);
+      if (token || session) throw new Error('Para abrir mídia protegida, use HTTPS ou localhost e permita service workers no navegador.');
       return url;
     }
     const proxy = new URL(proxyUrl);

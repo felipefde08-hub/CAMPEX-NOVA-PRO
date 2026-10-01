@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from backend.integrations.nemotron import NemotronClient
@@ -14,7 +14,8 @@ from backend.services.intelligence.exceptions import (
 )
 from backend.services.intelligence.models import IntelligenceRequest
 from backend.services.intelligence.service import CampexIntelligenceService
-from backend.security import resolve_organization_scope
+from backend.security.dependencies import get_organization_scope
+from backend.security.organization_scope import OrganizationScope
 
 
 router = APIRouter(prefix="/api/v1/intelligence", tags=["intelligence"])
@@ -36,20 +37,12 @@ class AskResponse(BaseModel):
 def ask_intelligence(
     payload: AskPayload,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    x_campex_organization_token: str | None = Header(default=None, alias="X-CAMPEX-Organization-Token"),
-    x_campex_organization_id: str | None = Header(default=None, alias="X-CAMPEX-Organization-Id"),
+    scope: OrganizationScope = Depends(get_organization_scope),
 ) -> AskResponse:
     settings = request.app.state.settings
     if not settings.intelligence_enabled:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Intelligence is disabled.")
 
-    scope = resolve_organization_scope(
-        settings,
-        authorization=authorization,
-        organization_token=x_campex_organization_token,
-        requested_organization_id=x_campex_organization_id,
-    )
     organization_id = scope.organization_id
     context = build_intelligence_context(settings, organization_id)
     service = CampexIntelligenceService(NemotronClient(settings))

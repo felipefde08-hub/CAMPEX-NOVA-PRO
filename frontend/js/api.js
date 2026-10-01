@@ -1,5 +1,5 @@
 import { createMediaUrl } from "./media-auth.js";
-import { getApiToken } from "./api-token.js";
+import { getApiToken, getSessionToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
 const localApiBaseUrl = "http://127.0.0.1:8787/api";
 const localNodeApiBaseUrl = "http://127.0.0.1:8787/api";
@@ -18,7 +18,10 @@ const API_BASE_URL =
   );
 const isLocalNodeApi = isLocalNodeApiBase(API_BASE_URL);
 
-const mediaUrl = await createMediaUrl(API_BASE_URL, getApiToken);
+const mediaUrl = await createMediaUrl(API_BASE_URL, () => ({
+  token: getApiToken(),
+  session: getSessionToken(),
+}));
 
 function normalizeApiBaseUrl(value) {
   const trimmed = String(value || "").trim().replace(/\/$/, "");
@@ -31,10 +34,6 @@ function normalizeApiBaseUrl(value) {
 
 function isLocalNodeApiBase(value) {
   return /^https?:\/\/(127\.0\.0\.1|localhost):8787\/api\/?$/i.test(String(value || "").trim());
-}
-
-function shouldUseLocalNodeForCamera(payload = {}) {
-  return isHostedFrontend && ["rtsp", "ip_camera"].includes(String(payload.source_type || "").toLowerCase());
 }
 
 function shouldUseLocalNodeCameraId(cameraId = "") {
@@ -180,21 +179,28 @@ function assertApiBaseUrl() {
   }
 }
 
-function apiHeaders(extra = {}) {
+function credentialHeaders() {
   const apiToken = getApiToken();
+  const sessionToken = getSessionToken();
+  return {
+    ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
+    ...(sessionToken ? { "X-CAMPEX-Session": sessionToken } : {}),
+  };
+}
+
+function apiHeaders(extra = {}) {
   return {
     Accept: "application/json",
     "Content-Type": "application/json",
-    ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
+    ...credentialHeaders(),
     ...Object.fromEntries(new Headers(extra)),
   };
 }
 
 function uploadHeaders(extra = {}) {
-  const apiToken = getApiToken();
   return {
     Accept: "application/json",
-    ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
+    ...credentialHeaders(),
     ...Object.fromEntries(new Headers(extra)),
   };
 }
@@ -225,7 +231,13 @@ async function requestJson(path, options = {}) {
         ? "Arquivo grande demais para upload direto na Vercel. Use MP4 de até 4 MB."
         : response.statusText || detail;
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    if (response.status === 401 && getSessionToken() && !path.startsWith("/auth/")) {
+      // The server revoked or expired the login; let the app return to the login screen.
+      window.dispatchEvent?.(new CustomEvent("campex:session-expired"));
+    }
+    throw error;
   }
 
   if (response.status === 204) {
@@ -237,6 +249,38 @@ async function requestJson(path, options = {}) {
 
 export async function getHealth() {
   return requestJson("/health");
+}
+
+// The local CAMPEX Node has no account database, so login there stays in the
+// browser (see auth.js); every other backend authenticates against the Cloud.
+export function usesLocalNodeApi() {
+  return isLocalNodeApi;
+}
+
+export function authRegister({ name, email, password }) {
+  return requestJson("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name, email, password }),
+  });
+}
+
+export function authLogin({ email, password }) {
+  return requestJson("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function authMe() {
+  return requestJson("/auth/me");
+}
+
+export function authLogout() {
+  return requestJson("/auth/logout", { method: "POST" });
+}
+
+export function authListUsers() {
+  return requestJson("/auth/users");
 }
 
 export function getRuntimeSettings() {
@@ -366,13 +410,9 @@ export async function listCameras() {
   return Array.from(merged.values());
 }
 
+// RTSP cameras are registered in the Cloud; the organization's CAMPEX Node
+// picks them up from there, captures them and relays status and frames back.
 export function createCamera(payload) {
-  if (shouldUseLocalNodeForCamera(payload)) {
-    return requestLocalNodeJson("/cameras", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  }
   return requestJson("/cameras", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -380,7 +420,7 @@ export function createCamera(payload) {
 }
 
 export function updateCamera(cameraId, payload) {
-  if (shouldUseLocalNodeForCamera(payload)) {
+  if (shouldUseLocalNodeCameraId(cameraId)) {
     return requestLocalNodeJson(`/cameras/${cameraId}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
@@ -392,17 +432,49 @@ export function updateCamera(cameraId, payload) {
   });
 }
 
-export function testCameraSource(payload) {
-  if (shouldUseLocalNodeForCamera(payload)) {
-    return requestLocalNodeJson("/cameras/test-source", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  }
-  return requestJson("/cameras/test-source", {
+export async function testCameraSource(payload) {
+  const started = await requestJson("/cameras/test-source", {
     method: "POST",
     body: JSON.stringify(payload),
   });
+  return started?.pending ? waitForNodeCameraTest(started.job_id) : started;
+}
+
+// In the Cloud the connection test runs on the CAMPEX Node (the only machine
+// on the camera network); the Cloud hands back the result when it arrives.
+async function waitForNodeCameraTest(jobId, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const result = await requestJson(`/cameras/test-source/${encodeURIComponent(jobId)}`);
+    if (!result?.pending) return result;
+  }
+  return {
+    ok: false,
+    success: false,
+    status: "OFFLINE",
+    error: "O CAMPEX Node não respondeu ao teste a tempo. Verifique se ele está aberto e conectado.",
+  };
+}
+
+// Latest frame relayed by the CAMPEX Node, fetched with the login headers.
+export async function fetchCameraSnapshot(cameraId, { overlay = false } = {}) {
+  assertApiBaseUrl();
+  const params = new URLSearchParams({ t: String(Date.now()) });
+  if (overlay) params.set("overlay", "true");
+  const response = await fetch(`${API_BASE_URL}/cameras/${encodeURIComponent(cameraId)}/snapshot?${params}`, {
+    headers: { ...credentialHeaders(), Accept: "image/jpeg" },
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`);
+    error.status = response.status;
+    if (response.status === 401 && getSessionToken()) {
+      window.dispatchEvent?.(new CustomEvent("campex:session-expired"));
+    }
+    throw error;
+  }
+  return { blob: await response.blob(), waiting: response.headers.get("X-CAMPEX-Frame") === "waiting" };
 }
 
 export function listCameraTemplates() {

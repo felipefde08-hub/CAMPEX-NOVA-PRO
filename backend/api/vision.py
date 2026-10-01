@@ -8,6 +8,8 @@ import cv2
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
+from backend.api.cameras import is_node_camera
+from backend.cameras.cloud_runtime import CloudCameraRuntime
 from backend.cameras.manager import CameraManager
 from backend.cameras.repository import CameraRepository
 from backend.config import ROOT_DIR, get_settings
@@ -40,6 +42,12 @@ def ensure_camera(camera_id: str, repository: CameraRepository, scope: Organizat
     return camera
 
 
+def _set_node_flags(camera: Camera, scope: OrganizationScope, **flags: bool) -> dict:
+    runtime = CloudCameraRuntime(get_settings())
+    runtime.set_flags(camera.id, scope.organization_id, **flags)
+    return runtime.vision_status(camera, scope.organization_id)
+
+
 @router.post("/{camera_id}/vision/start")
 def start_vision(
     camera_id: str,
@@ -49,6 +57,8 @@ def start_vision(
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> dict:
     camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return _set_node_flags(camera, scope, vision_enabled=True)
     if not manager.is_running(camera_id):
         manager.start_camera(camera)
     return engine.start_session(camera_id)
@@ -63,6 +73,8 @@ def restart_vision(
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> dict:
     camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return _set_node_flags(camera, scope, vision_enabled=True)
     manager.restart_camera(camera)
     return engine.restart_session(camera_id)
 
@@ -74,7 +86,9 @@ def stop_vision(
     repository: CameraRepository = Depends(get_repository),
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> dict:
-    ensure_camera(camera_id, repository, scope)
+    camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return _set_node_flags(camera, scope, vision_enabled=False)
     return engine.stop_session(camera_id)
 
 
@@ -87,6 +101,8 @@ def start_mapping(
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> dict:
     camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return _set_node_flags(camera, scope, mapping_enabled=True)
     if not manager.is_running(camera_id):
         manager.start_camera(camera)
     return engine.start_mapping(camera_id)
@@ -99,7 +115,9 @@ def stop_mapping(
     repository: CameraRepository = Depends(get_repository),
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> dict:
-    ensure_camera(camera_id, repository, scope)
+    camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return _set_node_flags(camera, scope, mapping_enabled=False)
     return engine.stop_mapping(camera_id)
 
 
@@ -110,7 +128,9 @@ def vision_status(
     repository: CameraRepository = Depends(get_repository),
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> dict:
-    ensure_camera(camera_id, repository, scope)
+    camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return CloudCameraRuntime(get_settings()).vision_status(camera, scope.organization_id)
     return engine.status(camera_id)
 
 
@@ -121,7 +141,9 @@ def vision_objects(
     repository: CameraRepository = Depends(get_repository),
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> list[dict]:
-    ensure_camera(camera_id, repository, scope)
+    camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return CloudCameraRuntime(get_settings()).objects(camera.id, scope.organization_id)
     return [tracked.as_dict() for tracked in engine.objects(camera_id)]
 
 
@@ -132,7 +154,9 @@ def mapping_poses(
     repository: CameraRepository = Depends(get_repository),
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> list[dict]:
-    ensure_camera(camera_id, repository, scope)
+    camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        return CloudCameraRuntime(get_settings()).poses(camera.id, scope.organization_id)
     return [pose.as_dict() for pose in engine.poses(camera_id)]
 
 
@@ -165,6 +189,17 @@ def stream_info(
     repository: CameraRepository = Depends(get_repository),
 ) -> dict:
     camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        # Frames are relayed by the CAMPEX Node; the dashboard polls snapshots.
+        return {
+            "camera_id": camera.id,
+            "source_type": camera.source_type,
+            "mode": "node_relay",
+            "available": True,
+            "refresh_ms": 1000,
+            "message": None,
+            "snapshot_url": f"/api/v1/cameras/{camera.id}/snapshot",
+        }
     mode = "file_video" if camera.source_type == "video_file" else "mjpeg"
     return {
         "camera_id": camera.id,
@@ -245,7 +280,17 @@ def camera_snapshot(
     manager: CameraManager = Depends(get_camera_manager),
     engine: VisionEngine = Depends(get_vision_engine),
 ) -> Response:
-    ensure_camera(camera_id, repository, scope)
+    camera = ensure_camera(camera_id, repository, scope)
+    if is_node_camera(camera):
+        jpeg = CloudCameraRuntime(get_settings()).snapshot(camera.id, scope.organization_id, overlay=overlay)
+        if jpeg is None:
+            ok, encoded = cv2.imencode(".jpg", _blank_frame("Aguardando imagem do CAMPEX Node"))
+            return Response(
+                content=encoded.tobytes(),
+                media_type="image/jpeg",
+                headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "waiting"},
+            )
+        return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "live"})
     frame, _ = manager.latest_frame(camera_id)
     if frame is None:
         frame = _blank_frame("Sem preview disponivel")

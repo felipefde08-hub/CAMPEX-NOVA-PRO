@@ -13,7 +13,7 @@ function credentials(client, url) {
       clearTimeout(timer);
       channel.port1.close();
       if (data.error) reject(new Error('Media destination rejected'));
-      else resolve(data.token);
+      else resolve({ token: data.token || '', session: data.session || '' });
     };
     client.postMessage({ type: 'campex-media-auth', url }, [channel.port2]);
   });
@@ -29,9 +29,10 @@ async function mediaResponse(event, url) {
     for (const [key, value] of url.searchParams) {
       if (key !== 'url') target.searchParams.set(key, value);
     }
-    const token = await credentials(client, target.href);
+    const { token, session } = await credentials(client, target.href);
     const headers = new Headers();
     if (token) headers.set('X-CAMPEX-Token', token);
+    if (session) headers.set('X-CAMPEX-Session', session);
     const range = event.request.headers.get('Range');
     if (range) headers.set('Range', range);
     return await fetch(target.href, {

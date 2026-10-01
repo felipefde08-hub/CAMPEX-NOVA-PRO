@@ -133,6 +133,9 @@ class Settings:
     runtime: str = "local"
     frontend_origin_regex: str | None = None
     api_token: str | None = None
+    # When true, /api/v1 requires a logged-in user (or the API/organization
+    # token). On by default in the cloud, off for the single-user local runtime.
+    require_login: bool = False
     vision_model: str = "yolo11n.pt"
     vision_input_size: int = 960
     vision_full_scan_seconds: float = 6.0
@@ -241,10 +244,19 @@ class Settings:
             raise ValueError("LINE_CROSSING_COOLDOWN_SECONDS must be non-negative.")
 
     @property
+    def uses_postgres(self) -> bool:
+        return self.database_url.startswith(("postgres://", "postgresql://"))
+
+    @property
+    def database_target(self) -> Path | str:
+        """What ``backend.database.db.connect`` opens: a SQLite file or a Postgres URL."""
+        return self.database_url if self.uses_postgres else self.sqlite_path
+
+    @property
     def sqlite_path(self) -> Path:
         prefix = "sqlite:///"
         if not self.database_url.startswith(prefix):
-            raise ValueError("Sprint 0 supports only sqlite:/// DATABASE_URL values.")
+            raise ValueError("DATABASE_URL must be sqlite:///<path> or a postgresql:// URL.")
 
         raw_path = self.database_url.removeprefix(prefix)
         db_path = Path(raw_path)
@@ -300,6 +312,11 @@ class Settings:
             vision_video_loop=os.getenv("VISION_VIDEO_LOOP", "true").lower()
             in {"1", "true", "yes", "on"},
             api_token=os.getenv("CAMPEXTOKEN") or os.getenv("CAMPEX_API_TOKEN") or None,
+            require_login=os.getenv(
+                "CAMPEX_REQUIRE_LOGIN",
+                "true" if os.getenv("CAMPEX_RUNTIME", _default_runtime()).lower() == "serverless" else "false",
+            ).lower()
+            in {"1", "true", "yes", "on"},
             vision_full_scan_seconds=float(
                 os.getenv("VISION_FULL_SCAN_SECONDS", "6")
             ),
