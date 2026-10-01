@@ -39,3 +39,4 @@ nvidia.js
 .vercel
 .vercel-backend-deploy-*
 .vercel-front-deploy-*
+.neon
