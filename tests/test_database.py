@@ -1,7 +1,7 @@
 import sqlite3
 
 from backend.config import Settings
-from backend.database.db import database_is_initialized, initialize_database
+from backend.database.db import SCHEMA_VERSION, database_is_initialized, initialize_database
 
 
 def test_initialize_database_creates_sqlite_file(tmp_path):
@@ -52,7 +52,12 @@ def test_initialize_database_creates_sqlite_file(tmp_path):
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'machines'"
     ).fetchone()
 
-    assert row == ("5",)
+    users_table = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+    ).fetchone()
+
+    assert row == (SCHEMA_VERSION,)
+    assert users_table == ("users",)
     assert camera_table == ("cameras",)
     assert zones_table == ("zones",)
     assert events_table == ("events",)

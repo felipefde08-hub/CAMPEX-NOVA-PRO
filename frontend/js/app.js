@@ -75,11 +75,12 @@ import {
   uploadedVideoUrl,
 } from "./api.js";
 import {
-  createLocalAccount,
+  createAccount,
   getCurrentUser,
-  listLocalUsers,
-  signInLocal,
-  signOutLocal,
+  listUsers,
+  signIn,
+  signOut,
+  verifySession,
 } from "./auth.js";
 import { currentRoute, routes } from "./state.js";
 
@@ -231,7 +232,7 @@ function renderAuthScreen(mode = "login") {
           <span>Senha</span>
           <div>
             <i data-lucide="lock-keyhole" aria-hidden="true"></i>
-            <input name="password" type="password" autocomplete="new-password" placeholder="Mínimo de 6 caracteres" required minlength="6" />
+            <input name="password" type="password" autocomplete="new-password" placeholder="Mínimo de 8 caracteres" required minlength="8" />
           </div>
         </label>
         <p class="auth-error" data-auth-error="signup"></p>
@@ -262,7 +263,7 @@ function setAuthMode(mode) {
   }
   if (subtitle) {
     subtitle.textContent = nextMode === "signup"
-      ? "Cadastre seu acesso local em poucos segundos."
+      ? "Cadastre seu acesso em poucos segundos."
       : "Entre para acompanhar câmeras, eventos e evidências.";
   }
   const loginForm = document.querySelector("#login-form");
@@ -274,7 +275,7 @@ function setAuthMode(mode) {
 async function handleLoginSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  await submitAuthForm(form, "login", () => signInLocal({
+  await submitAuthForm(form, "login", () => signIn({
     email: form.elements.email.value,
     password: form.elements.password.value,
   }));
@@ -283,7 +284,7 @@ async function handleLoginSubmit(event) {
 async function handleSignupSubmit(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  await submitAuthForm(form, "signup", () => createLocalAccount({
+  await submitAuthForm(form, "signup", () => createAccount({
     name: form.elements.name.value,
     email: form.elements.email.value,
     password: form.elements.password.value,
@@ -331,7 +332,7 @@ function startAuthenticatedApp(user = getCurrentUser()) {
 }
 
 function handleSignOut() {
-  signOutLocal();
+  signOut();
   operationsStream?.close();
   operationsStream = null;
   clearInterval(backendStatusTimer);
@@ -4591,12 +4592,12 @@ function securitySettingsMarkup() {
 }
 
 function usersSettingsMarkup() {
-  const users = listLocalUsers();
+  const users = listUsers();
   const invites = readStoredSettings("campex.user_invites", { items: [] }).items || [];
   return `
-    ${settingsCard("Usuários", "Gerencie usuários locais e convites operacionais.", "users", `
+    ${settingsCard("Usuários", "Gerencie os usuários da sua organização e convites operacionais.", "users", `
       <div class="settings-integration-list">
-        ${users.map((user) => settingsUserLine(user.name, user.email, user.role || "operator", "Ativo")).join("") || emptyState("Nenhum usuário local", "Crie uma conta na tela de acesso.")}
+        ${users.map((user) => settingsUserLine(user.name, user.email, user.role || "operator", "Ativo")).join("") || emptyState("Nenhum usuário", "Crie uma conta na tela de acesso.")}
       </div>
     `)}
     ${settingsCard("Convidar usuário", "Registre convites para liberação operacional.", "user-plus", `
@@ -5521,4 +5522,8 @@ window.addEventListener("keydown", (event) => {
 
 accountButton?.addEventListener("click", handleSignOut);
 startAuthenticatedApp();
+// Render right away from the stored session, then drop it if the server revoked it.
+verifySession().then((valid) => {
+  if (!valid) handleSignOut();
+});
 

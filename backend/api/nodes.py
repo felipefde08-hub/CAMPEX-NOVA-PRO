@@ -235,7 +235,7 @@ def get_node_telemetry(
     if node is None:
         raise HTTPException(status_code=404, detail="Node not found.")
     settings = get_settings()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         metric_rows = connection.execute(
             """
             SELECT * FROM node_metrics

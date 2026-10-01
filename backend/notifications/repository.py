@@ -26,7 +26,7 @@ class NotificationRepository:
         return self.get_preference(organization_id) or preference
 
     def get_preference(self, organization_id: str) -> NotificationPreference | None:
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             row = connection.execute(
                 "SELECT * FROM notification_preferences WHERE organization_id = ?",
                 (organization_id,),
@@ -56,7 +56,7 @@ class NotificationRepository:
             "immediate_alerts_enabled": bool(payload.get("immediate_alerts_enabled", True)),
             "alert_types": json.dumps(alert_types, ensure_ascii=False),
         }
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             connection.execute(
                 """
                 INSERT INTO notification_preferences (
@@ -103,7 +103,7 @@ class NotificationRepository:
         metadata: dict[str, Any] | None = None,
     ) -> tuple[str, bool]:
         delivery_id = f"del_{uuid4().hex[:12]}"
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             existing = connection.execute(
                 """
                 SELECT id FROM notification_deliveries
@@ -145,7 +145,7 @@ class NotificationRepository:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         sent_at = _now() if status == "sent" else None
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             connection.execute(
                 """
                 UPDATE notification_deliveries
@@ -165,7 +165,7 @@ class NotificationRepository:
             connection.commit()
 
     def list_deliveries(self, organization_id: str, limit: int = 100) -> list[dict[str, Any]]:
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM notification_deliveries

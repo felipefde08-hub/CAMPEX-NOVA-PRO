@@ -20,7 +20,7 @@ NODE_OFFLINE_AFTER_SECONDS = 90
 
 class NodeRepository:
     def __init__(self, settings: Settings) -> None:
-        self.database_path: Path = settings.sqlite_path
+        self.database_path: Path | str = settings.database_target
 
     def create_pairing_code(
         self,

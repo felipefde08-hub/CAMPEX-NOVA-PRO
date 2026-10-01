@@ -241,10 +241,19 @@ class Settings:
             raise ValueError("LINE_CROSSING_COOLDOWN_SECONDS must be non-negative.")
 
     @property
+    def uses_postgres(self) -> bool:
+        return self.database_url.startswith(("postgres://", "postgresql://"))
+
+    @property
+    def database_target(self) -> Path | str:
+        """What ``backend.database.db.connect`` opens: a SQLite file or a Postgres URL."""
+        return self.database_url if self.uses_postgres else self.sqlite_path
+
+    @property
     def sqlite_path(self) -> Path:
         prefix = "sqlite:///"
         if not self.database_url.startswith(prefix):
-            raise ValueError("Sprint 0 supports only sqlite:/// DATABASE_URL values.")
+            raise ValueError("DATABASE_URL must be sqlite:///<path> or a postgresql:// URL.")
 
         raw_path = self.database_url.removeprefix(prefix)
         db_path = Path(raw_path)

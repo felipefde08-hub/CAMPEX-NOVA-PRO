@@ -50,7 +50,7 @@ def sync_events(
     accepted = 0
     duplicates = 0
     settings = get_settings()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         for event in events:
             inserted = _insert_event(connection, identity, event)
             accepted += int(inserted)
@@ -67,7 +67,7 @@ def sync_metrics(
     accepted = 0
     duplicates = 0
     settings = get_settings()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         for metric in metrics:
             inserted = _insert_metric(connection, identity, metric)
             accepted += int(inserted)
@@ -83,7 +83,7 @@ def sync_batch(
 ) -> dict:
     settings = get_settings()
     accepted_events = duplicate_events = accepted_metrics = duplicate_metrics = 0
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         for event in batch.events:
             inserted = _insert_event(connection, identity, event)
             accepted_events += int(inserted)
@@ -103,12 +103,13 @@ def sync_batch(
 def _insert_event(connection, identity: NodeIdentity, event: NodeEventPayload) -> bool:
     cursor = connection.execute(
         """
-        INSERT OR IGNORE INTO events (
+        INSERT INTO events (
             id, type, camera_id, severity, status, confidence,
             started_at, ended_at, duration, metadata, organization_id, node_id,
             created_at, updated_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT DO NOTHING
         """,
         (
             event.event_id,
@@ -133,11 +134,12 @@ def _insert_event(connection, identity: NodeIdentity, event: NodeEventPayload) -
 def _insert_metric(connection, identity: NodeIdentity, metric: NodeMetricPayload) -> bool:
     cursor = connection.execute(
         """
-        INSERT OR IGNORE INTO node_metrics (
+        INSERT INTO node_metrics (
             id, organization_id, node_id, camera_id, metric_type,
             value, payload_json, captured_at, received_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
         """,
         (
             metric.metric_id,
@@ -159,8 +161,9 @@ def _insert_metric(connection, identity: NodeIdentity, metric: NodeMetricPayload
 def _record_sync_item(connection, identity: NodeIdentity, item_id: str, item_type: str) -> None:
     connection.execute(
         """
-        INSERT OR IGNORE INTO node_sync_items (id, organization_id, node_id, type)
+        INSERT INTO node_sync_items (id, organization_id, node_id, type)
         VALUES (?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
         """,
         (item_id, identity.organization_id, identity.node_id, item_type),
     )

@@ -5,6 +5,14 @@ from pathlib import Path
 
 from backend.config import Settings
 
+# backend.database.postgres (and psycopg) is imported only when a Postgres URL
+# is used, so SQLite-only runtimes such as the CAMPEX Node do not need psycopg.
+_POSTGRES_URL_PREFIXES = ("postgres://", "postgresql://")
+
+
+def is_postgres_url(value: object) -> bool:
+    return isinstance(value, str) and value.startswith(_POSTGRES_URL_PREFIXES)
+
 
 SCHEMA_STATEMENTS = (
     """
@@ -342,6 +350,34 @@ SCHEMA_STATEMENTS = (
         received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'operator'
+            CHECK(role IN ('owner', 'admin', 'operator', 'viewer')),
+        last_login_at TEXT,
+        disabled_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        user_agent TEXT,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization_id)",
+    "CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_zones_camera ON zones(camera_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_camera_started ON events(camera_id, started_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_events_zone_started ON events(zone_id, started_at DESC)",
@@ -368,16 +404,41 @@ SCHEMA_STATEMENTS = (
 
 CAMERAS_SCHEMA = SCHEMA_STATEMENTS[1]
 
+SCHEMA_VERSION = "7"
 
-def connect(database_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database_path, timeout=5.0)
+# Columns that SQLite databases received through the _migrate_* helpers after
+# their tables were first created. A Postgres database is always created fresh,
+# so it adds them idempotently instead of inspecting PRAGMA table_info.
+_ORGANIZATION_SCOPED_TABLES = ("cameras", "zones", "events", "investigations", "visual_rules", "machines")
+_POSTGRES_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_cameras_org_status ON cameras(organization_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_events_org_started ON events(organization_id, started_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_machines_org_camera ON machines(organization_id, camera_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_org_node_started ON events(organization_id, node_id, started_at DESC)",
+)
+# Serializes schema setup when several serverless instances cold start at once.
+_POSTGRES_SCHEMA_LOCK_ID = 7_242_617
+
+
+def connect(database: Path | str):
+    if is_postgres_url(database):
+        from backend.database import postgres
+
+        return postgres.connect(database)
+    connection = sqlite3.connect(database, timeout=5.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")
     return connection
 
 
-def initialize_database(settings: Settings) -> Path:
+def initialize_database(settings: Settings) -> Path | str:
+    if settings.uses_postgres:
+        from backend.database.postgres import redact_url
+
+        _initialize_postgres(settings)
+        return redact_url(settings.database_url)
+
     database_path = settings.sqlite_path
     database_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -392,18 +453,54 @@ def initialize_database(settings: Settings) -> Path:
         _migrate_node_pairing_session_columns(connection)
         _migrate_node_sync_columns(connection)
         _ensure_default_organization(connection, settings.intelligence_default_organization_id)
-        connection.execute(
-            """
-            INSERT INTO app_meta (key, value, updated_at)
-            VALUES ('schema_version', '6', CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET
-                value = '6',
-                updated_at = CURRENT_TIMESTAMP
-            """
-        )
+        _record_schema_version(connection)
         connection.commit()
 
     return database_path
+
+
+def _record_schema_version(connection) -> None:
+    connection.execute(
+        """
+        INSERT INTO app_meta (key, value, updated_at)
+        VALUES ('schema_version', ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (SCHEMA_VERSION,),
+    )
+
+
+def _initialize_postgres(settings: Settings) -> None:
+    default_organization_id = settings.intelligence_default_organization_id
+    with connect(settings.database_url) as connection:
+        if _postgres_schema_version(connection) == SCHEMA_VERSION:
+            return
+        connection.execute("SELECT pg_advisory_xact_lock(?)", (_POSTGRES_SCHEMA_LOCK_ID,))
+        if _postgres_schema_version(connection) == SCHEMA_VERSION:
+            return
+        for statement in SCHEMA_STATEMENTS:
+            connection.execute(statement)
+        safe_default = default_organization_id.replace("'", "''")
+        for table in _ORGANIZATION_SCOPED_TABLES:
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS organization_id TEXT NOT NULL DEFAULT '{safe_default}'"
+            )
+        for statement in _POSTGRES_INDEXES:
+            connection.execute(statement)
+        _ensure_default_organization(connection, default_organization_id)
+        _record_schema_version(connection)
+
+
+def _postgres_schema_version(connection) -> str | None:
+    table = connection.execute("SELECT to_regclass('public.app_meta')").fetchone()
+    if table is None or table[0] is None:
+        return None
+    row = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'schema_version'"
+    ).fetchone()
+    return row["value"] if row is not None else None
 
 
 def _migrate_camera_source_types(connection: sqlite3.Connection) -> None:
@@ -552,6 +649,10 @@ def _ensure_default_organization(
 
 
 def database_is_initialized(settings: Settings) -> bool:
+    if settings.uses_postgres:
+        with connect(settings.database_url) as connection:
+            return _postgres_schema_version(connection) is not None
+
     database_path = settings.sqlite_path
     if not database_path.exists():
         return False

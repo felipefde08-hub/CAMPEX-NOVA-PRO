@@ -23,7 +23,7 @@ def _loads(value: str | None, fallback):
 
 class MonitoringRepository:
     def __init__(self, settings: Settings) -> None:
-        self.database_path = settings.sqlite_path
+        self.database_path = settings.database_target
 
     def list_rois(self, organization_id: str, camera_id: str | None = None) -> list[CameraROI]:
         params: list[Any] = [organization_id]

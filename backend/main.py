@@ -6,9 +6,12 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from backend.middleware.cors import LocalNetworkCORSMiddleware
 
+from backend.api.auth import SESSION_HEADER
+from backend.api.auth import router as auth_router
 from backend.api.cameras import router as cameras_router
 from backend.api.analysis import router as analysis_router
 from backend.api.health import router as health_router
@@ -26,6 +29,7 @@ from backend.api.zones import router as zones_router
 from backend.api.events import router as events_router
 from backend.cameras.manager import CameraManager
 from backend.cameras.repository import CameraRepository
+from backend.auth.service import AuthService
 from backend.config import get_settings
 from backend.database.db import initialize_database
 from backend.logging_config import configure_logging
@@ -197,6 +201,18 @@ app.add_middleware(
 )
 
 
+PUBLIC_API_PATHS = frozenset(
+    {
+        "/api/v1/health",
+        "/api/v1/nodes/pair/claim",
+        "/api/v1/nodes/pairing/start",
+        "/api/v1/nodes/pairing/status",
+        "/api/v1/auth/register",
+        "/api/v1/auth/login",
+    }
+)
+
+
 @app.middleware("http")
 async def api_token_guard(request: Request, call_next):
     settings = getattr(request.app.state, "settings", startup_settings)
@@ -219,15 +235,13 @@ async def api_token_guard(request: Request, call_next):
     if (
         token
         and path.startswith("/api/v1")
-        and path != "/api/v1/health"
-        and path != "/api/v1/nodes/pair/claim"
-        and path != "/api/v1/nodes/pairing/start"
-        and path != "/api/v1/nodes/pairing/status"
+        and path not in PUBLIC_API_PATHS
         and not has_node_bearer
         and not hmac.compare_digest(
             request.headers.get("X-CAMPEX-Token", "").encode("utf-8"),
             token.encode("utf-8"),
         )
+        and not await _has_valid_user_session(request, settings)
     ):
         response = JSONResponse(
             {"detail": "Token de API ausente ou inválido."},
@@ -235,6 +249,18 @@ async def api_token_guard(request: Request, call_next):
         )
         return response
     return await call_next(request)
+
+
+async def _has_valid_user_session(request: Request, settings) -> bool:
+    session_token = request.headers.get(SESSION_HEADER)
+    if not session_token:
+        return False
+    try:
+        user = await run_in_threadpool(AuthService(settings).authenticate, session_token)
+    except Exception:
+        logger.warning("User session check failed", exc_info=True)
+        return False
+    return user is not None
 
 
 # CORS wraps authentication, including preflight and error responses.
@@ -249,6 +275,7 @@ app.add_middleware(
     expose_headers=["Content-Range", "Accept-Ranges", "Content-Length"],
 )
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(analysis_router)
 app.include_router(cameras_router)
 app.include_router(vision_router)

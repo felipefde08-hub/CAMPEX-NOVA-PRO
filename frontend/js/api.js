@@ -1,5 +1,5 @@
 import { createMediaUrl } from "./media-auth.js";
-import { getApiToken } from "./api-token.js";
+import { getApiToken, getSessionToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
 const localApiBaseUrl = "http://127.0.0.1:8787/api";
 const localNodeApiBaseUrl = "http://127.0.0.1:8787/api";
@@ -180,21 +180,28 @@ function assertApiBaseUrl() {
   }
 }
 
-function apiHeaders(extra = {}) {
+function credentialHeaders() {
   const apiToken = getApiToken();
+  const sessionToken = getSessionToken();
+  return {
+    ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
+    ...(sessionToken ? { "X-CAMPEX-Session": sessionToken } : {}),
+  };
+}
+
+function apiHeaders(extra = {}) {
   return {
     Accept: "application/json",
     "Content-Type": "application/json",
-    ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
+    ...credentialHeaders(),
     ...Object.fromEntries(new Headers(extra)),
   };
 }
 
 function uploadHeaders(extra = {}) {
-  const apiToken = getApiToken();
   return {
     Accept: "application/json",
-    ...(apiToken ? { "X-CAMPEX-Token": apiToken } : {}),
+    ...credentialHeaders(),
     ...Object.fromEntries(new Headers(extra)),
   };
 }
@@ -225,7 +232,9 @@ async function requestJson(path, options = {}) {
         ? "Arquivo grande demais para upload direto na Vercel. Use MP4 de até 4 MB."
         : response.statusText || detail;
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) {
@@ -237,6 +246,38 @@ async function requestJson(path, options = {}) {
 
 export async function getHealth() {
   return requestJson("/health");
+}
+
+// The local CAMPEX Node has no account database, so login there stays in the
+// browser (see auth.js); every other backend authenticates against the Cloud.
+export function usesLocalNodeApi() {
+  return isLocalNodeApi;
+}
+
+export function authRegister({ name, email, password }) {
+  return requestJson("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name, email, password }),
+  });
+}
+
+export function authLogin({ email, password }) {
+  return requestJson("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function authMe() {
+  return requestJson("/auth/me");
+}
+
+export function authLogout() {
+  return requestJson("/auth/logout", { method: "POST" });
+}
+
+export function authListUsers() {
+  return requestJson("/auth/users");
 }
 
 export function getRuntimeSettings() {

@@ -15,7 +15,7 @@ class VideoAnalysisRepository:
         self.settings = settings
 
     def create(self, job: AnalysisJob) -> None:
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             connection.execute(
                 """
                 INSERT INTO video_analyses (
@@ -46,7 +46,7 @@ class VideoAnalysisRepository:
             fields["completed_at"] = _now()
         normalized = {key: _encode(value) for key, value in fields.items()}
         assignments = ", ".join(f"{key} = ?" for key in normalized)
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             connection.execute(
                 f"UPDATE video_analyses SET {assignments} WHERE id = ?",
                 (*normalized.values(), analysis_id),
@@ -54,7 +54,7 @@ class VideoAnalysisRepository:
             connection.commit()
 
     def get(self, analysis_id: str, organization_id: str) -> dict[str, Any] | None:
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             row = connection.execute(
                 """
                 SELECT * FROM video_analyses
@@ -65,7 +65,7 @@ class VideoAnalysisRepository:
         return _row(row) if row else None
 
     def list(self, organization_id: str, limit: int = 25) -> list[dict[str, Any]]:
-        with connect(self.settings.sqlite_path) as connection:
+        with connect(self.settings.database_target) as connection:
             rows = connection.execute(
                 """
                 SELECT * FROM video_analyses

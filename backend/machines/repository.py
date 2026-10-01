@@ -17,7 +17,7 @@ MACHINE_TYPES = {"fixed", "mobile", "vehicle", "conveyor", "robot", "other"}
 
 class MachineRepository:
     def __init__(self, settings: Settings) -> None:
-        self.database_path = settings.sqlite_path
+        self.database_path = settings.database_target
 
     def list(self, camera_id: str | None = None, organization_id: str | None = None) -> list[Machine]:
         with connect(self._db_path) as connection:
@@ -154,7 +154,7 @@ class MachineRepository:
             return cursor.rowcount > 0
 
     @property
-    def _db_path(self) -> Path:
+    def _db_path(self) -> Path | str:
         return self.database_path
 
 

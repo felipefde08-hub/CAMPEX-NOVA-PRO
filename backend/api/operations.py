@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -158,7 +159,7 @@ def _investigation_row(row) -> dict:
 def _operations_summary_payload(request: Request | None = None, organization_id: str | None = None) -> dict:
     settings = _settings()
     manager = getattr(request.app.state, "camera_manager", None) if request else None
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         if organization_id is not None:
             cameras = [
                 dict(row)
@@ -270,10 +271,10 @@ def local_diagnostics(
     scope: OrganizationScope = Depends(get_organization_scope),
 ) -> dict:
     settings = _settings()
-    usage = shutil.disk_usage(settings.sqlite_path.parent)
+    usage = shutil.disk_usage(tempfile.gettempdir() if settings.uses_postgres else settings.sqlite_path.parent)
     evidence_root = get_data_dir() / "evidence"
     evidence_bytes = sum(path.stat().st_size for path in evidence_root.rglob("*") if path.is_file()) if evidence_root.exists() else 0
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         cameras_online = connection.execute(
             "SELECT COUNT(*) FROM cameras WHERE organization_id = ? AND status = 'ONLINE'",
             (scope.organization_id,),
@@ -312,7 +313,7 @@ def local_diagnostics(
     ) if manager is not None else cameras_online
 
     return {
-        "sqlite": settings.sqlite_path.exists(),
+        "sqlite": not settings.uses_postgres and settings.sqlite_path.exists(),
         "database_path": None,
         "cameras_online": cameras_online,
         "ia_ativa": ia_ativa,
@@ -390,7 +391,7 @@ def list_evidence(
     scope: OrganizationScope = Depends(get_organization_scope),
 ) -> list[dict]:
     settings = _settings()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         rows = connection.execute(
             """
             SELECT * FROM events
@@ -455,8 +456,16 @@ def cleanup_evidence(payload: RetentionPayload) -> dict:
 
 @router.post("/operations/archive/month")
 def archive_operations_month(payload: MonthlyArchivePayload) -> dict:
+    settings = _settings()
+    if settings.uses_postgres:
+        # The archive is a copy of the local SQLite file; the cloud database
+        # relies on Neon backups and point-in-time restore instead.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Arquivamento mensal disponível apenas no CAMPEX local (SQLite).",
+        )
     result = archive_month(
-        _settings(),
+        settings,
         year=payload.year,
         month=payload.month,
         purge=payload.purge,
@@ -635,7 +644,7 @@ def list_investigations(
     if status_filter:
         where += " AND status = ?"
         params.append(status_filter)
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         rows = connection.execute(
             f"SELECT * FROM investigations {where} ORDER BY updated_at DESC",
             params,
@@ -651,7 +660,7 @@ def create_investigation(
     settings = _settings()
     investigation_id = f"inv_{uuid4().hex[:12]}"
     now = datetime.now(timezone.utc).isoformat()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         connection.execute(
             """
             INSERT INTO investigations (id, title, status, event_id, notes, organization_id, created_at, updated_at)
@@ -682,7 +691,7 @@ def get_investigation(
 
 def _get_investigation(investigation_id: str, organization_id: str) -> dict:
     settings = _settings()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         row = connection.execute(
             "SELECT * FROM investigations WHERE id = ? AND organization_id = ?",
             (investigation_id, organization_id),
@@ -705,7 +714,7 @@ def update_investigation(
     fields = [f"{key} = ?" for key in updates]
     values = list(updates.values())
     settings = _settings()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         cursor = connection.execute(
             f"""
             UPDATE investigations
@@ -730,7 +739,7 @@ def delete_investigation(
     scope: OrganizationScope = Depends(get_organization_scope),
 ):
     settings = _settings()
-    with connect(settings.sqlite_path) as connection:
+    with connect(settings.database_target) as connection:
         cursor = connection.execute(
             "DELETE FROM investigations WHERE id = ? AND organization_id = ?",
             (investigation_id, scope.organization_id),
