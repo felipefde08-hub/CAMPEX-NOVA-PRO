@@ -720,20 +720,21 @@ def create_app() -> FastAPI:
 
     @app.get("/api/cameras/{camera_id}/snapshot")
     def camera_snapshot(camera_id: str, overlay: bool = Query(False)):
-        import cv2
-
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is None:
-            raise HTTPException(status_code=404, detail="Frame ainda não disponível para esta câmera.")
+            encoded = _encode_jpeg(_blank_frame("Aguardando imagem da camera"), quality=72)
+            return Response(
+                content=encoded,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "waiting"},
+            )
         if overlay and runtime.lifecycle.vision is not None:
             frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
-        ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
-        if not ok:
-            raise HTTPException(status_code=500, detail="Não foi possível codificar o frame.")
+        encoded = _encode_jpeg(frame, quality=72)
         return Response(
-            content=encoded.tobytes(),
+            content=encoded,
             media_type="image/jpeg",
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "live"},
         )
 
     @app.get("/api/cameras/{camera_id}/stream")
@@ -824,26 +825,49 @@ def create_app() -> FastAPI:
 
 
 def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str, *, overlay: bool = False):
-    import cv2
-
     last_payload: bytes | None = None
     while True:
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is not None:
             if overlay and runtime.lifecycle.vision is not None:
                 frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
-            ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 68])
-            if ok:
-                last_payload = encoded.tobytes()
-        if last_payload is not None:
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n"
-                b"Cache-Control: no-store\r\n\r\n"
-                + last_payload
-                + b"\r\n"
-            )
+            last_payload = _encode_jpeg(frame, quality=68)
+        payload = last_payload or _encode_jpeg(_blank_frame("Aguardando imagem da camera"), quality=68)
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n"
+            b"Cache-Control: no-store\r\n\r\n"
+            + payload
+            + b"\r\n"
+        )
         time.sleep(0.15)
+
+
+def _encode_jpeg(frame, *, quality: int) -> bytes:
+    import cv2
+
+    ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not ok:
+        raise HTTPException(status_code=500, detail="Nao foi possivel codificar o frame.")
+    return encoded.tobytes()
+
+
+def _blank_frame(message: str):
+    import cv2
+    import numpy as np
+
+    frame = np.zeros((480, 854, 3), dtype=np.uint8)
+    cv2.putText(
+        frame,
+        message,
+        (32, 240),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (220, 220, 220),
+        2,
+        cv2.LINE_AA,
+    )
+    return frame
 
 
 NODE_HTML = """<!doctype html>

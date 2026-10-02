@@ -1226,16 +1226,35 @@ function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) 
     mediaHost.innerHTML = `<div class="media-placeholder">${escapeHtml(fallbackMessage)}</div>`;
     return;
   }
-  const streamUrl = localNodeStreamUrl(camera.id);
   mediaHost.innerHTML = `
     <img
       id="live-node-stream"
       class="live-media"
       alt="Video ao vivo da câmera via CAMPEX Node local"
-      src="${streamUrl}"
+      hidden
     />
+    <div class="media-placeholder" id="live-node-snapshot-waiting">${escapeHtml(fallbackMessage || "Aguardando imagem da camera.")}</div>
     <div class="node-stream-hint">Stream via CAMPEX Node local - ${escapeHtml(fallbackMessage || "backend de vídeo indisponível")}</div>
   `;
+  const img = mediaHost.querySelector("img");
+  const waiting = mediaHost.querySelector("#live-node-snapshot-waiting");
+  startLocalNodeSnapshotLoop(img, camera.id, {
+    intervalMs: 800,
+    overlay: () => liveDetectionsVisible(),
+    isActive: () => activeMediaCameraId === camera.id && img.isConnected,
+    onFrame: (isWaiting) => {
+      img.hidden = isWaiting;
+      waiting.hidden = !isWaiting;
+      if (isWaiting) {
+        waiting.textContent = fallbackMessage || "Aguardando o primeiro frame da camera.";
+      }
+    },
+    onError: (error) => {
+      img.hidden = true;
+      waiting.hidden = false;
+      waiting.textContent = `Nao foi possivel carregar a imagem do Node local: ${error.message}`;
+    },
+  });
   mediaHost.querySelector("img").addEventListener("error", () => {
     // Mark as frameless so the next status refresh reopens the stream.
     mediaHost.dataset.localFrames = "false";
@@ -1245,6 +1264,52 @@ function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) 
 
 function localNodeStreamUrl(cameraId) {
   return `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(cameraId)}/stream?t=${Date.now()}`;
+}
+
+async function fetchLocalNodeSnapshot(cameraId, { overlay = false } = {}) {
+  const params = new URLSearchParams({ t: String(Date.now()) });
+  if (overlay) params.set("overlay", "true");
+  const response = await fetch(
+    `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(cameraId)}/snapshot?${params}`,
+    { cache: "no-store", headers: { Accept: "image/jpeg" } },
+  );
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return {
+    blob: await response.blob(),
+    waiting: response.headers.get("X-CAMPEX-Frame") === "waiting",
+  };
+}
+
+function startLocalNodeSnapshotLoop(img, cameraId, { intervalMs = 800, overlay = () => false, isActive, onFrame, onError } = {}) {
+  let objectUrl = null;
+  const release = () => {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = null;
+  };
+  const tick = async () => {
+    if (!isActive()) {
+      release();
+      return;
+    }
+    try {
+      const { blob, waiting } = await fetchLocalNodeSnapshot(cameraId, { overlay: overlay() });
+      if (!isActive()) {
+        release();
+        return;
+      }
+      const nextUrl = URL.createObjectURL(blob);
+      img.src = nextUrl;
+      release();
+      objectUrl = nextUrl;
+      onFrame?.(waiting);
+    } catch (error) {
+      onError?.(error);
+    }
+    setTimeout(tick, intervalMs);
+  };
+  tick();
 }
 
 function canEmbedLocalNodeMedia() {
