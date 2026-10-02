@@ -78,3 +78,16 @@ def test_local_node_allows_hosted_frontend_private_network_preflight(monkeypatch
             assert response.status_code in {200, 204}
             assert response.headers["access-control-allow-origin"] == "https://campexfront.vercel.app"
             assert response.headers["access-control-allow-private-network"] == "true"
+
+
+def test_local_node_snapshot_waits_with_jpeg_when_frame_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setenv("CAMPEX_NODE_DATA_DIR", str(tmp_path / "node"))
+    app = create_app()
+
+    with TestClient(app) as client:
+        response = client.get("/api/cameras/local_missing/snapshot")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/jpeg")
+    assert response.headers["x-campex-frame"] == "waiting"
+    assert response.content.startswith(b"\xff\xd8")
