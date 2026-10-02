@@ -22,6 +22,13 @@ torch_datas, torch_binaries, torch_hiddenimports = safe_collect_all("torch")
 torchvision_datas, torchvision_binaries, torchvision_hiddenimports = safe_collect_all("torchvision")
 ultralytics_datas, ultralytics_binaries, ultralytics_hiddenimports = safe_collect_all("ultralytics")
 
+# Automatic updates: the swap script and the release public key travel with
+# the Node. Without the key the packaged Node keeps updates disabled.
+UPDATES_DIR = ROOT / "campex_node" / "updates"
+update_datas = [(str(UPDATES_DIR / "apply_update.ps1"), "campex_node/updates")]
+if (UPDATES_DIR / "release_public_key.txt").is_file():
+    update_datas.append((str(UPDATES_DIR / "release_public_key.txt"), "campex_node/updates"))
+
 
 a = Analysis(
     [str(ROOT / "campex_node" / "desktop_launcher.py")],
@@ -34,6 +41,7 @@ a = Analysis(
     datas=[
         (str(ROOT / "frontend"), "frontend"),
         (str(ROOT / "yolo11n.pt"), "."),
+        *update_datas,
         *torch_datas,
         *torchvision_datas,
         *ultralytics_datas,
@@ -41,6 +49,7 @@ a = Analysis(
     hiddenimports=[
         "campex_node.local_app",
         "campex_node.node_ui",
+        "campex_node.updates.service",
         "backend.cameras.base",
         "backend.cameras.factory",
         "backend.cameras.frame_buffer",

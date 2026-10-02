@@ -193,6 +193,8 @@ class LocalNodeRuntime:
         resources = _system_resources()
         return {
             "node_id": self.lifecycle.node_id,
+            "version": settings.version,
+            "update": self.lifecycle.updates.status.as_dict() if self.lifecycle.updates else None,
             "cloud_url": settings.cloud_url,
             "organization_id": settings.organization_id,
             "paired": bool(settings.cloud_token and settings.node_id),
@@ -993,7 +995,7 @@ def _normalize_cloud_api_url(value: str | None) -> str:
 def _node_download_url() -> str:
     return os.getenv(
         "CAMPEX_NODE_DOWNLOAD_URL",
-        "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip",
+        "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/latest/download/CampexNode-windows.zip",
     )
 
 

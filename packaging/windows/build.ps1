@@ -26,6 +26,12 @@ if (-not $SkipInstall) {
   & $Python -m pip install -r "campex_node\requirements.txt"
 }
 
+$PublicKeyPath = Join-Path $ProjectDir "campex_node\updates\release_public_key.txt"
+if (-not (Test-Path $PublicKeyPath)) {
+  Write-Warning ("Sem chave publica de atualizacao: este Node NAO vai se atualizar sozinho. " +
+    "Rode uma vez: $Python scripts\release_node.py keygen")
+}
+
 if (Test-Path $PackageDir) {
   Remove-Item -LiteralPath $PackageDir -Recurse -Force
 }
@@ -127,3 +133,11 @@ Compress-Archive -LiteralPath $PackageDir -DestinationPath $ZipPath -Force
 
 Write-Host "CAMPEX Node criado em: $ExePath"
 Write-Host "Pacote ZIP criado em: $ZipPath"
+
+if (Test-Path $PublicKeyPath) {
+  # Signed manifest read by installed Nodes to update themselves.
+  & $Python scripts\release_node.py manifest $ZipPath
+  if ($LASTEXITCODE -ne 0) {
+    throw "Falha ao gerar o manifesto assinado da atualizacao."
+  }
+}

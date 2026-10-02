@@ -24,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
 
     os.environ.setdefault("CAMPEX_DESKTOP_MODE", "1")
     port = _select_port(args.host, args.port)
+    # The updater checks the restarted Node on this port.
+    os.environ["CAMPEX_NODE_PORT"] = str(port)
     url = f"http://{args.host}:{port}"
     _bootstrap_log(f"selected url {url}")
     if _is_campex_node_running(url):

@@ -4,4 +4,4 @@ window.CAMPEX_API_BASE_URL =
     : "https://SEU-BACKEND.vercel.app/api/v1";
 
 window.CAMPEX_NODE_DOWNLOAD_URL =
-  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip";
+  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/latest/download/CampexNode-windows.zip";

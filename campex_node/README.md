@@ -141,6 +141,38 @@ These scripts do not include tokens or camera credentials. Pair the Node through
 the local app at `http://127.0.0.1:8787` or provide secrets through local
 environment variables. Full instructions are in `docs/CAMPEX_NODE_SERVICE.md`.
 
+## Automatic Updates (Windows)
+
+The packaged Windows Node updates itself. Every 6 hours
+(`CAMPEX_NODE_UPDATE_CHECK_HOURS`) it reads `campex-node-manifest.json` from the
+latest GitHub release, checks its Ed25519 signature against the public key
+packaged in the Node, downloads the zip, checks its SHA-256 and runs
+`campex_node/updates/apply_update.ps1`. The script swaps the install folder,
+restarts the Node and restores the previous version if the new one does not
+answer on `/api/status` within 4 minutes; a version that was rolled back is not
+installed again. Progress is logged to `%LOCALAPPDATA%\CAMPEX\node\logs\campex-node-update.log`
+and shown under `update` in `GET /api/status`. Set `CAMPEX_NODE_AUTO_UPDATE=false` to turn it off.
+
+One time, on the publisher's machine:
+
+```powershell
+python scripts\release_node.py keygen
+```
+
+This writes the private key to `%USERPROFILE%\.campex\campex-node-release.key`
+(back it up; never commit it) and the public key to
+`campex_node/updates/release_public_key.txt` (commit it). Nodes built without
+the public key keep automatic updates off.
+
+For each release:
+
+1. Raise `__version__` in `campex_node/__init__.py`.
+2. Run `packaging\windows\build.ps1`; it also writes `dist\campex-node-manifest.json`.
+3. Create the GitHub release `campex-node-v<version>`, mark it as latest and
+   upload `CampexNode-windows.zip` and `campex-node-manifest.json`.
+
+Installed Nodes pick the release up at their next check.
+
 ## Diagnostics
 
 With the local app running, use:

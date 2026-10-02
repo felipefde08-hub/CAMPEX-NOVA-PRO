@@ -7,8 +7,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from campex_node import __version__
+
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+# Each release is published with a signed manifest; GitHub redirects
+# "latest" to the newest non-prerelease release.
+DEFAULT_UPDATE_MANIFEST_URL = (
+    "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/latest/download/campex-node-manifest.json"
+)
 
 
 def _is_desktop_runtime() -> bool:
@@ -123,8 +130,8 @@ class NodeSettings:
     heartbeat_interval_seconds: float = 30.0
     camera_reconnect_seconds: float = 5.0
     camera_read_failure_limit: int = 3
-    camera_open_timeout_ms: int = 3000
-    camera_read_timeout_ms: int = 3000
+    camera_open_timeout_ms: int = 10000
+    camera_read_timeout_ms: int = 6000
     vision_interval_seconds: float = 0.35
     vision_confidence: float = 0.35
     # Ultralytics weights: the detector ships with the package; the pose model
@@ -135,6 +142,9 @@ class NodeSettings:
     live_frame_max_width: int = 960
     live_frame_jpeg_quality: int = 70
     outbound_max_pending: int = 5000
+    auto_update_enabled: bool = True
+    update_manifest_url: str = DEFAULT_UPDATE_MANIFEST_URL
+    update_check_interval_seconds: float = 6 * 60 * 60
     cameras: tuple[NodeCameraConfig, ...] = field(default_factory=tuple)
 
     @classmethod
@@ -148,7 +158,7 @@ class NodeSettings:
         ).resolve()
         return cls(
             environment=os.getenv("CAMPEX_NODE_ENV", os.getenv("CAMPEX_ENV", "development")),
-            version=os.getenv("CAMPEX_NODE_VERSION", "0.2.0"),
+            version=__version__,
             log_level=os.getenv("CAMPEX_NODE_LOG_LEVEL", os.getenv("CAMPEX_LOG_LEVEL", "INFO")),
             data_dir=data_dir,
             database_path=database_path,
@@ -170,8 +180,8 @@ class NodeSettings:
             heartbeat_interval_seconds=_env_float("CAMPEX_NODE_HEARTBEAT_SECONDS", 30.0),
             camera_reconnect_seconds=_env_float("CAMPEX_NODE_CAMERA_RECONNECT_SECONDS", 5.0),
             camera_read_failure_limit=_env_int("CAMPEX_NODE_CAMERA_READ_FAILURE_LIMIT", 3),
-            camera_open_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_OPEN_TIMEOUT_MS", 3000),
-            camera_read_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_READ_TIMEOUT_MS", 3000),
+            camera_open_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_OPEN_TIMEOUT_MS", 10000),
+            camera_read_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_READ_TIMEOUT_MS", 6000),
             vision_interval_seconds=_env_float("CAMPEX_NODE_VISION_INTERVAL_SECONDS", 0.35),
             vision_confidence=_env_float("CAMPEX_NODE_VISION_CONFIDENCE", 0.35),
             vision_model=os.getenv("CAMPEX_NODE_VISION_MODEL", "yolo11n.pt"),
@@ -180,6 +190,9 @@ class NodeSettings:
             live_frame_max_width=_env_int("CAMPEX_NODE_LIVE_FRAME_MAX_WIDTH", 960),
             live_frame_jpeg_quality=_env_int("CAMPEX_NODE_LIVE_FRAME_JPEG_QUALITY", 70),
             outbound_max_pending=_env_int("CAMPEX_NODE_QUEUE_MAX_ITEMS", 5000),
+            auto_update_enabled=_env_bool("CAMPEX_NODE_AUTO_UPDATE", True),
+            update_manifest_url=os.getenv("CAMPEX_NODE_UPDATE_MANIFEST_URL", DEFAULT_UPDATE_MANIFEST_URL).strip(),
+            update_check_interval_seconds=_env_float("CAMPEX_NODE_UPDATE_CHECK_HOURS", 6.0) * 60 * 60,
             cameras=tuple(_load_camera_configs()),
         )
 
@@ -204,6 +217,8 @@ class NodeSettings:
             raise ValueError("CAMPEX_NODE_VISION_CONFIDENCE must be between 0 and 1.")
         if self.outbound_max_pending < 1:
             raise ValueError("CAMPEX_NODE_QUEUE_MAX_ITEMS must be at least 1.")
+        if self.update_check_interval_seconds < 60:
+            raise ValueError("CAMPEX_NODE_UPDATE_CHECK_HOURS must be at least one minute.")
 
 
 def _load_camera_configs() -> list[NodeCameraConfig]:

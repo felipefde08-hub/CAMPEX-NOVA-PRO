@@ -341,7 +341,10 @@ class CloudCameraRuntime:
             ).fetchone()
         if node is None:
             return "Nenhum CAMPEX Node conectado. Instale e pareie o Node no computador da rede das câmeras."
-        return "Aguardando o CAMPEX Node enviar o status desta câmera."
+        return (
+            "Aguardando o CAMPEX Node enviar o status desta câmera. "
+            "Se demorar mais de 1 minuto, confirme que o Node está aberto e atualizado."
+        )
 
     def vision_status(self, camera: Camera, organization_id: str) -> dict[str, Any]:
         flags = self._camera_flags(camera.id, organization_id)
@@ -431,8 +434,12 @@ class CloudCameraRuntime:
             ).fetchone()
         if row is None or row["frame_jpeg"] is None or row["reported_at"] == _NEVER_REPORTED:
             return None
+        # A Node that stopped reporting would otherwise leave a frozen image
+        # on screen that looks live.
+        if not self._is_fresh({"reported_at": row["reported_at"]}):
+            return None
         frame_bytes = bytes(row["frame_jpeg"])
-        if not overlay or not self._is_fresh({"reported_at": row["reported_at"]}):
+        if not overlay:
             return frame_bytes
         objects = _loads(row["objects_json"], [])
         poses = _loads(row["poses_json"], [])

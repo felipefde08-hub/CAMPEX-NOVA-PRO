@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import base64
+from datetime import timedelta
 
 import cv2
 import numpy as np
 from fastapi.testclient import TestClient
 
+from backend.cameras.cloud_runtime import REPORT_STALE_SECONDS, _utc_now
 from backend.config import Settings
-from backend.database.db import initialize_database
+from backend.database.db import connect, initialize_database
 from backend.main import app
 
 
@@ -223,3 +225,25 @@ def test_node_cannot_report_cameras_of_another_organization(monkeypatch, tmp_pat
         assert camera_id not in response["cameras"]
         health = client.get(f"/api/v1/cameras/{camera_id}/health", headers=ana).json()
         assert health["status"] == "OFFLINE"
+
+
+def test_snapshot_stops_showing_frames_from_a_silent_node(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        user = _login(client, "bia@empresa.com")
+        _node_id, node_headers = _pair_node(client, user, "node_public_silent")
+        camera_id = client.post("/api/v1/cameras", headers=user, json=CAMERA).json()["id"]
+        client.get(f"/api/v1/cameras/{camera_id}/snapshot", headers=user)
+        _report(client, node_headers, camera_id, width=64, height=48, frame_jpeg_base64=_jpeg())
+        assert client.get(f"/api/v1/cameras/{camera_id}/snapshot", headers=user).headers["x-campex-frame"] == "live"
+
+        # The Node stops reporting: the last frame must not be shown as live.
+        silent_since = (_utc_now() - timedelta(seconds=REPORT_STALE_SECONDS + 5)).isoformat()
+        with connect(Settings.from_env().database_target) as connection:
+            connection.execute(
+                "UPDATE camera_live_state SET reported_at = ? WHERE camera_id = ?",
+                (silent_since, camera_id),
+            )
+        stale = client.get(f"/api/v1/cameras/{camera_id}/snapshot", headers=user)
+        assert stale.headers["x-campex-frame"] == "waiting"

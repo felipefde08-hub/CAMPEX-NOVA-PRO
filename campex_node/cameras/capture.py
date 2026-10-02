@@ -31,7 +31,8 @@ def test_rtsp_connection(
     rtsp_url: str,
     *,
     settings: NodeSettings | None = None,
-    timeout_seconds: float = 12.0,
+    # Covers the TCP probe, the RTSP open and the wait for the first keyframe.
+    timeout_seconds: float = 25.0,
 ) -> dict:
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="campex-node-camera-test")
     future = executor.submit(_test_rtsp_connection_sync, rtsp_url, settings)

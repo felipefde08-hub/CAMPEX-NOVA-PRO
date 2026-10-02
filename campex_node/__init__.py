@@ -1,3 +1,5 @@
 """CAMPEX Node runtime package."""
 
-__version__ = "0.1.0"
+# Single source of the Node version: the build, the heartbeat and the
+# automatic updater all read it from here.
+__version__ = "0.3.0"

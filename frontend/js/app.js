@@ -90,7 +90,7 @@ const CAMPEX_NODE_LOCAL_URL = "http://127.0.0.1:8787";
 const CAMPEX_NODE_LOCAL_APP_URL = `${CAMPEX_NODE_LOCAL_URL}/app`;
 const CAMPEX_NODE_DOWNLOAD_URL =
   window.CAMPEX_NODE_DOWNLOAD_URL ||
-  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-windows.zip";
+  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/latest/download/CampexNode-windows.zip";
 
 const statusElement = document.querySelector("#backend-status");
 const statusText = statusElement.querySelector(".status-text");
@@ -1111,6 +1111,8 @@ function renderRelayElement(camera, info = {}) {
   `;
   const img = mediaHost.querySelector("#live-node-relay");
   const waiting = mediaHost.querySelector("#live-node-relay-waiting");
+  let waitingSince = null;
+  let lastHealthCheck = 0;
   startSnapshotLoop(img, camera.id, {
     intervalMs: Number(info.refresh_ms) || 1000,
     overlay: () => liveDetectionsVisible(),
@@ -1118,9 +1120,26 @@ function renderRelayElement(camera, info = {}) {
     onFrame: (isWaiting) => {
       img.hidden = isWaiting;
       waiting.hidden = !isWaiting;
-      if (isWaiting) {
-        waiting.textContent = "Aguardando imagem do CAMPEX Node. A primeira imagem chega em até 10 segundos.";
+      if (!isWaiting) {
+        waitingSince = null;
+        return;
       }
+      waitingSince ??= Date.now();
+      if (Date.now() - waitingSince < 15000) {
+        waiting.textContent = "Aguardando imagem do CAMPEX Node. A primeira imagem chega em até 15 segundos.";
+        return;
+      }
+      // Past the normal first-frame delay: show why the Node has no image.
+      if (Date.now() - lastHealthCheck < 5000) return;
+      lastHealthCheck = Date.now();
+      getCameraHealth(camera.id)
+        .then((health) => {
+          if (!waiting.isConnected || waitingSince === null) return;
+          waiting.textContent = health?.last_error
+            ? `Sem imagem da câmera: ${health.last_error}`
+            : "O CAMPEX Node está conectado, mas ainda não enviou imagem desta câmera.";
+        })
+        .catch(() => {});
     },
     onError: (error) => {
       img.hidden = true;
