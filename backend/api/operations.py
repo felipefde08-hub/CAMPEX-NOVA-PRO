@@ -155,6 +155,66 @@ def _investigation_row(row) -> dict:
     return dict(row)
 
 
+CONNECTING_GRACE_SECONDS = 60
+OPEN_EVENTS_LIMIT = 200
+SEVERITY_RANK = {"critical": 0, "attention": 1, "info": 2}
+
+
+def _parse_timestamp(value) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _camera_image_state(camera: dict, now: datetime) -> str:
+    """Classify what the camera delivers right now, independent of the vision toggle."""
+    if not camera.get("enabled"):
+        return "disabled"
+    status_value = camera.get("status")
+    if status_value == "ONLINE":
+        return "online"
+    if status_value == "DEGRADED":
+        return "degraded"
+    if status_value == "CONNECTING":
+        # A short reconnect is normal on industrial networks; only call it
+        # "no image" once it has lasted longer than the grace period.
+        recent = [
+            _parse_timestamp(camera.get(key))
+            for key in ("last_frame_at", "last_disconnected_at", "created_at")
+        ]
+        if any(moment and (now - moment).total_seconds() < CONNECTING_GRACE_SECONDS for moment in recent):
+            return "connecting"
+    return "no_image"
+
+
+def _camera_summary(camera: dict, now: datetime) -> dict:
+    health = camera.get("health") or {}
+    image_state = _camera_image_state(camera, now)
+    vision_enabled = bool(camera.get("vision_enabled"))
+    return {
+        "id": camera["id"],
+        "name": camera.get("name"),
+        "area_id": camera.get("area_id"),
+        "enabled": bool(camera.get("enabled")),
+        "vision_enabled": vision_enabled,
+        "status": camera.get("status"),
+        "image_state": image_state,
+        "monitoring": image_state in {"online", "degraded"} and vision_enabled,
+        "last_frame_at": health.get("last_frame_at") or camera.get("last_frame_at"),
+        "last_connected_at": health.get("last_connected_at") or camera.get("last_connected_at"),
+        "last_disconnected_at": health.get("last_disconnected_at") or camera.get("last_disconnected_at"),
+        "consecutive_failures": health.get("consecutive_failures", camera.get("consecutive_failures", 0)),
+        "reconnect_attempts": health.get("reconnect_attempts", 0),
+        "last_error": health.get("last_error"),
+    }
+
+
 def _operations_summary_payload(request: Request | None = None, organization_id: str | None = None) -> dict:
     settings = _settings()
     manager = getattr(request.app.state, "camera_manager", None) if request else None
@@ -188,6 +248,17 @@ def _operations_summary_payload(request: Request | None = None, organization_id:
                     (organization_id,),
                 ).fetchall()
             ]
+            open_events = [
+                _event_row(row)
+                for row in connection.execute(
+                    "SELECT * FROM events WHERE organization_id = ? AND status = 'OPEN' ORDER BY started_at ASC LIMIT ?",
+                    (organization_id, OPEN_EVENTS_LIMIT),
+                ).fetchall()
+            ]
+            open_counts = connection.execute(
+                "SELECT COUNT(*), COALESCE(SUM(severity = 'critical'), 0) FROM events WHERE organization_id = ? AND status = 'OPEN'",
+                (organization_id,),
+            ).fetchone()
         else:
             cameras = [dict(row) for row in connection.execute("SELECT * FROM cameras").fetchall()]
             zones = [dict(row) for row in connection.execute("SELECT * FROM zones").fetchall()]
@@ -203,6 +274,16 @@ def _operations_summary_payload(request: Request | None = None, organization_id:
                     "SELECT * FROM investigations ORDER BY updated_at DESC LIMIT 100"
                 ).fetchall()
             ]
+            open_events = [
+                _event_row(row)
+                for row in connection.execute(
+                    "SELECT * FROM events WHERE status = 'OPEN' ORDER BY started_at ASC LIMIT ?",
+                    (OPEN_EVENTS_LIMIT,),
+                ).fetchall()
+            ]
+            open_counts = connection.execute(
+                "SELECT COUNT(*), COALESCE(SUM(severity = 'critical'), 0) FROM events WHERE status = 'OPEN'"
+            ).fetchone()
 
     if manager is not None:
         camera_repo = CameraRepository(settings)
@@ -216,8 +297,12 @@ def _operations_summary_payload(request: Request | None = None, organization_id:
                 camera["status"] = health["status"]
                 camera["health"] = health
 
-    open_events = [event for event in events if event["status"] == "OPEN"]
+    # Oldest first inside each severity: the longest-waiting occurrence leads.
+    open_events.sort(key=lambda event: SEVERITY_RANK.get(event["severity"], len(SEVERITY_RANK)))
+    events_open_total, events_open_critical = (int(value or 0) for value in open_counts)
     critical_events = [event for event in events if event["severity"] == "critical"]
+    now = datetime.now(timezone.utc)
+    camera_summaries = [_camera_summary(camera, now) for camera in cameras]
     active_cameras = [camera for camera in cameras if camera["enabled"] and camera["status"] == "ONLINE"]
     online_cameras = [camera for camera in cameras if camera["status"] == "ONLINE"]
     camera_by_area: dict[str, int] = {}
@@ -237,8 +322,18 @@ def _operations_summary_payload(request: Request | None = None, organization_id:
             "cameras_online": len(online_cameras),
             "cameras_active": len(active_cameras),
             "zones_total": len(zones),
+            "cameras_monitoring": sum(1 for camera in camera_summaries if camera["monitoring"]),
+            "cameras_vision_off": sum(
+                1
+                for camera in camera_summaries
+                if camera["image_state"] in {"online", "degraded"} and not camera["vision_enabled"]
+            ),
+            "cameras_no_image": sum(1 for camera in camera_summaries if camera["image_state"] == "no_image"),
+            "cameras_connecting": sum(1 for camera in camera_summaries if camera["image_state"] == "connecting"),
+            "cameras_disabled": sum(1 for camera in camera_summaries if camera["image_state"] == "disabled"),
             "events_total": len(events),
-            "events_open": len(open_events),
+            "events_open": events_open_total,
+            "events_open_critical": events_open_critical,
             "events_critical": len(critical_events),
             "investigations_open": len([item for item in investigations if item["status"] != "CLOSED"]),
         },
@@ -251,6 +346,8 @@ def _operations_summary_payload(request: Request | None = None, organization_id:
             {"type": event_type, "count": count}
             for event_type, count in sorted(event_by_type.items(), key=lambda item: item[1], reverse=True)
         ],
+        "cameras": camera_summaries,
+        "open_events": open_events,
         "recent_events": events[:10],
         "recent_investigations": investigations[:10],
     }

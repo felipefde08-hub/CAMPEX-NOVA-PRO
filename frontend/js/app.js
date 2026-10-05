@@ -458,28 +458,644 @@ function renderRoute() {
   `;
 }
 
+const dashboardContext = {
+  summary: null,
+  cameraById: {},
+  zoneById: {},
+  updatedAt: null,
+};
+
+const EVENT_TYPE_LABELS = {
+  PERSON_RESTRICTED_ZONE: "Presença em área restrita",
+  PERSON_RESTRICTED_ZONE_DWELL: "Permanência em área restrita",
+  PERSON_MONITORED_ZONE: "Presença em zona monitorada",
+  MACHINE_WAITING: "Máquina aguardando",
+  WAITING_AT_STATION: "Espera no posto",
+  PERSON_IDLE: "Pessoa parada",
+  MACHINE_IDLE: "Máquina ociosa",
+  MACHINE_STATIONARY: "Máquina parada",
+  MACHINE_BLOCKED: "Máquina bloqueada",
+  MACHINE_STARVED: "Máquina sem material",
+  MISSING_OPERATOR: "Operador ausente",
+  MANUAL_REWORK: "Retrabalho manual",
+  QUEUE_GROWTH: "Fila crescendo",
+};
+
+const SEVERITY_LABELS = { critical: "Crítica", attention: "Atenção", info: "Informativa" };
+const DASHBOARD_CAMERA_ISSUE_LIMIT = 5;
+const DASHBOARD_CLOSED_TODAY_LIMIT = 5;
+
 async function renderDashboardPage() {
   appView.innerHTML = `
-    <div class="ops-page">
-      <section class="ops-toolbar">
-        <button type="button" id="dashboard-refresh">Atualizar</button>
-      </section>
-      <section id="dashboard-kpis" class="settings-grid"></section>
-      <section class="ops-grid">
-        <div>
-          <div class="section-heading"><h2>Eventos recentes</h2><span id="dashboard-event-count">0</span></div>
-          <div id="dashboard-events" class="ops-list"></div>
-        </div>
-        <aside class="ops-detail">
-          <h2>Leitura operacional</h2>
-          <div id="dashboard-insights" class="object-list"></div>
+    <div class="dash">
+      <section class="dash-status" id="dash-status" aria-live="polite"></section>
+      <section class="dash-setup" id="dash-setup" hidden></section>
+      <div class="dash-body" id="dash-body">
+        <section class="dash-main" aria-labelledby="dash-open-title">
+          <header class="dash-section-head">
+            <h2 id="dash-open-title">Aguardando ação</h2>
+            <span class="dash-count" id="dash-open-count"></span>
+          </header>
+          <div class="dash-list" id="dash-open"></div>
+          <header class="dash-section-head dash-section-head-quiet">
+            <h3>Encerradas hoje</h3>
+          </header>
+          <div class="dash-list dash-list-quiet" id="dash-closed"></div>
+          <a class="dash-link" id="dash-investigations" href="#investigations" hidden></a>
+        </section>
+        <aside class="dash-side">
+          <section class="dash-block" aria-labelledby="dash-cameras-title">
+            <header class="dash-section-head">
+              <h2 id="dash-cameras-title">Câmeras</h2>
+              <span class="dash-count" id="dash-camera-count"></span>
+            </header>
+            <div id="dash-cameras"></div>
+          </section>
+          <section class="dash-block" aria-labelledby="dash-reading-title">
+            <header class="dash-section-head">
+              <h2 id="dash-reading-title">Leitura do dia</h2>
+            </header>
+            <dl class="dash-reading" id="dash-reading"></dl>
+          </section>
         </aside>
-      </section>
+      </div>
+      <aside class="cx-drawer" id="dash-drawer" aria-hidden="true">
+        <div class="cx-drawer-backdrop" data-dash-drawer-close></div>
+        <div class="cx-drawer-panel" role="dialog" aria-labelledby="dash-drawer-title">
+          <div class="cx-drawer-head">
+            <div>
+              <h3 id="dash-drawer-title">Ocorrência</h3>
+              <span class="dash-drawer-meta" id="dash-drawer-meta"></span>
+            </div>
+            <button type="button" class="cx-ghost-button" data-dash-drawer-close>Fechar</button>
+          </div>
+          <div id="dash-drawer-body"></div>
+        </div>
+      </aside>
     </div>
   `;
-  document.querySelector("#dashboard-refresh").addEventListener("click", loadDashboard);
+  appView.querySelector(".dash").addEventListener("click", handleDashboardClick);
   startOperationsStream();
   await loadDashboard();
+}
+
+async function loadDashboard() {
+  try {
+    const [summary, cameras, zones] = await Promise.all([
+      getOperationsSummary(),
+      listCameras().catch(() => []),
+      listZones().catch(() => []),
+    ]);
+    dashboardContext.cameraById = Object.fromEntries(cameras.map((camera) => [camera.id, camera]));
+    dashboardContext.zoneById = Object.fromEntries(zones.map((zone) => [zone.id, zone]));
+    renderDashboardSummary(summary);
+  } catch (error) {
+    renderDashboardError(error);
+  }
+}
+
+function renderDashboardSummary(summary) {
+  const statusHost = document.querySelector("#dash-status");
+  if (!statusHost) return;
+  dashboardContext.summary = summary;
+  dashboardContext.updatedAt = new Date();
+  const status = dashboardStatus(summary);
+  statusHost.dataset.tone = status.tone;
+  statusHost.innerHTML = `
+    <span class="dash-status-dot" data-tone="${status.tone}" aria-hidden="true"></span>
+    <div class="dash-status-text">
+      <h1>${escapeHtml(status.title)}</h1>
+      ${status.lines.map((line) => `<p>${escapeHtml(line)}</p>`).join("")}
+    </div>
+    <div class="dash-status-meta">
+      <span>Atualizado às ${dashboardContext.updatedAt.toLocaleTimeString("pt-BR")}</span>
+      <button type="button" class="cx-ghost-button" data-dash-refresh>Atualizar</button>
+    </div>
+  `;
+
+  const setup = status.mode === "setup";
+  document.querySelector("#dash-body").hidden = setup;
+  document.querySelector("#dash-setup").hidden = !setup;
+  if (setup) {
+    document.querySelector("#dash-setup").innerHTML = dashboardSetupSteps();
+    return;
+  }
+  renderDashboardOpenEvents(summary, status);
+  renderDashboardClosedToday(summary);
+  renderDashboardCameras(summary);
+  renderDashboardReading(summary);
+}
+
+function renderDashboardError(error) {
+  const statusHost = document.querySelector("#dash-status");
+  if (!statusHost) return;
+  statusHost.dataset.tone = "neutral";
+  statusHost.innerHTML = `
+    <span class="dash-status-dot" data-tone="neutral" aria-hidden="true"></span>
+    <div class="dash-status-text">
+      <h1>Não foi possível carregar o painel</h1>
+      <p>${escapeHtml(error?.message || "Verifique a conexão com o servidor.")}</p>
+    </div>
+    <div class="dash-status-meta">
+      <button type="button" class="cx-ghost-button" data-dash-refresh>Tentar novamente</button>
+    </div>
+  `;
+}
+
+// One headline at a time. Order matters: earlier rules win.
+function dashboardStatus(summary) {
+  const kpis = summary.kpis || {};
+  const cameras = summary.cameras || [];
+  const total = cameras.length || kpis.cameras_total || 0;
+  const disabled = kpis.cameras_disabled || 0;
+  const enabled = total - disabled;
+  const withImage = cameras.filter((camera) => ["online", "degraded"].includes(camera.image_state)).length;
+  const monitoring = kpis.cameras_monitoring || 0;
+  const visionOff = kpis.cameras_vision_off || 0;
+  const noImage = kpis.cameras_no_image || 0;
+  const connecting = kpis.cameras_connecting || 0;
+  const openTotal = kpis.events_open || 0;
+  const openCritical = kpis.events_open_critical || 0;
+  const lastLine = dashboardLastOccurrenceLine(summary);
+
+  const cameraIssues = [];
+  if (visionOff) cameraIssues.push(`${visionOff} ${plural(visionOff, "câmera", "câmeras")} sem monitoramento ativo`);
+  if (noImage) cameraIssues.push(`${noImage} sem imagem`);
+  if (connecting) cameraIssues.push(`${connecting} ${plural(connecting, "conectando", "conectando")}`);
+
+  if (total === 0) {
+    return {
+      mode: "setup",
+      tone: "neutral",
+      title: "Nenhuma câmera conectada ainda",
+      lines: ["O Campex começa a vigiar assim que a primeira câmera estiver conectada e com monitoramento ativo."],
+    };
+  }
+
+  if (openCritical > 0) {
+    return {
+      mode: "normal",
+      tone: "critical",
+      title: `${openCritical} ${plural(openCritical, "ocorrência crítica aguardando", "ocorrências críticas aguardando")} ação`,
+      lines: [
+        [`Vigiando ${monitoring} de ${total} ${plural(total, "câmera", "câmeras")}`, ...cameraIssues].join(" · "),
+        lastLine,
+      ],
+    };
+  }
+
+  if (enabled === 0) {
+    return {
+      mode: "paused",
+      tone: "attention",
+      title: "Todas as câmeras estão desativadas",
+      lines: ["Nada está sendo vigiado agora. Reative as câmeras na página Câmeras."],
+    };
+  }
+
+  if (withImage === 0) {
+    if (connecting > 0 && noImage === 0) {
+      return {
+        mode: "paused",
+        tone: "neutral",
+        title: "Conectando às câmeras",
+        lines: ["O monitoramento começa assim que a primeira imagem chegar."],
+      };
+    }
+    return {
+      mode: "paused",
+      tone: "attention",
+      title: "Sem imagem de nenhuma câmera",
+      lines: ["Nada está sendo vigiado agora. As câmeras reconectam automaticamente quando a rede voltar.", lastLine],
+    };
+  }
+
+  if (visionOff > 0) {
+    const title = monitoring === 0
+      ? `${withImage} ${plural(withImage, "câmera conectada", "câmeras conectadas")}, nenhuma com monitoramento ativo`
+      : `${withImage} ${plural(withImage, "câmera conectada", "câmeras conectadas")}, ${visionOff} sem monitoramento ativo`;
+    const detail = ["Câmera com imagem e IA desligada não gera ocorrência"];
+    if (noImage) detail.push(`${noImage} sem imagem`);
+    return {
+      mode: monitoring === 0 ? "paused" : "normal",
+      tone: "attention",
+      title,
+      lines: [detail.join(" · "), lastLine],
+    };
+  }
+
+  if (noImage > 0) {
+    return {
+      mode: "normal",
+      tone: "attention",
+      title: `Vigiando ${monitoring} de ${enabled} câmeras`,
+      lines: [`${noImage} sem imagem, reconectando automaticamente${openTotal ? ` · ${dashboardOpenLabel(openTotal)}` : ""}`, lastLine],
+    };
+  }
+
+  const watching = `Vigiando ${monitoring} ${plural(monitoring, "câmera", "câmeras")}`;
+  const connectingNote = connecting ? ` · ${connecting} conectando` : "";
+  if (openTotal > 0) {
+    return {
+      mode: "normal",
+      tone: "ok",
+      title: watching,
+      lines: [`${dashboardOpenLabel(openTotal)}${connectingNote}`, lastLine],
+    };
+  }
+  return {
+    mode: "normal",
+    tone: "ok",
+    title: "Operação normal",
+    lines: [`${watching} · nenhuma ocorrência aberta${connectingNote}`, lastLine],
+  };
+}
+
+function dashboardOpenLabel(count) {
+  return `${count} ${plural(count, "ocorrência aguardando", "ocorrências aguardando")} revisão`;
+}
+
+function dashboardLastOccurrenceLine(summary) {
+  const last = (summary.recent_events || [])[0];
+  if (!last) return "Nenhuma ocorrência registrada ainda";
+  return `Última ocorrência: ${formatDashboardMoment(last.started_at)} · ${dashboardWhere(last)}`;
+}
+
+function dashboardSetupSteps() {
+  return `
+    <ol class="dash-steps">
+      <li><strong>Conecte uma câmera</strong><span>Use as câmeras que a fábrica já tem (RTSP ou IP).</span></li>
+      <li><strong>Ative o monitoramento</strong><span>Com a IA ligada, a câmera passa a gerar ocorrências.</span></li>
+      <li><strong>Defina as zonas</strong><span>Marque as áreas que importam: restritas, postos, filas.</span></li>
+    </ol>
+    <a class="primary-action" href="#cameras">Adicionar câmera</a>
+  `;
+}
+
+function renderDashboardOpenEvents(summary, status) {
+  const host = document.querySelector("#dash-open");
+  const openEvents = summary.open_events || [];
+  const openTotal = summary.kpis?.events_open ?? openEvents.length;
+  document.querySelector("#dash-open-count").textContent = openTotal ? String(openTotal) : "";
+
+  if (!openEvents.length) {
+    host.innerHTML = status.mode === "paused"
+      ? dashboardEmpty("Monitoramento pausado", "Sem câmera com imagem e IA ativa, nenhuma ocorrência nova será detectada.")
+      : dashboardEmpty("Nada aguardando ação", "Ocorrências novas aparecem aqui assim que forem detectadas.");
+    return;
+  }
+  const truncated = openTotal > openEvents.length
+    ? `<a class="dash-link" href="#events">Mostrando ${openEvents.length} de ${openTotal}. Ver todas em Eventos</a>`
+    : "";
+  host.innerHTML = openEvents.map(dashboardOpenRow).join("") + truncated;
+}
+
+function dashboardOpenRow(event) {
+  const severity = SEVERITY_LABELS[event.severity] || event.severity;
+  return `
+    <article class="dash-event" data-severity="${escapeHtml(event.severity)}">
+      <span class="dash-marker" data-kind="${escapeHtml(event.severity)}" aria-hidden="true"></span>
+      <div class="dash-event-main">
+        <strong>${escapeHtml(eventTypeLabel(event.type))}</strong>
+        <span><em class="dash-severity">${escapeHtml(severity)}</em> · ${escapeHtml(dashboardWhere(event))}</span>
+      </div>
+      <div class="dash-event-time">
+        <strong>${escapeHtml(relativeTime(event.started_at))}</strong>
+        <span>${escapeHtml(dashboardDurationLabel(event))}</span>
+      </div>
+      <button type="button" data-dash-review="${escapeHtml(event.id)}">Revisar</button>
+    </article>
+  `;
+}
+
+function renderDashboardClosedToday(summary) {
+  const host = document.querySelector("#dash-closed");
+  const today = new Date().toDateString();
+  const closed = (summary.recent_events || [])
+    .filter((event) => event.status !== "OPEN")
+    .filter((event) => parseApiDate(event.started_at)?.toDateString() === today)
+    .slice(0, DASHBOARD_CLOSED_TODAY_LIMIT);
+  host.innerHTML = closed.length
+    ? closed.map((event) => `
+      <div class="dash-closed-row">
+        <time>${escapeHtml(formatClock(event.started_at))}</time>
+        <span>${escapeHtml(eventTypeLabel(event.type))} · ${escapeHtml(dashboardWhere(event))}</span>
+        <span>${escapeHtml(dashboardDurationLabel(event))}</span>
+      </div>
+    `).join("")
+    : `<p class="dash-quiet">Nenhuma encerrada hoje.</p>`;
+
+  const investigations = summary.kpis?.investigations_open || 0;
+  const link = document.querySelector("#dash-investigations");
+  link.hidden = investigations === 0;
+  link.textContent = `${investigations} ${plural(investigations, "investigação em andamento", "investigações em andamento")} →`;
+}
+
+function renderDashboardCameras(summary) {
+  const cameras = summary.cameras || [];
+  const kpis = summary.kpis || {};
+  document.querySelector("#dash-camera-count").textContent = `${kpis.cameras_monitoring || 0} de ${cameras.length} vigiando`;
+
+  const issueOrder = { no_image: 0, vision_off: 1, connecting: 2, degraded: 3, disabled: 4 };
+  const issues = cameras
+    .map((camera) => ({ camera, kind: dashboardCameraKind(camera) }))
+    .filter((item) => item.kind !== "ok")
+    .sort((a, b) => issueOrder[a.kind] - issueOrder[b.kind]);
+  const healthy = cameras.length - issues.length;
+  const visible = issues.slice(0, DASHBOARD_CAMERA_ISSUE_LIMIT);
+  const hidden = issues.length - visible.length;
+
+  document.querySelector("#dash-cameras").innerHTML = `
+    ${visible.length ? `<ul class="dash-camera-list">${visible.map(dashboardCameraRow).join("")}</ul>` : ""}
+    ${hidden > 0 ? `<a class="dash-link" href="#cameras">+${hidden} ${plural(hidden, "outra", "outras")} com pendência</a>` : ""}
+    <div class="dash-camera-healthy">
+      <span class="dash-marker" data-kind="${healthy ? "ok" : "none"}" aria-hidden="true"></span>
+      <span>${healthy ? `${healthy} ${plural(healthy, "vigiando normalmente", "vigiando normalmente")}` : "Nenhuma vigiando normalmente"}</span>
+      <a class="dash-link" href="#cameras">Gerenciar câmeras</a>
+    </div>
+  `;
+}
+
+function dashboardCameraKind(camera) {
+  if (camera.image_state === "disabled") return "disabled";
+  if (camera.image_state === "no_image") return "no_image";
+  if (camera.image_state === "connecting") return "connecting";
+  if (!camera.vision_enabled) return "vision_off";
+  if (camera.image_state === "degraded") return "degraded";
+  return "ok";
+}
+
+function dashboardCameraRow({ camera, kind }) {
+  const name = escapeHtml(camera.name || camera.id);
+  const area = camera.area_id ? `<span class="dash-camera-area">${escapeHtml(camera.area_id)}</span>` : "";
+  let detail = "";
+  let extra = "";
+  if (kind === "no_image") {
+    detail = camera.last_frame_at
+      ? `Sem imagem ${relativeTime(camera.last_frame_at)}`
+      : "Sem imagem desde o cadastro";
+    extra = `<span>Reconectando automaticamente${camera.reconnect_attempts ? ` (tentativa ${camera.reconnect_attempts})` : ""}</span>`;
+    if (camera.last_error) {
+      extra += `<details><summary>Detalhes da conexão</summary><code>${escapeHtml(camera.last_error)}</code></details>`;
+    }
+  } else if (kind === "vision_off") {
+    detail = "Com imagem · IA desligada";
+    extra = `<span>Não gera ocorrências. <a class="dash-link" href="#cameras">Ativar monitoramento</a></span>`;
+  } else if (kind === "connecting") {
+    detail = "Conectando…";
+  } else if (kind === "degraded") {
+    detail = "Imagem instável · monitorando";
+  } else if (kind === "disabled") {
+    detail = "Desativada";
+  }
+  return `
+    <li class="dash-camera" data-kind="${kind}">
+      <span class="dash-marker" data-kind="${kind}" aria-hidden="true"></span>
+      <div>
+        <div class="dash-camera-name"><strong>${name}</strong>${area}</div>
+        <span class="dash-camera-detail">${escapeHtml(detail)}</span>
+        ${extra}
+      </div>
+    </li>
+  `;
+}
+
+function renderDashboardReading(summary) {
+  const intelligence = summary.intelligence || {};
+  const comparisons = intelligence.comparisons || {};
+  const totals = comparisons.totals || {};
+  const topGroup = (intelligence.event_groups || [])[0];
+  const topImpact = (intelligence.impacts || [])[0];
+  const topFinding = (intelligence.findings || [])[0];
+  const topTriage = (intelligence.triage || []).find((item) => item.decision === "INVESTIGATE");
+  const items = [];
+
+  const today = totals.today?.event_count || 0;
+  const yesterday = totals.yesterday?.event_count || 0;
+  if (!comparisons.today_vs_yesterday || (today === 0 && yesterday === 0)) {
+    items.push(readingItem("Hoje vs ontem", null, "Sem dados suficientes para comparar", "Nenhuma ocorrência encerrada hoje nem ontem."));
+  } else if (yesterday === 0) {
+    items.push(readingItem("Hoje vs ontem", `${totals.today.total_duration_label} hoje`, "", "Ontem não teve ocorrência encerrada para comparar."));
+  } else {
+    items.push(readingItem("Hoje vs ontem", formatDelta(comparisons.today_vs_yesterday), "", "Tempo somado das ocorrências encerradas."));
+  }
+
+  const normal = comparisons.normal_vs_current;
+  if (!normal || normal.state === "NO_BASELINE") {
+    items.push(readingItem("Atual vs normal", null, "Sem dados suficientes para comparar", "Precisa de pelo menos um dia com ocorrências encerradas nos últimos 7 dias."));
+  } else {
+    items.push(readingItem(
+      "Atual vs normal",
+      formatDelta(normal.comparison),
+      "",
+      `Média de ${normal.baseline.sample_days} ${plural(normal.baseline.sample_days, "dia recente", "dias recentes")} com ocorrência.`,
+    ));
+  }
+
+  if (topGroup) {
+    const description = topFinding?.statement
+      || (topTriage ? topTriage.reasons.join(" · ") : `${topGroup.total_duration_label} somados hoje.`);
+    items.push(readingItem("Maior recorrência", `${topGroup.location_label} · ${topGroup.frequency}× hoje`, "", description));
+  } else {
+    items.push(readingItem("Maior recorrência", null, "Nenhuma recorrência hoje", "Considera só ocorrências encerradas com leitura confiável."));
+  }
+
+  if (topImpact) {
+    const description = topImpact.estimated_cost !== null && topImpact.estimated_cost !== undefined
+      ? `${formatMoney(topImpact.estimated_cost, topImpact.currency)} estimados · ${topImpact.location_label}`
+      : `${topImpact.location_label}. Configure o custo por hora para ver o valor em R$.`;
+    items.push(readingItem("Maior impacto", `${topImpact.lost_time_label} perdidos`, "", description));
+  } else {
+    items.push(readingItem("Maior impacto", null, "Sem tempo perdido registrado hoje", "Calculado a partir das ocorrências encerradas."));
+  }
+
+  document.querySelector("#dash-reading").innerHTML = items.join("");
+}
+
+function readingItem(label, value, emptyValue, description) {
+  const isEmpty = value === null;
+  return `
+    <div class="dash-reading-item">
+      <dt>${escapeHtml(label)}</dt>
+      <dd class="dash-reading-value${isEmpty ? " is-empty" : ""}">${escapeHtml(isEmpty ? emptyValue : value)}</dd>
+      <dd class="dash-reading-desc">${escapeHtml(description)}</dd>
+    </div>
+  `;
+}
+
+function formatDelta(comparison) {
+  const sign = comparison.direction === "up" ? "+" : comparison.direction === "down" ? "−" : "";
+  const percent = comparison.duration_delta_percent !== null && comparison.duration_delta_percent !== undefined
+    ? ` (${sign}${Math.abs(comparison.duration_delta_percent)}%)`
+    : "";
+  return comparison.direction === "flat" ? "Igual" : `${sign}${comparison.duration_delta_label}${percent}`;
+}
+
+async function handleDashboardClick(event) {
+  const target = event.target;
+  if (target.closest("[data-dash-refresh]")) {
+    await loadDashboard();
+    return;
+  }
+  const review = target.closest("[data-dash-review]");
+  if (review) {
+    openDashboardEvent(review.dataset.dashReview);
+    return;
+  }
+  if (target.closest("[data-dash-drawer-close]")) {
+    closeDashboardDrawer();
+    return;
+  }
+  const action = target.closest("[data-dash-action]");
+  if (action) {
+    await runDashboardEventAction(action);
+  }
+}
+
+function openDashboardEvent(eventId) {
+  const event = (dashboardContext.summary?.open_events || []).find((item) => item.id === eventId);
+  if (!event) return;
+  const severity = SEVERITY_LABELS[event.severity] || event.severity;
+  const hasEvidence = Boolean(event.metadata?.overlay_path);
+  const confidence = event.confidence ? `${Math.round(event.confidence * 100)}%` : "Não informada";
+  document.querySelector("#dash-drawer-title").textContent = eventTypeLabel(event.type);
+  document.querySelector("#dash-drawer-meta").textContent = severity;
+  document.querySelector("#dash-drawer-body").innerHTML = `
+    <div class="dash-review">
+      ${hasEvidence
+        ? `<img class="event-evidence" src="${eventEvidenceUrl(event.id)}" alt="Evidência da ocorrência" />`
+        : `<p class="dash-quiet">Sem imagem de evidência para esta ocorrência.</p>`}
+      <dl class="dash-facts">
+        <div><dt>Onde</dt><dd>${escapeHtml(dashboardWhere(event))}</dd></div>
+        <div><dt>Começou</dt><dd>${escapeHtml(formatDashboardMoment(event.started_at))} · ${escapeHtml(relativeTime(event.started_at))}</dd></div>
+        <div><dt>Duração</dt><dd>${escapeHtml(dashboardDurationLabel(event))}</dd></div>
+        <div><dt>Confiança</dt><dd>${escapeHtml(confidence)}</dd></div>
+      </dl>
+      <div class="dash-review-actions" data-event-id="${escapeHtml(event.id)}">
+        <button type="button" class="primary-action" data-dash-action="review">Marcar como revisada</button>
+        <button type="button" class="cx-ghost-button" data-dash-action="close">Encerrar</button>
+        <button type="button" class="cx-ghost-button" data-dash-action="investigate">Abrir investigação</button>
+      </div>
+    </div>
+  `;
+  const drawer = document.querySelector("#dash-drawer");
+  drawer.classList.add("is-open");
+  drawer.setAttribute("aria-hidden", "false");
+  drawer.querySelector("[data-dash-action='review']")?.focus();
+}
+
+function closeDashboardDrawer() {
+  const drawer = document.querySelector("#dash-drawer");
+  drawer?.classList.remove("is-open");
+  drawer?.setAttribute("aria-hidden", "true");
+}
+
+async function runDashboardEventAction(button) {
+  const eventId = button.closest("[data-event-id]")?.dataset.eventId;
+  if (!eventId) return;
+  const action = button.dataset.dashAction;
+  button.disabled = true;
+  try {
+    if (action === "review") {
+      await updateEvent(eventId, { status: "REVIEWED" });
+      notify("Ocorrência revisada", "", "success");
+    } else if (action === "close") {
+      await updateEvent(eventId, { status: "CLOSED" });
+      notify("Ocorrência encerrada", "", "success");
+    } else if (action === "investigate") {
+      await createInvestigationFromEvent(eventId);
+      closeDashboardDrawer();
+      window.location.hash = "investigations";
+      return;
+    }
+    closeDashboardDrawer();
+    await loadDashboard();
+  } catch (error) {
+    notifyError("Não foi possível atualizar a ocorrência", error);
+    button.disabled = false;
+  }
+}
+
+function dashboardWhere(event) {
+  const camera = dashboardContext.cameraById[event.camera_id]
+    || (dashboardContext.summary?.cameras || []).find((item) => item.id === event.camera_id);
+  const zone = event.zone_id ? dashboardContext.zoneById[event.zone_id] : null;
+  const parts = [camera?.name || event.camera_id];
+  if (zone?.name) parts.push(zone.name);
+  return parts.join(" · ");
+}
+
+function dashboardEmpty(title, detail) {
+  return `<div class="dash-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span></div>`;
+}
+
+function dashboardDurationLabel(event) {
+  let seconds = Number(event.duration);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    const start = parseApiDate(event.started_at);
+    const end = parseApiDate(event.ended_at);
+    seconds = start && end ? (end - start) / 1000 : NaN;
+  }
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return event.status === "OPEN" ? "em andamento" : "duração não registrada";
+  }
+  return `duração ${formatSecondsShort(seconds)}`;
+}
+
+function eventTypeLabel(type) {
+  if (EVENT_TYPE_LABELS[type]) return EVENT_TYPE_LABELS[type];
+  const text = String(type || "Ocorrência").replace(/_/g, " ").toLowerCase();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function plural(count, singular, pluralForm) {
+  return count === 1 ? singular : pluralForm;
+}
+
+// SQLite stores "YYYY-MM-DD HH:MM:SS" in UTC without a zone marker.
+function parseApiDate(value) {
+  if (!value) return null;
+  let text = String(value);
+  if (/^\d{4}-\d{2}-\d{2} \d/.test(text)) text = text.replace(" ", "T");
+  if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(text)) text += "Z";
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatSecondsShort(seconds) {
+  const minutes = Math.round(seconds / 60);
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s`;
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours < 24) return rest ? `${hours} h ${rest} min` : `${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `${days} ${plural(days, "dia", "dias")}`;
+}
+
+function relativeTime(value) {
+  const date = parseApiDate(value);
+  if (!date) return "";
+  const seconds = (Date.now() - date.getTime()) / 1000;
+  if (seconds < 45) return "agora";
+  return `há ${formatSecondsShort(seconds)}`;
+}
+
+function formatClock(value) {
+  const date = parseApiDate(value);
+  return date ? date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "";
+}
+
+function formatDashboardMoment(value) {
+  const date = parseApiDate(value);
+  if (!date) return "";
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const clock = formatClock(value);
+  if (date.toDateString() === today.toDateString()) return `hoje, ${clock}`;
+  if (date.toDateString() === yesterday.toDateString()) return `ontem, ${clock}`;
+  return `${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}, ${clock}`;
 }
 
 function startOperationsStream() {
@@ -500,29 +1116,6 @@ function startOperationsStream() {
     });
   } catch {
     operationsStream = null;
-  }
-}
-
-async function loadDashboard() {
-  try {
-    const [summary, cameras, zones] = await Promise.all([
-      getOperationsSummary(),
-      listCameras(),
-      listZones(),
-    ]);
-    const cameraById = Object.fromEntries(cameras.map((camera) => [camera.id, camera]));
-    const zoneById = Object.fromEntries(zones.map((zone) => [zone.id, zone]));
-    renderDashboardSummary(summary);
-    document.querySelector("#dashboard-event-count").textContent = `${summary.recent_events.length} itens`;
-    document.querySelector("#dashboard-events").innerHTML = summary.recent_events.length
-      ? summary.recent_events.map((event) => eventRow(event, cameraById, zoneById)).join("")
-      : emptyState("Sem eventos recentes", "Quando a visão detectar ocorrências, elas entram aqui.");
-    document.querySelectorAll("[data-event-action]").forEach((button) => {
-      button.addEventListener("click", handleEventAction);
-    });
-    renderDashboardInsights(summary);
-  } catch (error) {
-    document.querySelector("#dashboard-kpis").innerHTML = emptyState("Falha ao carregar painel", error.message);
   }
 }
 
@@ -799,58 +1392,6 @@ function productivityCameraRow(camera) {
       <span class="health-badge" data-status="${signals.length ? "DEGRADED" : "ONLINE"}">${signals.length ? "ATENÇÃO" : "OK"}</span>
     </article>
   `;
-}
-
-function renderDashboardSummary(summary) {
-  const kpis = summary.kpis;
-  const intelligence = summary.intelligence || {};
-  const triage = intelligence.triage || [];
-  const attention = triage.filter((item) => item.decision === "INVESTIGATE");
-  const kpiHost = document.querySelector("#dashboard-kpis");
-  if (!kpiHost) return;
-  kpiHost.innerHTML = [
-    metricItem("Cameras online", `${kpis.cameras_online}/${kpis.cameras_total}`, `${kpis.cameras_active} ativas`),
-    metricItem("Eventos abertos", kpis.events_open, `${kpis.events_critical} críticos`),
-    metricItem("Recorrências", triage.length, `${attention.length} para investigar`),
-    metricItem("Investigações", kpis.investigations_open, "Casos em andamento"),
-  ].join("");
-  renderDashboardInsights(summary);
-}
-
-function renderDashboardInsights(summary) {
-  const intelligence = summary.intelligence || {};
-  const topGroup = (intelligence.event_groups || [])[0];
-  const topTriage = (intelligence.triage || []).find((item) => item.decision === "INVESTIGATE");
-  const topFinding = (intelligence.findings || [])[0];
-  const topImpact = (intelligence.impacts || [])[0];
-  const comparison = intelligence.comparisons?.today_vs_yesterday;
-  const normal = intelligence.comparisons?.normal_vs_current;
-  const areas = summary.areas.map((area) => `${area.area_id}: ${area.camera_count}`).join(" - ") || "sem áreas";
-  const recurrence = topGroup
-    ? `${topGroup.location_label}: ${topGroup.frequency}x, ${topGroup.total_duration_label}`
-    : "sem recorrência confiável hoje";
-  const triage = topTriage
-    ? `${topTriage.group.location_label}: ${topTriage.reasons.join(" - ")}`
-    : "ruído baixo no momento";
-  const finding = topFinding?.statement || "sem finding executivo hoje";
-  const comparisonLabel = comparison
-    ? `${comparison.direction === "up" ? "+" : comparison.direction === "down" ? "-" : ""}${comparison.duration_delta_label}${comparison.duration_delta_percent !== null ? ` (${comparison.duration_delta_percent}%)` : ""}`
-    : "sem base comparativa";
-  const normalLabel = normal?.state !== "NO_BASELINE"
-    ? `${normal.comparison.direction === "up" ? "+" : normal.comparison.direction === "down" ? "-" : ""}${normal.comparison.duration_delta_label}${normal.comparison.duration_delta_percent !== null ? ` (${normal.comparison.duration_delta_percent}%)` : ""}`
-    : "sem baseline recente";
-  const impact = topImpact
-    ? `${topImpact.lost_time_label} perdidos${topImpact.estimated_cost !== null ? ` - ${formatMoney(topImpact.estimated_cost, topImpact.currency)}` : ""}`
-    : "sem impacto acumulado";
-  document.querySelector("#dashboard-insights").innerHTML = [
-    objectLine("Áreas", areas, "Distribuição das câmeras cadastradas"),
-    objectLine("Recorrência", recurrence, "Agrupa eventos confiáveis do dia"),
-    objectLine("Triagem", triage, "Sobe frequência, duração ou severidade"),
-    objectLine("Finding", finding, "Frase pronta para gerente"),
-    objectLine("Hoje vs ontem", comparisonLabel, "Variação de tempo acumulado"),
-    objectLine("Atual vs normal", normalLabel, "Média dos dias recentes com amostra"),
-    objectLine("Impacto", impact, "Tempo perdido e R$ quando houver taxa configurada"),
-  ].join("");
 }
 
 async function renderVideoWallPage() {
