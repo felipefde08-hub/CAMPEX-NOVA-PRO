@@ -11,11 +11,12 @@ from pathlib import Path
 import time
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.cameras.security import sanitize_error_message
+from backend.config import ROOT_DIR as BACKEND_ROOT_DIR
 from backend.middleware.cors import LocalNetworkCORSMiddleware
 
 from campex_node.core.config import NodeCameraConfig, NodeSettings
@@ -55,6 +56,33 @@ class PairingLookupPayload(BaseModel):
 class PairingAuthorizePayload(BaseModel):
     code: str = Field(min_length=1, max_length=40)
     node_name: str | None = Field(default=None, max_length=120)
+
+
+class ZoneCreatePayload(BaseModel):
+    camera_id: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+    type: str = Field(pattern="^(monitored|restricted)$")
+    enabled: bool = True
+    points: list[list[float]] = Field(min_length=3)
+
+
+class ZoneUpdatePayload(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    type: str | None = Field(default=None, pattern="^(monitored|restricted)$")
+    enabled: bool | None = None
+    points: list[list[float]] | None = None
+
+
+class EventUpdatePayload(BaseModel):
+    status: str = Field(pattern="^(OPEN|REVIEWED|CLOSED)$")
+
+
+EVIDENCE_VARIANTS = {
+    "overlay": ("overlay_path", "image/jpeg"),
+    "snapshot": ("snapshot_path", "image/jpeg"),
+    "metadata": ("evidence_metadata_path", "application/json"),
+    "clip": ("clip_path", None),
+}
 
 
 class CloudManagedCameraError(ValueError):
@@ -855,11 +883,104 @@ def create_app() -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.get("/api/zones")
+    def list_zones(camera_id: str | None = None) -> list[dict]:
+        return [zone.as_dict() for zone in runtime.lifecycle.events_store.list_zones(camera_id)]
+
+    @app.post("/api/zones", status_code=201)
+    def create_zone(payload: ZoneCreatePayload) -> dict:
+        if not any(camera.id == payload.camera_id for camera in runtime.lifecycle.camera_manager.configs()):
+            raise HTTPException(status_code=404, detail="Camera not found.")
+        try:
+            zone = runtime.lifecycle.events_store.create_zone(
+                camera_id=payload.camera_id,
+                name=payload.name,
+                zone_type=payload.type,
+                points=payload.points,
+                enabled=payload.enabled,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return zone.as_dict()
+
+    @app.patch("/api/zones/{zone_id}")
+    def update_zone(zone_id: str, payload: ZoneUpdatePayload) -> dict:
+        try:
+            zone = runtime.lifecycle.events_store.update_zone(zone_id, payload.model_dump(exclude_unset=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if zone is None:
+            raise HTTPException(status_code=404, detail="Zone not found.")
+        return zone.as_dict()
+
+    @app.delete("/api/zones/{zone_id}", status_code=204, response_class=Response, response_model=None)
+    def delete_zone(zone_id: str) -> Response:
+        if not runtime.lifecycle.events_store.delete_zone(zone_id):
+            raise HTTPException(status_code=404, detail="Zone not found.")
+        return Response(status_code=204)
+
+    @app.get("/api/events")
+    def list_events(
+        status: str | None = None,
+        camera_id: str | None = None,
+        event_type: str | None = None,
+        limit: int = Query(200, ge=1, le=1000),
+    ) -> list[dict]:
+        events = runtime.lifecycle.events_store.list_events(
+            status=status, camera_id=camera_id, event_type=event_type, limit=limit
+        )
+        return [event.as_dict() for event in events]
+
+    @app.get("/api/events/{event_id}")
+    def get_event(event_id: str) -> dict:
+        event = runtime.lifecycle.events_store.get(event_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="Event not found.")
+        return event.as_dict()
+
+    @app.patch("/api/events/{event_id}")
+    def update_event(event_id: str, payload: EventUpdatePayload) -> dict:
+        event = runtime.lifecycle.events_store.update_status(event_id, payload.status)
+        if event is None:
+            raise HTTPException(status_code=404, detail="Event not found.")
+        return event.as_dict()
+
+    @app.delete("/api/events/{event_id}", status_code=204, response_class=Response, response_model=None)
+    def delete_event(event_id: str) -> Response:
+        if not runtime.lifecycle.events_store.delete_event(event_id):
+            raise HTTPException(status_code=404, detail="Event not found.")
+        return Response(status_code=204)
+
+    @app.get("/api/events/{event_id}/evidence")
+    def event_evidence(event_id: str, variant: str = Query("overlay", pattern="^(overlay|snapshot|metadata|clip)$")):
+        event = runtime.lifecycle.events_store.get(event_id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="Event not found.")
+        key, media_type = EVIDENCE_VARIANTS[variant]
+        stored = event.metadata.get(key)
+        if not stored:
+            raise HTTPException(status_code=404, detail="Evidence not found.")
+        file_path = _evidence_file(runtime.lifecycle.settings.data_dir, stored)
+        if file_path is None:
+            raise HTTPException(status_code=404, detail="Evidence file not found.")
+        if media_type is None:
+            media_type = "video/webm" if file_path.suffix == ".webm" else "video/mp4"
+        return FileResponse(file_path, media_type=media_type)
+
     @app.get("/api/diagnostics")
     def diagnostics() -> dict:
         return runtime.diagnostics()
 
     return app
+
+
+def _evidence_file(data_dir: Path, stored: str) -> Path | None:
+    raw = Path(stored)
+    file_path = (raw if raw.is_absolute() else BACKEND_ROOT_DIR / raw).resolve()
+    evidence_root = (data_dir / "evidence").resolve()
+    if evidence_root not in file_path.parents or not file_path.is_file():
+        return None
+    return file_path
 
 
 def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str, *, overlay: bool = False):

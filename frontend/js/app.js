@@ -2959,13 +2959,16 @@ async function showEventDetail(eventId) {
   const camera = cameras.find((item) => item.id === event.camera_id);
   const zone = zones.find((item) => item.id === event.zone_id);
   const hasEvidence = Boolean(event.metadata?.overlay_path);
+  const hasClip = Boolean(event.metadata?.clip_path);
   const category = event.metadata?.facts?.activity?.category || "other";
   document.querySelector("#event-drawer")?.classList.add("is-open");
   document.querySelector("#event-drawer")?.setAttribute("aria-hidden", "false");
   document.querySelector("#event-drawer-id").textContent = event.id;
   document.querySelector("#event-detail").innerHTML = `
     <div class="event-detail-panel">
-      ${hasEvidence ? `<img class="event-evidence" src="${eventEvidenceUrl(event.id)}" alt="Evidencia do evento ${event.id}" />` : ""}
+      ${hasClip
+        ? `<video class="event-evidence" src="${eventEvidenceUrl(event.id, "clip")}" controls playsinline preload="metadata"></video>`
+        : hasEvidence ? `<img class="event-evidence" src="${eventEvidenceUrl(event.id)}" alt="Evidencia do evento ${event.id}" />` : ""}
       <dl class="metric-list">
         <dt>ID</dt><dd>${event.id}</dd>
         <dt>Tipo</dt><dd>${event.type}</dd>
@@ -2975,7 +2978,9 @@ async function showEventDetail(eventId) {
         <dt>Track</dt><dd>${event.track_id ?? "-"}</dd>
         <dt>Status</dt><dd>${event.status}</dd>
         <dt>Inicio</dt><dd>${formatDate(event.started_at)}</dd>
-        <dt>Evidencia</dt><dd>${hasEvidence ? "salva" : "nao disponivel"}</dd>
+        <dt>Fim</dt><dd>${event.ended_at ? formatDate(event.ended_at) : "em andamento"}</dd>
+        <dt>Duracao</dt><dd>${event.duration != null ? `${Number(event.duration).toFixed(1)}s` : "-"}</dd>
+        <dt>Evidencia</dt><dd>${hasClip ? "clipe salvo" : hasEvidence ? "salva" : "nao disponivel"}</dd>
       </dl>
       <pre class="code-block">${JSON.stringify(event.metadata || {}, null, 2)}</pre>
     </div>
