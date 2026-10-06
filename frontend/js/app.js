@@ -838,7 +838,7 @@ function renderDashboardInsights(summary) {
   const comparisonLabel = comparison
     ? `${comparison.direction === "up" ? "+" : comparison.direction === "down" ? "-" : ""}${comparison.duration_delta_label}${comparison.duration_delta_percent !== null ? ` (${comparison.duration_delta_percent}%)` : ""}`
     : "sem base comparativa";
-  const normalLabel = normal?.state !== "NO_BASELINE"
+  const normalLabel = normal?.comparison && normal.state !== "NO_BASELINE"
     ? `${normal.comparison.direction === "up" ? "+" : normal.comparison.direction === "down" ? "-" : ""}${normal.comparison.duration_delta_label}${normal.comparison.duration_delta_percent !== null ? ` (${normal.comparison.duration_delta_percent}%)` : ""}`
     : "sem baseline recente";
   const impact = topImpact

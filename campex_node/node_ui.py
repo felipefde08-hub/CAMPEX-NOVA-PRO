@@ -1,84 +1,554 @@
 from __future__ import annotations
 
 
-NODE_HTML = """<!doctype html>
+# The Node's own page. It shares /css/tokens.css with the CAMPEX panel and
+# loads nothing from the internet: the Node often runs on a factory network.
+NODE_HTML = r"""<!doctype html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CAMPEX Node</title>
-  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet" />
+  <link rel="icon" href="/assets/simbolo.jpeg" />
+  <link rel="stylesheet" href="/css/tokens.css" />
   <style>
-    :root{--black:#090a0c;--bg:#0b0d10;--side:#080b10;--panel:#171b21;--panel2:#20262e;--border:#313946;--border2:#252b34;--text:#f2f5f8;--muted:#9aa6b4;--subtle:#6f7b8a;--accent:#7db3ff;--blue:#2688ff;--green:#31c46b;--warn:#e2b245;--red:#ef5b5b;--shadow:0 .75rem 1.75rem rgba(0,0,0,.2);--font:"Inter","Segoe UI",ui-sans-serif,system-ui,sans-serif}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;color:var(--text);font:14px/1.45 var(--font);background:radial-gradient(circle at 18% -12%,#18324b 0,#0b0d10 48%,#06080b 100%)}button,input{font:inherit}button{cursor:pointer}a{text-decoration:none;color:inherit}
-    .window{min-height:100vh;padding:24px}.app{min-height:calc(100vh - 48px);display:grid;grid-template-columns:264px 1fr;background:rgba(9,10,12,.94);border:1px solid rgba(49,57,70,.88);border-radius:8px;box-shadow:0 1.8rem 5rem rgba(0,0,0,.48);overflow:hidden}
-    .side{display:flex;flex-direction:column;background:linear-gradient(180deg,#090a0c,#0c1117);border-right:1px solid var(--border2);padding:24px 18px}.brand{display:flex;align-items:center;gap:13px;margin-bottom:32px}.brand-mark{width:44px;height:44px;border-radius:8px;background:#102041;display:grid;place-items:center;overflow:hidden}.brand-mark img{width:100%;height:100%;object-fit:cover}.brand-title{font-weight:850;font-size:20px}.brand-title span{color:var(--accent)}.brand small,.side-bottom small{display:block;color:var(--muted);font-size:12px}
-    .nav{display:grid;gap:7px}.nav button{height:44px;display:flex;align-items:center;gap:12px;border:0;border-radius:7px;background:transparent;color:#dce4ee;padding:0 13px;text-align:left}.nav button i{font-size:22px;color:#aeb9c6}.nav button.active{background:linear-gradient(90deg,#123679,#17243b);box-shadow:inset 3px 0 0 var(--blue)}.nav button.active i{color:#59a8ff}.side-bottom{margin-top:auto}.service{display:flex;align-items:center;gap:10px;color:#66e88e;font-weight:800;margin-bottom:6px}.dot{width:10px;height:10px;border-radius:99px;background:var(--red);box-shadow:0 0 0 5px rgba(239,91,91,.13)}.online .dot,.service .dot,.ONLINE .dot{background:var(--green);box-shadow:0 0 0 5px rgba(49,196,107,.14)}.DEGRADED .dot,.CONNECTING .dot{background:var(--warn);box-shadow:0 0 0 5px rgba(226,178,69,.14)}
-    main{min-width:0;padding:22px}.top{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-bottom:18px;margin-bottom:16px;border-bottom:1px solid var(--border2)}.headline{display:flex;align-items:center;gap:15px}.pulse{width:34px;height:34px;border-radius:99px;background:var(--green);box-shadow:0 0 0 9px rgba(49,196,107,.18)}h1{font-size:24px;line-height:1.1;margin:0 0 5px}.muted{color:var(--muted)}.cloud{display:flex;align-items:center;gap:16px}.cloud-state{color:#61e98d;font-weight:850}.button{height:40px;border:1px solid var(--border);border-radius:7px;background:linear-gradient(180deg,#202a35,#141b23);color:var(--text);font-weight:760;padding:0 14px;display:inline-flex;align-items:center;gap:8px}.button i{font-size:20px}.primary{background:linear-gradient(180deg,#0e75df,#0a54a9);border-color:#1266c3}.ghost{background:#111820}
-    .page{display:none}.page.active{display:block}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:14px}.card,.panel{background:linear-gradient(180deg,rgba(23,27,33,.98),rgba(14,18,24,.98));border:1px solid var(--border2);border-radius:8px;box-shadow:var(--shadow)}.card{display:grid;grid-template-columns:52px 1fr;gap:14px;padding:16px}.icon{width:48px;height:48px;border-radius:8px;background:#20262e;display:grid;place-items:center;color:#b9c7d8}.icon i{font-size:27px}.icon.blue{background:#17305c;color:#54a9ff}.card label{display:block;color:var(--muted);margin-bottom:4px}.card strong{font-size:22px}.bar{height:7px;border-radius:99px;background:#222d38;overflow:hidden;margin-top:10px}.bar span{height:100%;display:block;border-radius:inherit;background:linear-gradient(90deg,#31c46b,#79f0aa)}.panel{padding:16px}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}.panel h2{font-size:16px;margin:0}.panel p{margin:2px 0 0;color:var(--muted)}.split{display:grid;grid-template-columns:1.35fr .95fr;gap:14px}.stack{display:grid;gap:14px}
-    .camera-grid{display:grid;grid-template-columns:repeat(4,minmax(154px,1fr));gap:10px}.camera-card{position:relative;min-height:116px;overflow:hidden;border:1px solid #2c3845;border-radius:8px;background:linear-gradient(135deg,#182431,#0e151d);padding:10px}.camera-card:before{content:"";position:absolute;inset:36px 12px 12px;background:repeating-linear-gradient(90deg,rgba(125,179,255,.13) 0 1px,transparent 1px 24px),repeating-linear-gradient(0deg,rgba(125,179,255,.1) 0 1px,transparent 1px 22px)}.camera-card:after{content:"";position:absolute;right:-22px;bottom:-18px;width:96px;height:66px;border:1px solid rgba(125,179,255,.18);border-radius:8px;transform:rotate(-10deg)}.cam-title{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:10px;font-weight:850}.cam-status{position:relative;display:inline-flex;align-items:center;gap:6px;color:#65e98f;font-weight:800;font-size:12px}.cam-meta{position:absolute;left:10px;right:10px;bottom:9px;display:flex;justify-content:space-between;gap:8px;padding:5px 7px;color:#d2dae4;background:rgba(7,10,14,.58);border:1px solid rgba(255,255,255,.06);border-radius:6px;font-size:12px}
-    .row{display:grid;grid-template-columns:84px 1fr 130px 112px;gap:12px;align-items:center;border-top:1px solid var(--border2);padding:10px 6px}.row:first-child,.sync-row:first-child{border-top:0}.event-type{color:#8cbcff;font-weight:800}.event-type.warn{color:#ff6c6c}.sync-row{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;border-top:1px solid var(--border2);padding:11px 6px}.sync-row i{font-size:22px;color:#aeb9c6}.pill{display:inline-flex;align-items:center;gap:7px;border-radius:999px;background:rgba(49,196,107,.13);color:#71eba0;padding:5px 10px;font-size:12px;font-weight:850}.list{display:grid;gap:10px}.list-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--border2);border-radius:8px;background:#111820}.list-item strong{display:block}.list-item small{color:var(--muted)}
-    form{display:grid;gap:10px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}label{color:var(--muted);font-size:12px}input,select{width:100%;height:38px;margin-top:6px;color:var(--text);background:#0d131a;border:1px solid var(--border2);border-radius:7px;padding:0 10px}.actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.status{min-height:20px;color:var(--muted)}code{color:#8fc3ff;word-break:break-all}.about-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.logo-wide{max-width:190px;margin-bottom:14px}
-    @media(max-width:1180px){.kpis{grid-template-columns:repeat(2,1fr)}.camera-grid{grid-template-columns:repeat(2,1fr)}.split,.about-grid{grid-template-columns:1fr}}@media(max-width:760px){.window{padding:0}.app{grid-template-columns:1fr;border-radius:0}.side{display:none}.top,.cloud{align-items:flex-start;flex-direction:column}.kpis,.camera-grid,.form-grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
+    *{box-sizing:border-box}
+    html{color-scheme:dark}
+    body{margin:0;min-height:100vh;background:var(--color-canvas);color:var(--color-text);font:14px/1.5 var(--font-sans);font-feature-settings:"tnum" 1}
+    button,input{font:inherit;color:inherit}
+    a{color:inherit;text-decoration:none}
+    svg{flex:none}
+    :focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+    [hidden]{display:none!important}
+
+    .shell{display:grid;grid-template-columns:var(--sidebar-width) minmax(0,1fr);min-height:100vh}
+    .side{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:1.25rem;padding:1.1rem .75rem 1rem;background:var(--color-ink);border-right:1px solid var(--color-border-soft)}
+    .brand{display:flex;align-items:center;gap:.6rem;min-height:2.5rem;padding:0 .35rem}
+    .brand img{width:7.4rem;height:auto}
+    .brand-tag{padding:.1rem .45rem;border:1px solid var(--color-border);border-radius:var(--radius-chip);color:var(--color-muted);font-size:.72rem;font-weight:600}
+    .nav{display:grid;gap:1.1rem}
+    .nav-group{display:grid;gap:1px}
+    .nav-group h2{margin:0 0 .3rem;padding:0 .6rem;color:var(--color-subtle);font-size:.75rem;font-weight:600}
+    .nav-group button{position:relative;display:flex;align-items:center;gap:.65rem;min-height:2.1rem;padding:.4rem .6rem;border:0;border-radius:var(--radius-control);background:none;color:var(--color-muted);font-size:.9rem;font-weight:500;text-align:left;cursor:pointer}
+    .nav-group button svg{width:1.05rem;height:1.05rem;stroke-width:1.8}
+    .nav-group button:hover{background:var(--color-panel);color:var(--color-text)}
+    .nav-group button[aria-current=page]{background:var(--color-panel-soft);color:var(--color-text)}
+    .nav-group button[aria-current=page]::before{content:"";position:absolute;left:-.75rem;top:.45rem;bottom:.45rem;width:2px;border-radius:0 2px 2px 0;background:var(--color-accent)}
+    .nav-group button[aria-current=page] svg{color:var(--color-accent)}
+    .side-foot{margin-top:auto;padding:0 .6rem;color:var(--color-subtle);font-size:.78rem}
+    .side-foot strong{display:flex;align-items:center;gap:.45rem;color:var(--color-text);font-weight:550;font-size:.84rem;margin-bottom:.15rem}
+
+    .work{min-width:0;display:flex;flex-direction:column}
+    .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:var(--topbar-height);padding:.75rem var(--workspace-pad);background:rgba(14,17,20,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--color-border-soft)}
+    .top h1{margin:0;font:650 1.35rem/1.2 var(--font-display);letter-spacing:-.01em}
+    .top-actions{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;justify-content:flex-end}
+    main{padding:var(--workspace-pad);display:grid;gap:1.25rem;max-width:100rem;width:100%}
+
+    .chip{display:inline-flex;align-items:center;gap:.45rem;min-height:2rem;padding:0 .75rem;border:1px solid var(--color-border-soft);border-radius:var(--radius-chip);color:var(--color-muted);font-size:.8rem;font-weight:500;white-space:nowrap}
+    .dot{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;background:var(--color-subtle)}
+    .ok .dot,.dot.ok{background:var(--color-online)}
+    .warn .dot,.dot.warn{background:var(--color-attention)}
+    .bad .dot,.dot.bad{background:var(--color-critical)}
+
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:.45rem;min-height:var(--control-height);padding:0 .9rem;border:1px solid var(--color-border);border-radius:var(--radius-control);background:transparent;color:var(--color-text);font-weight:550;font-size:.875rem;white-space:nowrap;cursor:pointer}
+    .btn svg{width:1rem;height:1rem}
+    .btn:hover{border-color:var(--color-subtle);background:var(--color-panel-soft)}
+    .btn.primary{border-color:var(--color-paper);background:var(--color-paper);color:var(--color-black);font-weight:600}
+    .btn.primary:hover{background:#fff;border-color:#fff}
+    .btn:disabled{opacity:.55;cursor:default}
+
+    .panel{border:1px solid var(--color-border-soft);border-radius:var(--radius);background:var(--color-panel)}
+    .panel-head{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.9rem 1rem;border-bottom:1px solid var(--color-border-soft)}
+    .panel-head h2{margin:0;font-size:.95rem;font-weight:600}
+    .panel-head p{margin:.1rem 0 0;color:var(--color-muted);font-size:.82rem}
+    .panel-body{padding:1rem}
+    .cols{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(18rem,1fr);gap:1.25rem;align-items:start}
+
+    /* Instrument rack: one row per camera, readings as gauges. */
+    .summary{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;min-width:0}
+    .summary strong{font:650 2rem/1 var(--font-display);letter-spacing:-.02em}
+    .summary span{color:var(--color-muted)}
+    .rack{display:grid}
+    .instrument{display:grid;grid-template-columns:minmax(11rem,1.2fr) repeat(4,minmax(5.5rem,1fr)) minmax(8rem,1.1fr);align-items:center;gap:1rem;padding:.95rem 1rem;border-top:1px solid var(--color-border-soft)}
+    .instrument:first-child{border-top:0}
+    .instrument-name strong{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .instrument-name .state{display:inline-flex;align-items:center;gap:.4rem;color:var(--color-muted);font-size:.8rem}
+    .reading b{display:block;font:600 1.35rem/1.15 var(--font-display);letter-spacing:-.01em}
+    .reading small{color:var(--color-subtle);font-size:.75rem}
+    .reading.idle b{color:var(--color-subtle)}
+    .trace{width:100%;height:2.4rem;display:block}
+    .trace polyline{fill:none;stroke:var(--color-accent);stroke-width:1.5;vector-effect:non-scaling-stroke}
+    .trace line{stroke:var(--color-border-soft);stroke-width:1;vector-effect:non-scaling-stroke}
+
+    .rows{display:grid}
+    .row{display:grid;grid-template-columns:4.5rem minmax(0,1fr) auto;gap:.85rem;align-items:center;padding:.7rem 1rem;border-top:1px solid var(--color-border-soft)}
+    .row:first-child{border-top:0}
+    .row time{color:var(--color-muted);font-size:.82rem}
+    .row strong{display:block;font-weight:550}
+    .row small{color:var(--color-muted);font-size:.8rem}
+    .row .tail{display:flex;align-items:center;gap:.6rem;color:var(--color-muted);font-size:.82rem}
+    .row .tail svg{width:1rem;height:1rem;color:var(--color-subtle)}
+    .row.clickable{cursor:pointer}
+    .row.clickable:hover{background:var(--color-panel-soft)}
+    .facts{display:grid;margin:0}
+    .facts div{display:flex;justify-content:space-between;gap:1rem;padding:.6rem 1rem;border-top:1px solid var(--color-border-soft)}
+    .facts div:first-child{border-top:0}
+    .facts dt{color:var(--color-muted)}
+    .facts dd{margin:0;font-weight:550;text-align:right;overflow-wrap:anywhere}
+    .badge{display:inline-flex;align-items:center;gap:.35rem;padding:.12rem .5rem;border-radius:var(--radius-chip);background:var(--color-panel-soft);color:var(--color-muted);font-size:.75rem;font-weight:550}
+    .badge.open{background:rgba(229,174,72,.12);color:var(--color-attention)}
+    .badge.critical{background:rgba(238,100,97,.12);color:var(--color-critical)}
+    .empty{padding:1.75rem 1rem;color:var(--color-muted);text-align:center}
+    .empty strong{display:block;color:var(--color-text);font-weight:600;margin-bottom:.25rem}
+
+    form{display:grid;gap:.85rem}
+    label{display:grid;gap:.35rem;color:var(--color-muted);font-size:.8rem;font-weight:500}
+    input[type=text],input:not([type]){height:var(--control-height);padding:0 .7rem;border:1px solid var(--color-border);border-radius:var(--radius-control);background:var(--color-ink);color:var(--color-text)}
+    input::placeholder{color:var(--color-subtle)}
+    .check{display:flex;align-items:center;gap:.5rem;color:var(--color-text);font-size:.875rem}
+    .actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+    .note{min-height:1.2rem;margin:0;color:var(--color-muted);font-size:.82rem}
+    .code{font:600 1.6rem/1.2 var(--font-mono);letter-spacing:.12em}
+    code{font-family:var(--font-mono);font-size:.82rem;color:var(--color-text)}
+
+    .player{display:grid;gap:.75rem}
+    .player video,.player img{width:100%;border-radius:var(--radius-control);background:#000;aspect-ratio:16/9;object-fit:contain}
+
+    @media (max-width:1100px){.cols{grid-template-columns:1fr}.instrument{grid-template-columns:minmax(0,1fr) repeat(2,minmax(5rem,1fr))}.instrument .reading.secondary,.instrument .trace-cell{display:none}}
+    @media (max-width:760px){.shell{grid-template-columns:minmax(0,1fr)}.side{position:static;height:auto;padding-bottom:.5rem}.nav{grid-auto-flow:column;justify-content:start;overflow-x:auto;scrollbar-width:none}.nav-group h2,.side-foot{display:none}.nav-group{grid-auto-flow:column}.nav-group button{white-space:nowrap}.nav-group button[aria-current=page]::before{display:none}.top{position:static;flex-direction:column;align-items:stretch}.top-actions{justify-content:flex-start}.top-actions .chip{order:3}.row{grid-template-columns:4rem minmax(0,1fr)}.row .tail{grid-column:2}.instrument{grid-template-columns:1fr 1fr}.instrument-name{grid-column:1/-1}.facts div{padding-inline:.85rem}}
+    @media (prefers-reduced-motion:reduce){*{transition:none!important}}
   </style>
 </head>
 <body>
-  <div class="window"><div class="app">
-    <aside class="side">
-      <div class="brand"><div class="brand-mark"><img src="/assets/simbolo.jpeg" alt="CAMPEX"></div><div><div class="brand-title">CAMPEX <span>Node</span></div><small>Processamento local de cameras e IA</small></div></div>
-      <nav class="nav">
-        <button class="active" data-page="overview"><i class="bx bxs-dashboard"></i>Visao geral</button>
-        <button data-page="cameras"><i class="bx bxs-camera-home"></i>Cameras</button>
-        <button data-page="processing"><i class="bx bx-pulse"></i>Processamento</button>
-        <button data-page="events"><i class="bx bxs-bell-ring"></i>Eventos</button>
-        <button data-page="sync"><i class="bx bx-cloud-upload"></i>Sincronizacao</button>
-        <button data-page="diagnostics"><i class="bx bx-terminal"></i>Diagnostico</button>
-        <button data-page="settings"><i class="bx bxs-cog"></i>Configuracoes</button>
-        <button data-page="about"><i class="bx bx-info-circle"></i>Sobre</button>
-      </nav>
-      <div class="side-bottom"><div class="service"><span class="dot"></span>Servico em execucao</div><small>Iniciado com o Windows</small><br><br><small>Versao 0.1.0<br>CAMPEX Node</small></div>
-    </aside>
-    <main>
-      <header class="top"><div class="headline"><div class="pulse"></div><div><h1 id="page-title">Node Ativo</h1><div class="muted" id="page-subtitle">Processando cameras e enviando eventos para a nuvem</div></div></div><div class="cloud"><div><div class="cloud-state" id="cloud-badge">Verificando Cloud</div><div class="muted" id="sync-caption">Ultima sincronizacao: aguardando</div></div><button class="button" id="sync-button" type="button"><i class="bx bx-refresh"></i>Forcar sincronizacao</button></div></header>
-      <section class="page active" id="page-overview">
-        <section class="kpis"><div class="card"><div class="icon"><i class="bx bxs-camera"></i></div><div><label>Cameras ativas</label><strong><span id="online">0</span> / <span id="total">0</span></strong><div class="bar"><span id="camera-bar"></span></div></div></div><div class="card"><div class="icon"><i class="bx bx-pulse"></i></div><div><label>Processamento IA</label><strong>Em execucao</strong><div class="muted">Deteccao, contagem e eventos</div></div></div><div class="card"><div class="icon blue"><i class="bx bx-cloud-upload"></i></div><div><label>Eventos na fila</label><strong id="queue">0</strong><div class="muted">Sincronizacao segura com a Cloud</div></div></div><div class="card"><div class="icon"><i class="bx bx-data"></i></div><div><label>Armazenamento local</label><strong>SQLite</strong><div class="bar"><span style="width:38%;background:linear-gradient(90deg,#6978ff,#37a4ff)"></span></div></div></div></section>
-        <section class="panel"><div class="panel-head"><div><h2>Cameras recebidas da Cloud</h2><p>Status operacional sem exibir imagens das cameras</p></div><button class="button primary" id="diagnostics-button" type="button"><i class="bx bx-health"></i>Diagnostico</button></div><div class="camera-grid" id="cameras"></div></section>
-        <section class="split" style="margin-top:14px"><div class="panel"><div class="panel-head"><h2>Eventos recentes <span class="muted">(processados localmente)</span></h2><button class="button ghost" data-page-jump="events">Ver todos</button></div><div id="events-list"></div></div><div class="panel"><div class="panel-head"><h2>Sincronizacao com a Cloud</h2><span class="pill online"><span class="dot"></span>Conectado</span></div><div id="sync-summary"></div></div></section>
+<div class="shell">
+  <aside class="side" aria-label="Navegação do Node">
+    <div class="brand"><img src="/assets/campex-logo-white.png" alt="CAMPEX" /><span class="brand-tag">Node</span></div>
+    <nav class="nav">
+      <section class="nav-group" aria-label="Operação">
+        <h2>Operação</h2>
+        <button type="button" data-page="overview" aria-current="page"><i data-lucide="gauge"></i>Visão geral</button>
+        <button type="button" data-page="cameras"><i data-lucide="cctv"></i>Câmeras</button>
+        <button type="button" data-page="events"><i data-lucide="siren"></i>Eventos</button>
       </section>
-      <section class="page" id="page-cameras"><div class="split"><div class="panel"><div class="panel-head"><div><h2>Cameras</h2><p>Configuracoes chegam da Cloud; cameras locais podem ser adicionadas para teste.</p></div><button class="button" id="sync-button-cameras" type="button"><i class="bx bx-refresh"></i>Atualizar</button></div><div class="camera-grid" id="cameras-page"></div></div><div class="panel"><h2>Adicionar RTSP local</h2><form id="camera-form"><label>Nome da camera<input name="camera_name" placeholder="Portao principal" /></label><label>URL RTSP<input name="rtsp_url" placeholder="rtsp://usuario:senha@192.168.1.10/stream" /></label><label><input name="enabled" type="checkbox" checked style="width:auto;height:auto;margin-right:8px">Ativar worker apos salvar</label><div class="actions"><button class="button" type="button" id="test-camera-button"><i class="bx bx-wifi"></i>Testar conexao</button><button class="button primary" type="submit"><i class="bx bx-plus"></i>Salvar e ativar</button></div><p class="status" id="camera-form-status"></p></form></div></div></section>
-      <section class="page" id="page-processing"><div class="split"><div class="panel"><div class="panel-head"><div><h2>Processamento</h2><p>Motor local de IA, captura e eventos.</p></div><span class="pill online"><span class="dot"></span>Ativo</span></div><div id="processing-page" class="list"></div></div><div class="panel"><h2>Modelos ativos</h2><div class="list"><div class="list-item"><div><strong>Deteccao</strong><small>YOLO local quando disponivel; fallback seguro.</small></div><span>OK</span></div><div class="list-item"><div><strong>Tracking</strong><small>Associacao temporal de objetos.</small></div><span>OK</span></div><div class="list-item"><div><strong>Eventos</strong><small>Regras locais antes da Cloud.</small></div><span>OK</span></div></div></div></div></section>
-      <section class="page" id="page-events"><div class="panel"><div class="panel-head"><div><h2>Eventos</h2><p>Eventos processados localmente e enviados para a Cloud.</p></div><span class="pill"><i class="bx bx-shield-quarter"></i>Sem video bruto continuo</span></div><div id="events-page"></div></div></section>
-      <section class="page" id="page-sync"><div class="split"><div class="panel"><div class="panel-head"><h2>Fila e conexao</h2><span class="pill online"><span class="dot"></span>Online</span></div><div id="sync-page"></div></div><div class="panel"><h2>Pareamento local</h2><p>Use somente na instalacao ou troca de empresa. Enquanto nao houver Cloud, deixe o backend em branco.</p><form id="connect-form"><div class="form-grid"><label>Backend Cloud opcional<input name="cloud_url" placeholder="Deixe em branco no modo local" /></label><label>Codigo legado<input name="pairing_code" autocomplete="off" placeholder="CXP-7KQ2-N91P" /></label></div><label>Nome deste Node<input name="node_name" placeholder="RBA-NODE-01" /></label><div class="actions"><button class="button primary" type="button" id="start-pairing-button"><i class="bx bx-barcode-reader"></i>Gerar codigo neste Node</button><button class="button" type="submit"><i class="bx bx-link"></i>Parear codigo legado</button><span class="status" id="form-status"></span></div><div id="local-pairing-code" class="panel" style="display:none;margin-top:12px"></div></form></div></div></section>
-      <section class="page" id="page-diagnostics"><div class="split"><div class="panel"><div class="panel-head"><div><h2>Diagnostico</h2><p>Sistema, banco local, rede e cameras.</p></div><button class="button" id="diagnostics-button-page" type="button"><i class="bx bx-refresh"></i>Atualizar</button></div><div id="diagnostics-page" class="list"></div></div><div class="panel"><h2>Logs</h2><div class="list"><div class="list-item"><div><strong>Servico</strong><small>Executando como processo local.</small></div><span>OK</span></div><div class="list-item"><div><strong>Cloud</strong><small>Heartbeat e sincronizacao controlados pelo Node.</small></div><span id="diag-cloud">-</span></div></div></div></div></section>
-      <section class="page" id="page-settings"><div class="split"><div class="panel"><h2>Configuracoes locais</h2><div class="list"><div class="list-item"><div><strong>Geral</strong><small>Identidade do Node e empresa pareada.</small></div><span>OK</span></div><div class="list-item"><div><strong>Inicializacao</strong><small>Node inicia mesmo sem navegador aberto.</small></div><span class="pill online">Ativo</span></div><div class="list-item"><div><strong>Armazenamento</strong><small>SQLite em pasta de dados do usuario.</small></div><span id="data-dir-label">OK</span></div><div class="list-item"><div><strong>Logs</strong><small>Rotativos e persistentes.</small></div><span id="logs-dir-label">OK</span></div><div class="list-item"><div><strong>Rede</strong><small>Saida HTTPS para CAMPEX Cloud, sem portas abertas.</small></div><span>OK</span></div><div class="list-item"><div><strong>Atualizacoes</strong><small>Preparado para pacote Windows.</small></div><span>Manual</span></div><div class="list-item"><div><strong>Avancado</strong><small>Operacoes sensiveis ficam isoladas.</small></div><span>Restrito</span></div></div></div><div class="panel"><h2>Identidade</h2><p>Node ID</p><code id="node-id">-</code><br><br><p>Cloud</p><code id="cloud-url-label">-</code><br><br><p>Uptime</p><code id="uptime-label">-</code><br><br><p>CPU/RAM</p><code id="resources-label">-</code></div></div></section>
-      <section class="page" id="page-about"><div class="about-grid"><div class="panel"><img class="logo-wide" src="/assets/campex-logo-white.png" alt="CAMPEX"><h2>CAMPEX Node</h2><p>Agente operacional local para cameras, IA, eventos e sincronizacao com a CAMPEX Cloud.</p></div><div class="panel"><h2>Arquitetura</h2><div class="list"><div class="list-item"><strong>Cameras da empresa</strong><small>RTSP/ONVIF na rede local</small></div><div class="list-item"><strong>CAMPEX Node</strong><small>Processamento local e fila offline</small></div><div class="list-item"><strong>CAMPEX Cloud</strong><small>API, dashboard, relatorios e alertas</small></div></div></div></div></section>
+      <section class="nav-group" aria-label="Sistema">
+        <h2>Sistema</h2>
+        <button type="button" data-page="sync"><i data-lucide="cloud-upload"></i>Sincronização</button>
+        <button type="button" data-page="diagnostics"><i data-lucide="activity"></i>Diagnóstico</button>
+        <button type="button" data-page="settings"><i data-lucide="settings"></i>Configurações</button>
+      </section>
+    </nav>
+    <div class="side-foot">
+      <strong><span class="dot ok" id="service-dot"></span><span id="service-label">Serviço em execução</span></strong>
+      <span id="version-label">Versão —</span>
+    </div>
+  </aside>
+
+  <div class="work">
+    <header class="top">
+      <h1 id="page-title">Visão geral</h1>
+      <div class="top-actions">
+        <span class="chip" id="cloud-chip"><span class="dot"></span><span>Verificando Cloud</span></span>
+        <button class="btn" type="button" id="sync-button"><i data-lucide="refresh-cw"></i>Sincronizar agora</button>
+        <a class="btn primary" href="/app"><i data-lucide="layout-dashboard"></i>Abrir painel CAMPEX</a>
+      </div>
+    </header>
+
+    <main>
+      <section data-view="overview">
+        <div style="display:grid;gap:1.25rem">
+          <div class="summary"><strong id="summary-count">—</strong><span id="summary-text">Lendo câmeras deste Node…</span></div>
+          <section class="panel">
+            <div class="panel-head"><div><h2>Câmeras</h2><p>Leituras ao vivo de captura e visão, atualizadas a cada 3 segundos</p></div></div>
+            <div class="rack" id="rack-overview"></div>
+          </section>
+          <div class="cols">
+            <section class="panel">
+              <div class="panel-head"><div><h2>Eventos recentes</h2><p>Gravados neste computador, com clipe de evidência</p></div><button class="btn" type="button" data-jump="events">Ver todos</button></div>
+              <div class="rows" id="events-overview"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head"><h2>Saúde do Node</h2></div>
+              <dl class="facts" id="health-overview"></dl>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section data-view="cameras" hidden>
+        <div class="cols">
+          <section class="panel">
+            <div class="panel-head"><div><h2>Câmeras deste Node</h2><p>As câmeras da Cloud chegam sozinhas; câmeras locais servem para teste</p></div></div>
+            <div class="rack" id="rack-cameras"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>Adicionar câmera RTSP</h2></div>
+            <form class="panel-body" id="camera-form">
+              <label>Nome<input name="camera_name" placeholder="Portão principal" required /></label>
+              <label>Endereço RTSP<input name="rtsp_url" placeholder="rtsp://usuario:senha@192.168.1.10/stream" required /></label>
+              <label class="check"><input name="enabled" type="checkbox" checked />Começar a capturar ao salvar</label>
+              <div class="actions">
+                <button class="btn" type="button" id="test-camera-button"><i data-lucide="plug-zap"></i>Testar conexão</button>
+                <button class="btn primary" type="submit"><i data-lucide="plus"></i>Salvar câmera</button>
+              </div>
+              <p class="note" id="camera-form-status" role="status"></p>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <section data-view="events" hidden>
+        <div class="cols">
+          <section class="panel">
+            <div class="panel-head"><div><h2>Eventos</h2><p>Início, fim e duração de cada ocorrência nas zonas</p></div><button class="btn" type="button" id="events-refresh"><i data-lucide="refresh-cw"></i>Atualizar</button></div>
+            <div class="rows" id="events-page"></div>
+          </section>
+          <section class="panel" id="event-detail">
+            <div class="panel-head"><h2>Evidência</h2></div>
+            <div class="empty"><strong>Nenhum evento selecionado</strong>Escolha um evento na lista para ver o clipe.</div>
+          </section>
+        </div>
+      </section>
+
+      <section data-view="sync" hidden>
+        <div class="cols">
+          <section class="panel">
+            <div class="panel-head"><div><h2>Fila de envio</h2><p>O que este Node guarda até a Cloud confirmar o recebimento</p></div></div>
+            <dl class="facts" id="sync-facts"></dl>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><h2>Parear com a CAMPEX Cloud</h2><p>Necessário só na instalação ou ao trocar de empresa</p></div></div>
+            <form class="panel-body" id="connect-form">
+              <label>Endereço da Cloud<input name="cloud_url" placeholder="Em branco para operar só localmente" /></label>
+              <label>Nome deste Node<input name="node_name" placeholder="RBA-NODE-01" /></label>
+              <div class="actions">
+                <button class="btn primary" type="button" id="start-pairing-button"><i data-lucide="key-round"></i>Gerar código de pareamento</button>
+              </div>
+              <details>
+                <summary class="note" style="cursor:pointer">Tenho um código gerado no painel</summary>
+                <div style="display:grid;gap:.85rem;margin-top:.85rem">
+                  <label>Código<input name="pairing_code" autocomplete="off" placeholder="CXP-7KQ2-N91P" /></label>
+                  <div class="actions"><button class="btn" type="submit"><i data-lucide="link"></i>Parear com este código</button></div>
+                </div>
+              </details>
+              <div id="pairing-box" hidden></div>
+              <p class="note" id="form-status" role="status"></p>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <section data-view="diagnostics" hidden>
+        <section class="panel">
+          <div class="panel-head"><div><h2>Diagnóstico</h2><p>Estado de cada parte do Node, do mais crítico ao menos crítico</p></div><button class="btn" type="button" id="diagnostics-refresh"><i data-lucide="refresh-cw"></i>Verificar agora</button></div>
+          <div class="rows" id="diagnostics-rows"></div>
+        </section>
+      </section>
+
+      <section data-view="settings" hidden>
+        <div class="cols">
+          <section class="panel">
+            <div class="panel-head"><h2>Identidade</h2></div>
+            <dl class="facts" id="identity-facts"></dl>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><h2>Atualizações</h2><p>O Node baixa, confere a assinatura e instala versões novas sozinho</p></div></div>
+            <dl class="facts" id="update-facts"></dl>
+          </section>
+        </div>
+      </section>
     </main>
-  </div></div>
-  <script>
-    const titles={overview:['Node Ativo','Processando cameras e enviando eventos para a nuvem'],cameras:['Cameras','Status de captura e processamento local'],processing:['Processamento','IA local, captura e eventos sem enviar video bruto'],events:['Eventos','Ocorrencias detectadas e sincronizadas'],sync:['Sincronizacao','Conexao segura entre Node e CAMPEX Cloud'],diagnostics:['Diagnostico','Sistema local, rede, banco e cameras'],settings:['Configuracoes','Operacao local do servico Windows'],about:['Sobre','Arquitetura hibrida CAMPEX']};
-    const eventTypes=['Pessoa detectada','Veiculo detectado','Pessoa detectada','Movimento suspeito','Pessoa detectada','Area sem atividade'];
-    const statusEl=()=>document.querySelector('#form-status');function nowText(){return new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});}
-    function setPage(page){document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active',el.id===`page-${page}`));document.querySelectorAll('.nav button').forEach(btn=>btn.classList.toggle('active',btn.dataset.page===page));document.querySelector('#page-title').textContent=titles[page][0];document.querySelector('#page-subtitle').textContent=titles[page][1];}
-    function cameraCard(cam,index){const status=cam.status||'OFFLINE';const people=status==='ONLINE'?((index%4)+1):0;const vehicles=status==='ONLINE'?(index%3):0;return `<div class="camera-card ${status}"><div class="cam-title"><span>${String(index+1).padStart(2,'0')} - ${cam.name}</span><span class="cam-status"><span class="dot"></span>${status}</span></div><div class="cam-meta"><span>Pessoas: ${people}</span><span>Veiculos: ${vehicles}</span></div></div>`;}
-    function eventRows(cameras){const names=(cameras||[]).map(c=>c.name);return eventTypes.map((type,index)=>{const warn=type.includes('suspeito');const camera=names[index%Math.max(names.length,1)]||'Aguardando camera';const minute=String(42-index).padStart(2,'0');return `<div class="row"><span>09:${minute}:17</span><span class="event-type ${warn?'warn':''}">${type}</span><span>${camera}</span><span class="muted">Confianca: ${98-index*2}%</span></div>`;}).join('');}
-    function formatTime(value){return value?new Date(value).toLocaleString('pt-BR'):'aguardando';}
-    function uptimeText(seconds){seconds=Number(seconds||0);const h=Math.floor(seconds/3600);const m=Math.floor((seconds%3600)/60);const s=seconds%60;return `${h}h ${m}m ${s}s`;}
-    function syncRows(data){return `<div class="sync-row"><i class="bx bx-calendar-check"></i><span>Ultima sincronizacao</span><strong>${formatTime(data.last_sync_at)}</strong></div><div class="sync-row"><i class="bx bx-cloud-upload"></i><span>Eventos pendentes</span><strong>${data.queue_size||0}</strong></div><div class="sync-row"><i class="bx bx-cog"></i><span>Ultimo heartbeat</span><strong>${formatTime(data.last_heartbeat_at)}</strong></div><div class="sync-row"><i class="bx bx-signal-5"></i><span>Status da conexao</span><strong>${data.last_cloud_ok_at?'Online':(data.cloud_configured?'Aguardando':'Pendente')}</strong></div>`;}
-    function processingRows(data){const total=Number(data.cameras_total||0);const online=Number(data.cameras_online||0);const cpu=data.cpu_percent==null?'n/d':`${Math.round(data.cpu_percent)}%`;const ram=data.ram_percent==null?'n/d':`${Math.round(data.ram_percent)}%`;return `<div class="list-item"><div><strong>Cameras processadas</strong><small>${online}/${total} online</small></div><span>${total?Math.round((online/total)*100):0}%</span></div><div class="list-item"><div><strong>FPS</strong><small>Calculado por camera quando Vision estiver ativo.</small></div><span>dinamico</span></div><div class="list-item"><div><strong>CPU</strong><small>Uso local monitorado pelo Windows.</small></div><span>${cpu}</span></div><div class="list-item"><div><strong>RAM</strong><small>Cache de frames e fila local.</small></div><span>${ram}</span></div><div class="list-item"><div><strong>Eventos processados</strong><small>Fila local antes da Cloud.</small></div><span>${data.queue_size||0}</span></div>`;}
-    function diagnosticsRows(data){return `<div class="list-item"><div><strong>Sistema</strong><small>Windows local / servico CAMPEX Node.</small></div><span>OK</span></div><div class="list-item"><div><strong>Banco local</strong><small>SQLite em pasta do usuario.</small></div><span>OK</span></div><div class="list-item"><div><strong>Rede</strong><small>Conexao de saida com a CAMPEX Cloud.</small></div><span>${data.cloud_configured?'Configurada':'Pendente'}</span></div><div class="list-item"><div><strong>Cameras</strong><small>${data.cameras_online||0}/${data.cameras_total||0} online</small></div><span>${data.cameras_total||0}</span></div><div class="list-item"><div><strong>Fila</strong><small>Eventos aguardando sincronizacao.</small></div><span>${data.queue_size||0}</span></div><div class="list-item"><div><strong>Versao</strong><small>CAMPEX Node local</small></div><span>0.1.0</span></div>`;}
-    async function load(){try{const data=await fetch('/api/status').then(r=>r.json());const total=Number(data.cameras_total||0);const online=Number(data.cameras_online||0);const queue=Number(data.queue_size||0);document.querySelector('#cloud-badge').textContent=data.paired?'Conectado a CAMPEX Cloud':(data.cloud_configured?'Cloud configurada':'Cloud nao configurada');document.querySelector('#sync-caption').textContent='Ultima sincronizacao: '+formatTime(data.last_sync_at);document.querySelector('#total').textContent=total;document.querySelector('#online').textContent=online;document.querySelector('#queue').textContent=queue;document.querySelector('#camera-bar').style.width=total?`${Math.round((online/total)*100)}%`:'0%';document.querySelector('#node-id').textContent=data.node_id||'-';document.querySelector('#cloud-url-label').textContent=data.cloud_url||'-';document.querySelector('#uptime-label').textContent=uptimeText(data.uptime_seconds);document.querySelector('#resources-label').textContent=`CPU ${data.cpu_percent==null?'n/d':Math.round(data.cpu_percent)+'%'} / RAM ${data.ram_percent==null?'n/d':Math.round(data.ram_percent)+'%'}`;document.querySelector('#data-dir-label').textContent=data.data_dir||'OK';document.querySelector('#logs-dir-label').textContent=data.logs_dir||'OK';document.querySelector('[name=cloud_url]').value=data.cloud_url||'';const cameras=data.cameras||[];const cameraHtml=cameras.map(cameraCard).join('')||'<p class="status">Nenhuma camera sincronizada ainda.</p>';document.querySelector('#cameras').innerHTML=cameraHtml;document.querySelector('#cameras-page').innerHTML=cameraHtml;document.querySelector('#events-list').innerHTML=eventRows(cameras);document.querySelector('#events-page').innerHTML=eventRows(cameras);document.querySelector('#sync-summary').innerHTML=syncRows(data);document.querySelector('#sync-page').innerHTML=syncRows(data);document.querySelector('#processing-page').innerHTML=processingRows(data);document.querySelector('#diagnostics-page').innerHTML=diagnosticsRows(data);document.querySelector('#diag-cloud').textContent=data.paired?'Pareado':(data.cloud_configured?'Configurado':'Pendente');}catch(error){const el=statusEl();if(el)el.textContent='Node local reiniciando ou indisponivel. Recarregue em alguns segundos.';}}
-    document.querySelectorAll('.nav button,[data-page-jump]').forEach(btn=>btn.addEventListener('click',()=>setPage(btn.dataset.page||btn.dataset.pageJump)));
-    document.querySelector('#connect-form').addEventListener('submit',async e=>{e.preventDefault();statusEl().textContent='Conectando...';const form=e.currentTarget;const body={cloud_url:form.cloud_url.value,pairing_code:form.pairing_code.value,node_name:form.node_name.value};const res=await fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await res.json();statusEl().textContent=data.ok?(data.message||'Pareado. O Node buscara configuracoes e enviara eventos para a Cloud.'):(data.error||'Falha ao parear.');await load();});
-    async function syncNow(){const el=statusEl();if(el)el.textContent='Sincronizando...';const res=await fetch('/api/sync',{method:'POST'});const data=await res.json();if(el)el.textContent=data.ok?`Sincronizadas: ${data.cameras_loaded}`:(data.error||'Falha na sincronizacao');await load();}
-    let pairingTimer=null;async function startPairing(){const form=document.querySelector('#connect-form');const el=statusEl();if(el)el.textContent='Gerando codigo...';const res=await fetch('/api/pairing/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cloud_url:form.cloud_url.value,node_name:form.node_name.value||'CAMPEX Node'})});const data=await res.json();if(!data.ok){if(el)el.textContent=data.error||'Falha ao gerar codigo.';return;}const box=document.querySelector('#local-pairing-code');box.style.display='block';const local=data.mode==='local';box.innerHTML=`<h2 style="font-size:28px;letter-spacing:.16em;margin:.25rem 0">${data.pairing_code}</h2><p>${local?'Codigo local gerado. Sem CAMPEX Cloud configurada, ele fica aguardando autorizacao futura.':'Acesse CAMPEX Web > Configuracoes > Nodes > Conectar Node e digite este codigo.'} Expira em ${data.expires_at}.</p>`;if(el)el.textContent=local?'Codigo local gerado. O Node ja pode operar localmente.':'Aguardando autorizacao no painel...';clearInterval(pairingTimer);pairingTimer=setInterval(checkPairingStatus,3000);}
-    async function checkPairingStatus(){const el=statusEl();const res=await fetch('/api/pairing/status');const data=await res.json();if(data.status==='authorized'){clearInterval(pairingTimer);if(el)el.textContent='Node conectado a CAMPEX Cloud.';document.querySelector('#local-pairing-code').style.display='none';await load();}else if(data.status==='expired'){clearInterval(pairingTimer);if(el)el.textContent='Codigo expirado. Gere um novo codigo.';}}
-    async function testCamera(){const form=document.querySelector('#camera-form');const el=document.querySelector('#camera-form-status');el.textContent='Testando RTSP...';try{const res=await fetch('/api/cameras/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rtsp_url:form.rtsp_url.value})});const data=await res.json();el.textContent=data.ok?`Conexao OK - ${data.resolution.width||'?'}x${data.resolution.height||'?'}`:(data.error||'Nao foi possivel abrir o stream.');}catch(error){el.textContent='Node local indisponivel. Abra novamente o CAMPEX Node e tente de novo.';}}
-    async function saveCamera(event){event.preventDefault();const form=document.querySelector('#camera-form');const el=document.querySelector('#camera-form-status');el.textContent='Salvando camera...';try{const res=await fetch('/api/cameras',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:form.camera_name.value,rtsp_url:form.rtsp_url.value,enabled:form.enabled.checked})});const data=await res.json();const saved=res.ok&&data.ok!==false&&(data.ok||data.id);el.textContent=saved?'Camera salva. Worker local iniciado quando ativado.':(data.error||'Falha ao salvar camera.');if(saved){form.camera_name.value='';form.rtsp_url.value='';}await load();}catch(error){el.textContent='Node local indisponivel. Abra novamente o CAMPEX Node e tente de novo.';}}
-    document.querySelector('#sync-button').addEventListener('click',syncNow);document.querySelector('#sync-button-cameras').addEventListener('click',syncNow);document.querySelector('#diagnostics-button').addEventListener('click',async()=>{const data=await fetch('/api/diagnostics').then(r=>r.json());const el=statusEl();if(el)el.textContent=`Diagnostico OK - fila ${data.queue_size} - cameras ${data.cameras.cameras_total}`;});document.querySelector('#diagnostics-button-page').addEventListener('click',load);
-    document.querySelector('#start-pairing-button').addEventListener('click',startPairing);
-    document.querySelector('#test-camera-button').addEventListener('click',testCamera);
-    document.querySelector('#camera-form').addEventListener('submit',saveCamera);
-    load();setInterval(load,5000);
-  </script>
+  </div>
+</div>
+
+<script src="/vendor/lucide.min.js"></script>
+<script>
+  const TITLES = {overview: "Visão geral", cameras: "Câmeras", events: "Eventos", sync: "Sincronização", diagnostics: "Diagnóstico", settings: "Configurações"};
+  const EVENT_LABELS = {
+    PERSON_MONITORED_ZONE: "Pessoa na zona",
+    PERSON_RESTRICTED_ZONE: "Pessoa em zona restrita",
+    PERSON_RESTRICTED_ZONE_DWELL: "Permanência em zona restrita",
+  };
+  const STATE_LABELS = {ONLINE: "Recebendo imagem", CONNECTING: "Conectando", DEGRADED: "Instável", OFFLINE: "Sem imagem", STALE: "Imagem parada"};
+  const $ = (selector) => document.querySelector(selector);
+  const history = {};
+  let status = null;
+  let events = [];
+  let selectedEvent = null;
+
+  function esc(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  }
+  function icons() { if (window.lucide) window.lucide.createIcons(); }
+  function tone(state) { return state === "ONLINE" ? "ok" : state === "OFFLINE" ? "bad" : "warn"; }
+  function clock(value) { return value ? new Date(value).toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "—"; }
+  function dateTime(value) { return value ? new Date(value).toLocaleString("pt-BR") : "nunca"; }
+  function ago(value) {
+    if (!value) return "nunca";
+    const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+    if (seconds < 2) return "agora";
+    if (seconds < 60) return `há ${seconds} s`;
+    if (seconds < 3600) return `há ${Math.round(seconds / 60)} min`;
+    return `há ${Math.round(seconds / 3600)} h`;
+  }
+  function duration(seconds) {
+    if (seconds == null) return "em andamento";
+    const s = Math.round(Number(seconds));
+    return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+  }
+  function uptime(seconds) {
+    const s = Number(seconds || 0);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h ? `${h} h ${m} min` : `${m} min`;
+  }
+  function percent(value) { return value == null ? "n/d" : `${Math.round(value)}%`; }
+  function facts(rows) { return rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join(""); }
+
+  async function getJson(url, options) {
+    const response = await fetch(url, options);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  }
+
+  function trace(values) {
+    const points = values.slice(-30);
+    if (points.length < 2) return `<svg class="trace" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="23" x2="100" y2="23"/></svg>`;
+    const max = Math.max(1, ...points);
+    const step = 100 / 29;
+    const offset = (30 - points.length) * step;
+    const line = points.map((v, i) => `${(offset + i * step).toFixed(1)},${(22 - (v / max) * 20).toFixed(1)}`).join(" ");
+    return `<svg class="trace" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="23" x2="100" y2="23"/><polyline points="${line}"/></svg>`;
+  }
+
+  function instrument(camera) {
+    const vision = camera.vision || {};
+    const metrics = vision.metrics || {};
+    const state = camera.status || "OFFLINE";
+    const visionOn = vision.status === "RUNNING";
+    const visionFps = visionOn ? Number(metrics.vision_fps || 0) : null;
+    const cameraFps = metrics.camera_fps ? Number(metrics.camera_fps) : null;
+    return `<div class="instrument">
+      <div class="instrument-name"><strong title="${esc(camera.name)}">${esc(camera.name)}</strong><span class="state ${tone(state)}"><span class="dot"></span>${esc(STATE_LABELS[state] || state)}</span></div>
+      <div class="reading ${cameraFps == null ? "idle" : ""}"><b>${cameraFps == null ? "—" : cameraFps.toFixed(1)}</b><small>FPS da câmera</small></div>
+      <div class="reading ${visionFps == null ? "idle" : ""}"><b>${visionFps == null ? "—" : visionFps.toFixed(1)}</b><small>${visionOn ? "FPS da visão" : "Visão desligada"}</small></div>
+      <div class="reading secondary"><b>${Number(metrics.frames_processed || 0).toLocaleString("pt-BR")}</b><small>Frames analisados</small></div>
+      <div class="reading secondary"><b>${esc(ago(camera.last_frame_at).replace("há ", ""))}</b><small>Último frame</small></div>
+      <div class="trace-cell">${trace(history[camera.id] || [])}<small style="color:var(--color-subtle);font-size:.75rem">Visão, últimos 90 s</small></div>
+    </div>`;
+  }
+
+  function eventRow(event, clickable) {
+    const zone = event.metadata?.zone_name || event.zone_id || "Zona";
+    const camera = (status?.cameras || []).find((c) => c.id === event.camera_id)?.name || event.camera_id;
+    const open = !event.ended_at && event.status === "OPEN";
+    const clip = event.metadata?.clip_path ? `<i data-lucide="film" aria-label="Com clipe"></i>` : "";
+    return `<div class="row ${clickable ? "clickable" : ""}" ${clickable ? `data-event="${esc(event.id)}" tabindex="0" role="button"` : ""}>
+      <time datetime="${esc(event.started_at)}">${clock(event.started_at)}</time>
+      <div><strong>${esc(EVENT_LABELS[event.type] || event.type)}</strong><small>${esc(zone)}, ${esc(camera)}</small></div>
+      <div class="tail">${clip}${open ? `<span class="badge open">Em andamento</span>` : `<span>${duration(event.duration)}</span>`}</div>
+    </div>`;
+  }
+
+  function renderRack(target, cameras) {
+    $(target).innerHTML = cameras.length
+      ? cameras.map(instrument).join("")
+      : `<div class="empty"><strong>Nenhuma câmera neste Node</strong>Pareie com a CAMPEX Cloud em Sincronização ou adicione uma câmera RTSP em Câmeras.</div>`;
+  }
+
+  function renderEvents() {
+    const empty = `<div class="empty"><strong>Nenhum evento gravado</strong>Desenhe uma zona no painel CAMPEX, em Áreas e zonas, e ligue a visão da câmera.</div>`;
+    $("#events-overview").innerHTML = events.length ? events.slice(0, 6).map((e) => eventRow(e, false)).join("") : empty;
+    $("#events-page").innerHTML = events.length ? events.map((e) => eventRow(e, true)).join("") : empty;
+    icons();
+  }
+
+  function renderEventDetail(event) {
+    const panel = $("#event-detail");
+    const clip = event.metadata?.clip_path;
+    const snapshot = event.metadata?.overlay_path;
+    const media = clip
+      ? `<video src="/api/events/${encodeURIComponent(event.id)}/evidence?variant=clip" controls playsinline preload="metadata"></video>`
+      : snapshot ? `<img src="/api/events/${encodeURIComponent(event.id)}/evidence?variant=overlay" alt="Imagem do início do evento" />`
+      : `<div class="empty"><strong>Sem evidência ainda</strong>O clipe é salvo alguns segundos depois que o evento termina.</div>`;
+    panel.innerHTML = `<div class="panel-head"><h2>${esc(EVENT_LABELS[event.type] || event.type)}</h2><span class="badge">${esc(event.id)}</span></div>
+      <div class="panel-body player">${media}</div>
+      <dl class="facts">${facts([
+        ["Zona", esc(event.metadata?.zone_name || event.zone_id || "—")],
+        ["Início", esc(dateTime(event.started_at))],
+        ["Fim", esc(event.ended_at ? dateTime(event.ended_at) : "em andamento")],
+        ["Duração", esc(duration(event.duration))],
+        ["Pessoa (track)", esc(event.track_id ?? "—")],
+      ])}</dl>`;
+  }
+
+  function renderStatus() {
+    const s = status;
+    const cameras = s.cameras || [];
+    const online = cameras.filter((c) => c.status === "ONLINE").length;
+    const watching = cameras.filter((c) => c.vision?.status === "RUNNING").length;
+    $("#summary-count").textContent = cameras.length ? `${online} de ${cameras.length}` : "0";
+    $("#summary-text").textContent = cameras.length
+      ? `câmeras recebendo imagem, ${watching} com visão ligada`
+      : "câmeras neste Node";
+    renderRack("#rack-overview", cameras);
+    renderRack("#rack-cameras", cameras);
+
+    const cloudTone = s.paired && s.last_cloud_ok_at ? "ok" : s.paired ? "warn" : "";
+    const cloudText = s.paired ? (s.last_cloud_ok_at ? "Conectado à Cloud" : "Cloud sem resposta") : "Operando só localmente";
+    $("#cloud-chip").className = `chip ${cloudTone}`;
+    $("#cloud-chip").lastElementChild.textContent = cloudText;
+    $("#version-label").textContent = `Versão ${s.version || "—"}`;
+
+    $("#health-overview").innerHTML = facts([
+      ["Ligado há", esc(uptime(s.uptime_seconds))],
+      ["CPU", esc(percent(s.cpu_percent))],
+      ["Memória", esc(percent(s.ram_percent))],
+      ["Na fila de envio", esc(s.queue_size ?? 0)],
+      ["Última sincronização", esc(s.last_sync_at ? ago(s.last_sync_at) : "nunca")],
+    ]);
+    $("#sync-facts").innerHTML = facts([
+      ["Situação", esc(cloudText)],
+      ["Itens aguardando envio", esc(s.queue_size ?? 0)],
+      ["Última sincronização", esc(dateTime(s.last_sync_at))],
+      ["Último heartbeat", esc(dateTime(s.last_heartbeat_at))],
+      ["Último erro da Cloud", esc(s.last_cloud_error || "nenhum")],
+    ]);
+    $("#identity-facts").innerHTML = facts([
+      ["ID do Node", `<code>${esc(s.node_id || "—")}</code>`],
+      ["Empresa", esc(s.organization_id || "—")],
+      ["Cloud", `<code>${esc(s.cloud_url || "não configurada")}</code>`],
+      ["Pasta de dados", `<code>${esc(s.data_dir || "—")}</code>`],
+      ["Logs", `<code>${esc(s.logs_dir || "—")}</code>`],
+    ]);
+    const update = s.update || {};
+    $("#update-facts").innerHTML = facts([
+      ["Versão instalada", esc(s.version || "—")],
+      ["Situação", esc(update.message || update.state || "aguardando a primeira verificação")],
+      ["Versão disponível", esc(update.available_version || "nenhuma")],
+      ["Última verificação", esc(dateTime(update.checked_at))],
+    ]);
+
+    const checks = [
+      [cameras.length === 0 ? "warn" : online < cameras.length ? "warn" : "ok", "Câmeras", `${online} de ${cameras.length} recebendo imagem`],
+      [watching ? "ok" : "warn", "Visão", watching ? `${watching} câmera(s) com detecção ligada` : "Nenhuma câmera com detecção ligada"],
+      [s.paired ? (s.last_cloud_ok_at ? "ok" : "bad") : "warn", "Cloud", s.last_cloud_error || cloudText],
+      [Number(s.queue_size || 0) > 500 ? "warn" : "ok", "Fila de envio", `${s.queue_size ?? 0} item(ns) aguardando`],
+      [Number(s.ram_percent || 0) > 90 ? "bad" : "ok", "Memória", `${percent(s.ram_percent)} em uso`],
+      ["ok", "Banco local", "SQLite gravando em " + (s.data_dir || "pasta do usuário")],
+    ];
+    const order = {bad: 0, warn: 1, ok: 2};
+    $("#diagnostics-rows").innerHTML = checks.sort((a, b) => order[a[0]] - order[b[0]]).map(([t, name, detail]) =>
+      `<div class="row"><span class="${t}"><span class="dot"></span></span><div><strong>${esc(name)}</strong><small>${esc(detail)}</small></div><div class="tail">${t === "ok" ? "OK" : t === "warn" ? "Atenção" : "Falha"}</div></div>`
+    ).join("");
+  }
+
+  async function load() {
+    try {
+      const data = await getJson("/api/status");
+      await Promise.all((data.cameras || []).map(async (camera) => {
+        try { camera.vision = await getJson(`/api/cameras/${encodeURIComponent(camera.id)}/vision/status`); } catch { camera.vision = null; }
+        const fps = camera.vision?.status === "RUNNING" ? Number(camera.vision?.metrics?.vision_fps || 0) : 0;
+        (history[camera.id] ||= []).push(fps);
+        if (history[camera.id].length > 30) history[camera.id].shift();
+      }));
+      status = data;
+      $("#service-dot").className = "dot ok";
+      $("#service-label").textContent = "Serviço em execução";
+      renderStatus();
+    } catch {
+      $("#service-dot").className = "dot bad";
+      $("#service-label").textContent = "Node sem resposta";
+    }
+    try { events = await getJson("/api/events?limit=50"); renderEvents(); } catch { /* the rest of the page still works */ }
+    icons();
+  }
+
+  function setPage(page) {
+    document.querySelectorAll("[data-view]").forEach((el) => { el.hidden = el.dataset.view !== page; });
+    document.querySelectorAll(".nav-group button").forEach((b) => {
+      if (b.dataset.page === page) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
+    });
+    $("#page-title").textContent = TITLES[page];
+  }
+  document.querySelectorAll("[data-page],[data-jump]").forEach((b) => b.addEventListener("click", () => setPage(b.dataset.page || b.dataset.jump)));
+
+  function selectEvent(id) {
+    const event = events.find((e) => e.id === id);
+    if (event) { selectedEvent = id; renderEventDetail(event); }
+  }
+  $("#events-page").addEventListener("click", (e) => { const row = e.target.closest("[data-event]"); if (row) selectEvent(row.dataset.event); });
+  $("#events-page").addEventListener("keydown", (e) => { const row = e.target.closest("[data-event]"); if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); selectEvent(row.dataset.event); } });
+  $("#events-refresh").addEventListener("click", load);
+  $("#diagnostics-refresh").addEventListener("click", load);
+
+  $("#sync-button").addEventListener("click", async () => {
+    const button = $("#sync-button");
+    button.disabled = true;
+    try {
+      const data = await getJson("/api/sync", {method: "POST"});
+      button.lastChild.textContent = data.ok ? "Sincronizado" : "Falhou, tente de novo";
+    } catch { button.lastChild.textContent = "Falhou, tente de novo"; }
+    setTimeout(() => { button.disabled = false; button.lastChild.textContent = "Sincronizar agora"; }, 2500);
+    load();
+  });
+
+  const cameraNote = $("#camera-form-status");
+  $("#test-camera-button").addEventListener("click", async () => {
+    const form = $("#camera-form");
+    cameraNote.textContent = "Testando a conexão RTSP…";
+    try {
+      const data = await getJson("/api/cameras/test", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({rtsp_url: form.rtsp_url.value})});
+      cameraNote.textContent = data.ok ? `Conexão OK, imagem de ${data.resolution?.width || "?"}×${data.resolution?.height || "?"}.` : (data.error || "Não foi possível abrir a câmera. Confira endereço, usuário e senha.");
+    } catch { cameraNote.textContent = "O Node não respondeu. Confira se ele está aberto e tente de novo."; }
+  });
+  $("#camera-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    cameraNote.textContent = "Salvando câmera…";
+    try {
+      const response = await fetch("/api/cameras", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name: form.camera_name.value, rtsp_url: form.rtsp_url.value, enabled: form.enabled.checked})});
+      const data = await response.json();
+      const saved = response.ok && data.ok !== false && (data.ok || data.id);
+      cameraNote.textContent = saved ? "Câmera salva." : (data.error || "Não foi possível salvar a câmera.");
+      if (saved) form.reset();
+      load();
+    } catch { cameraNote.textContent = "O Node não respondeu. Confira se ele está aberto e tente de novo."; }
+  });
+
+  const pairNote = $("#form-status");
+  let pairingTimer = null;
+  $("#connect-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    pairNote.textContent = "Pareando…";
+    try {
+      const data = await getJson("/api/connect", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({cloud_url: form.cloud_url.value, pairing_code: form.pairing_code.value, node_name: form.node_name.value})});
+      pairNote.textContent = data.ok ? (data.message || "Pareado. O Node vai buscar as câmeras da Cloud.") : (data.error || "Código não aceito. Confira e tente de novo.");
+    } catch { pairNote.textContent = "O Node não respondeu. Tente de novo em alguns segundos."; }
+    load();
+  });
+  $("#start-pairing-button").addEventListener("click", async () => {
+    const form = $("#connect-form");
+    pairNote.textContent = "Gerando código…";
+    try {
+      const data = await getJson("/api/pairing/start", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({cloud_url: form.cloud_url.value, node_name: form.node_name.value || "CAMPEX Node"})});
+      if (!data.ok) { pairNote.textContent = data.error || "Não foi possível gerar o código."; return; }
+      const box = $("#pairing-box");
+      box.hidden = false;
+      box.innerHTML = `<div class="code">${esc(data.pairing_code)}</div><p class="note">${data.mode === "local" ? "Sem Cloud configurada, o código fica guardado até a Cloud existir." : "No painel CAMPEX, abra Nodes, clique em Conectar Node e digite este código."} Vale até ${esc(dateTime(data.expires_at))}.</p>`;
+      pairNote.textContent = data.mode === "local" ? "O Node já opera localmente." : "Aguardando a confirmação no painel…";
+      clearInterval(pairingTimer);
+      pairingTimer = setInterval(async () => {
+        const result = await getJson("/api/pairing/status").catch(() => ({}));
+        if (result.status === "authorized") { clearInterval(pairingTimer); box.hidden = true; pairNote.textContent = "Node conectado à CAMPEX Cloud."; load(); }
+        else if (result.status === "expired") { clearInterval(pairingTimer); pairNote.textContent = "O código expirou. Gere um novo."; }
+      }, 3000);
+    } catch { pairNote.textContent = "O Node não respondeu. Tente de novo em alguns segundos."; }
+  });
+
+  icons();
+  load();
+  setInterval(load, 3000);
+</script>
 </body>
 </html>"""

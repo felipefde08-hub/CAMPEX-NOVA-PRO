@@ -20,6 +20,7 @@ from backend.config import ROOT_DIR as BACKEND_ROOT_DIR
 from backend.middleware.cors import LocalNetworkCORSMiddleware
 
 from campex_node.core.config import NodeCameraConfig, NodeSettings
+from campex_node.node_ui import NODE_HTML
 
 
 class CloudConnectionPayload(BaseModel):
@@ -1027,84 +1028,6 @@ def _blank_frame(message: str):
         cv2.LINE_AA,
     )
     return frame
-
-
-NODE_HTML = """<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CAMPEX Node</title>
-  <style>
-    :root{--black:#090a0c;--panel:#171b21;--soft:#20262e;--border:#313946;--text:#f2f5f8;--muted:#9aa6b4;--accent:#7db3ff;--online:#31c46b;--attention:#e2b245;--critical:#ef5b5b;--radius:8px}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:#0b0d10;color:var(--text);font:15px/1.45 Inter,"SF Pro Text","Segoe UI",system-ui,sans-serif}
-    .shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh}.side{background:#090a0c;border-right:1px solid var(--border);padding:22px}.brand{font-weight:800;letter-spacing:.12em;font-size:22px}.brand span{color:var(--accent)}.side p{color:var(--muted);margin:12px 0 0}
-    main{padding:28px;max-width:1180px;width:100%;margin:0 auto}.top{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:22px}.eyebrow{margin:0;color:var(--muted);text-transform:uppercase;font-size:12px;letter-spacing:.16em}h1{margin:4px 0 0;font-size:28px}
-    .badge{border:1px solid var(--border);background:var(--panel);border-radius:999px;padding:8px 12px;color:var(--muted)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:0 .75rem 1.75rem rgba(0,0,0,.2)}
-    .panel h2{margin:0 0 12px;font-size:17px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.stat{background:var(--soft);border:1px solid #252b34;border-radius:8px;padding:14px}.stat strong{display:block;font-size:24px}.stat span{color:var(--muted)}
-    label{display:block;color:var(--muted);margin:12px 0 6px}input{width:100%;height:40px;background:#0f1217;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:0 11px}button{height:40px;border:0;border-radius:6px;background:var(--accent);color:#07101d;font-weight:700;padding:0 14px;cursor:pointer}button.secondary{background:var(--soft);color:var(--text);border:1px solid var(--border)}
-    .actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}.camera{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid #252b34}.camera:first-child{border-top:0}.dot{width:9px;height:9px;border-radius:99px;background:var(--critical);display:inline-block;margin-right:7px}.ONLINE .dot{background:var(--online)}.DEGRADED .dot,.CONNECTING .dot{background:var(--attention)}
-    code{color:var(--accent);word-break:break-all}.status{color:var(--muted);min-height:22px}.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:10px;align-items:center}.flow-step{background:var(--soft);border:1px solid #252b34;border-radius:8px;padding:12px}.flow-arrow{color:var(--accent);font-weight:800}.note{color:var(--muted);margin:10px 0 0}@media(max-width:820px){.shell{grid-template-columns:1fr}.side{border-right:0;border-bottom:1px solid var(--border)}.grid{grid-template-columns:1fr}.top{align-items:flex-start;flex-direction:column}.flow{grid-template-columns:1fr}.flow-arrow{display:none}}
-  </style>
-</head>
-<body>
-  <div class="shell">
-    <aside class="side"><div class="brand">CAMP<span>EX</span></div><p>Node operacional</p><p>Processa câmeras dentro da empresa e envia dados úteis para a Cloud.</p></aside>
-    <main>
-      <div class="top"><div><p class="eyebrow">Serviço local 24/7 · saída HTTPS</p><h1>CAMPEX Node</h1></div><div class="badge" id="cloud-badge">Carregando...</div></div>
-      <section class="panel" style="margin-bottom:16px"><h2>Fluxo operacional</h2><div class="flow">
-        <div class="flow-step"><strong>Câmeras</strong><br><span class="status">RTSP/ONVIF na rede local</span></div><div class="flow-arrow">→</div>
-        <div class="flow-step"><strong>Node</strong><br><span class="status">Captura, IA, eventos e fila offline</span></div><div class="flow-arrow">→</div>
-        <div class="flow-step"><strong>Cloud</strong><br><span class="status">API, dashboard, relatórios e alertas</span></div>
-      </div><p class="note">O painel web lê a Cloud. Ele não precisa acessar este PC diretamente.</p></section>
-      <div class="grid">
-        <section class="panel"><h2>Pareamento com a Cloud</h2><form id="connect-form">
-          <label>Backend Cloud</label><input name="cloud_url" placeholder="Opcional: URL da Cloud CAMPEX" />
-          <label>Código de pareamento</label><input name="pairing_code" autocomplete="off" placeholder="CXP-7KQ2-N91P" />
-          <label>Nome deste Node</label><input name="node_name" placeholder="RBA-NODE-01" />
-          <div class="actions"><button type="submit">Parear Node</button><button class="secondary" type="button" id="sync-button">Sincronizar agora</button><button class="secondary" type="button" id="diagnostics-button">Diagnóstico</button></div>
-          <p class="status" id="form-status"></p>
-        </form></section>
-        <section class="panel"><h2>Status do Node</h2><div class="stats">
-          <div class="stat"><strong id="total">0</strong><span>Câmeras</span></div>
-          <div class="stat"><strong id="online">0</strong><span>Online</span></div>
-          <div class="stat"><strong id="node">-</strong><span>Node</span></div>
-          <div class="stat"><strong id="queue">0</strong><span>Fila</span></div>
-        </div><p>Node ID: <code id="node-id">-</code></p></section>
-      </div>
-      <section class="panel" style="margin-top:16px"><h2>Câmeras recebidas da Cloud</h2><div id="cameras"></div></section>
-    </main>
-  </div>
-  <script>
-    const statusEl=document.querySelector('#form-status');
-    async function load(){
-      const data=await fetch('/api/status').then(r=>r.json());
-      document.querySelector('#cloud-badge').textContent=data.paired?'Node pareado':(data.cloud_configured?'Cloud configurada':'Cloud não configurada');
-      document.querySelector('#total').textContent=data.cameras_total;
-      document.querySelector('#online').textContent=data.cameras_online;
-      document.querySelector('#node').textContent=data.node_id.slice(5,9);
-      document.querySelector('#queue').textContent=data.queue_size||0;
-      document.querySelector('#node-id').textContent=data.node_id;
-      document.querySelector('[name=cloud_url]').value=data.cloud_url||'';
-      document.querySelector('#cameras').innerHTML=(data.cameras||[]).map(cam=>`<div class="camera ${cam.status}"><span><span class="dot"></span>${cam.name}</span><span>${cam.status}</span></div>`).join('')||'<p class="status">Nenhuma câmera sincronizada ainda.</p>';
-    }
-    document.querySelector('#connect-form').addEventListener('submit',async e=>{
-      e.preventDefault(); statusEl.textContent='Conectando...';
-      const form=e.currentTarget;
-      const body={cloud_url:form.cloud_url.value,pairing_code:form.pairing_code.value,node_name:form.node_name.value};
-      const res=await fetch('/api/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const data=await res.json();
-      statusEl.textContent=data.ok?(data.message||'Pareado. O Node buscará configurações e enviará eventos para a Cloud.'):(data.error||'Falha ao parear.');
-      await load();
-    });
-    document.querySelector('#sync-button').addEventListener('click',async()=>{statusEl.textContent='Sincronizando...';const res=await fetch('/api/sync',{method:'POST'});const data=await res.json();statusEl.textContent=data.ok?`Sincronizadas: ${data.cameras_loaded}`:(data.error||'Falha na sincronização');await load();});
-    document.querySelector('#diagnostics-button').addEventListener('click',async()=>{const data=await fetch('/api/diagnostics').then(r=>r.json());statusEl.textContent=`Diagnóstico OK · fila ${data.queue_size} · câmeras ${data.cameras.cameras_total}`;});
-    load(); setInterval(load,5000);
-  </script>
-</body>
-</html>"""
-
-from campex_node.node_ui import NODE_HTML
 
 
 def _camera_id(value: str | None) -> str:
