@@ -247,3 +247,133 @@ def test_snapshot_stops_showing_frames_from_a_silent_node(monkeypatch, tmp_path)
             )
         stale = client.get(f"/api/v1/cameras/{camera_id}/snapshot", headers=user)
         assert stale.headers["x-campex-frame"] == "waiting"
+
+
+def _node_camera_ids(client, node_id: str, node_headers: dict) -> list[str]:
+    config = client.get(f"/api/v1/nodes/{node_id}/config", headers=node_headers)
+    assert config.status_code == 200
+    return [camera["id"] for camera in config.json()["cameras"]]
+
+
+def test_repairing_the_same_node_keeps_its_cameras(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        user = _login(client, "re@empresa.com")
+        node_id, old_headers = _pair_node(client, user, "node_public_doca")
+        camera_id = client.post("/api/v1/cameras", headers=user, json=CAMERA).json()["id"]
+
+        # Reinstall / lost token: the same computer pairs again.
+        repaired_id, new_headers = _pair_node(client, user, "node_public_doca")
+
+        assert repaired_id == node_id
+        assert _node_camera_ids(client, repaired_id, new_headers) == [camera_id]
+        # The token of the previous pairing no longer works.
+        stale = client.get(f"/api/v1/nodes/{node_id}/config", headers=old_headers)
+        assert stale.status_code == 401
+        nodes = client.get("/api/v1/nodes", headers=user).json()
+        assert len([node for node in nodes if not node.get("revoked_at")]) == 1
+
+
+def test_cameras_of_a_revoked_node_go_to_the_new_node(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        user = _login(client, "rev@empresa.com")
+        old_id, _ = _pair_node(client, user, "node_public_antigo")
+        camera_id = client.post("/api/v1/cameras", headers=user, json=CAMERA).json()["id"]
+        assert client.delete(f"/api/v1/nodes/{old_id}", headers=user).status_code == 204
+
+        new_id, new_headers = _pair_node(client, user, "node_public_novo")
+
+        assert new_id != old_id
+        assert _node_camera_ids(client, new_id, new_headers) == [camera_id]
+        report = _report(client, new_headers, camera_id)
+        assert camera_id in report["cameras"]
+
+
+def test_camera_pinned_to_a_node_revoked_earlier_is_released(monkeypatch, tmp_path):
+    """Data left by older versions: revoking did not release the cameras."""
+    _configure(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        user = _login(client, "legado@empresa.com")
+        old_id, _ = _pair_node(client, user, "node_public_antigo")
+        camera_id = client.post("/api/v1/cameras", headers=user, json=CAMERA).json()["id"]
+        with connect(Settings.from_env().database_target) as connection:
+            connection.execute("UPDATE campex_nodes SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?", (old_id,))
+            connection.commit()
+
+        new_id, new_headers = _pair_node(client, user, "node_public_novo")
+
+        assert _node_camera_ids(client, new_id, new_headers) == [camera_id]
+
+
+def _camera_node_id(camera_id: str) -> str | None:
+    with connect(Settings.from_env().database_target) as connection:
+        return connection.execute("SELECT node_id FROM cameras WHERE id = ?", (camera_id,)).fetchone()["node_id"]
+
+
+def _take_offline(node_id: str) -> None:
+    old_seen = (_utc_now() - timedelta(hours=2)).isoformat()
+    with connect(Settings.from_env().database_target) as connection:
+        connection.execute("UPDATE campex_nodes SET last_seen_at = ? WHERE id = ?", (old_seen, node_id))
+        connection.commit()
+
+
+def test_camera_of_an_offline_node_goes_to_the_node_that_reaches_it(monkeypatch, tmp_path):
+    """Older versions created a new Node on every pairing; the old one kept the cameras."""
+    _configure(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        user = _login(client, "orfa@empresa.com")
+        old_id, old_headers = _pair_node(client, user, "node_public_antigo")
+        camera_id = client.post("/api/v1/cameras", headers=user, json=CAMERA).json()["id"]
+        assert _camera_node_id(camera_id) == old_id
+        _take_offline(old_id)
+
+        new_id, new_headers = _pair_node(client, user, "node_public_novo")
+
+        assert new_id != old_id
+        assert _node_camera_ids(client, new_id, new_headers) == [camera_id]
+        client.get(f"/api/v1/cameras/{camera_id}/snapshot", headers=user)
+        _report(client, new_headers, camera_id, width=64, height=48, frame_jpeg_base64=_jpeg())
+        assert client.get(f"/api/v1/cameras/{camera_id}/snapshot", headers=user).headers["x-campex-frame"] == "live"
+        assert _camera_node_id(camera_id) == new_id
+
+        # The old Node comes back: the camera stays with the Node capturing it.
+        client.post(f"/api/v1/nodes/{old_id}/heartbeat", headers=old_headers, json={})
+        assert _node_camera_ids(client, old_id, old_headers) == []
+
+
+def test_node_that_cannot_reach_the_camera_does_not_take_it(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        user = _login(client, "outra-rede@empresa.com")
+        old_id, _ = _pair_node(client, user, "node_public_antigo")
+        camera_id = client.post("/api/v1/cameras", headers=user, json=CAMERA).json()["id"]
+        _take_offline(old_id)
+        _new_id, new_headers = _pair_node(client, user, "node_public_novo")
+
+        _report(client, new_headers, camera_id, status="OFFLINE", frames_received=0)
+
+        assert _camera_node_id(camera_id) == old_id
+
+
+def test_new_camera_goes_to_the_only_online_node(monkeypatch, tmp_path):
+    _configure(monkeypatch, tmp_path)
+
+    with TestClient(app) as client:
+        user = _login(client, "multi@empresa.com")
+        stale_id, stale_headers = _pair_node(client, user, "node_public_parado")
+        online_id, online_headers = _pair_node(client, user, "node_public_ativo")
+        old_seen = (_utc_now() - timedelta(hours=2)).isoformat()
+        with connect(Settings.from_env().database_target) as connection:
+            connection.execute("UPDATE campex_nodes SET last_seen_at = ? WHERE id = ?", (old_seen, stale_id))
+            connection.commit()
+
+        camera_id = client.post("/api/v1/cameras", headers=user, json=CAMERA).json()["id"]
+
+        assert _node_camera_ids(client, online_id, online_headers) == [camera_id]
+        assert _node_camera_ids(client, stale_id, stale_headers) == []

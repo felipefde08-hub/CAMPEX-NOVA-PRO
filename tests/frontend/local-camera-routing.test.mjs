@@ -51,3 +51,58 @@ test('hosted frontend keeps only current Node cameras and never asks Cloud for l
   assert.equal(calls.some(url => url.includes('/mapping/poses')), false);
   assert.equal(calls.some(url => url.includes('campex-backend.vercel.app/api/v1/cameras/local_current')), false);
 });
+
+test('on the Node computer, Cloud cameras keep the Cloud copy that says they come through the relay', async () => {
+  globalThis.fetch = async (url) => {
+    if (String(url).startsWith('http://127.0.0.1:8787/api/cameras')) {
+      // The local Node also lists the Cloud cameras it captures.
+      return Response.json([{ id: 'cam_cloud', name: 'Doca', health: { status: 'ONLINE' } }]);
+    }
+    if (String(url).endsWith('/cameras')) {
+      return Response.json([{ id: 'cam_cloud', name: 'Doca', health: { status: 'ONLINE', runtime: 'campex_node' } }]);
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const cameras = await api.listCameras();
+
+  assert.equal(cameras.length, 1);
+  assert.equal(cameras[0].health.runtime, 'campex_node');
+  assert.equal(cameras[0].runtime, undefined);
+});
+
+test('finds the local Node when it is not on port 8787 and remembers the port', async () => {
+  const nodeOrigin = 'http://127.0.0.1:8790';
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target === `${nodeOrigin}/api/status`) return Response.json({ node_id: 'node_1' });
+    if (target.startsWith(`${nodeOrigin}/api/cameras`)) return Response.json([{ id: 'local_dock', name: 'Doca' }]);
+    if (target.startsWith('http://127.0.0.1:')) throw new TypeError('Failed to fetch');
+    if (target.endsWith('/cameras')) return Response.json([]);
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const cameras = await api.listCameras();
+
+  assert.deepEqual(cameras.map(camera => camera.id), ['local_dock']);
+  assert.equal(api.localNodeOrigin(), nodeOrigin);
+  assert.equal(localStorage.getItem('campex.local_node_port'), '8790');
+});
+
+test('a dashboard without a local Node does not rescan the ports on every refresh', async () => {
+  let probes = 0;
+  globalThis.fetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/status')) probes += 1;
+    if (target.startsWith('http://127.0.0.1:')) throw new TypeError('Failed to fetch');
+    if (target.endsWith('/cameras')) return Response.json([]);
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  await api.listCameras();
+  const afterFirstScan = probes;
+  await api.listCameras();
+
+  assert.equal(afterFirstScan, 20);
+  assert.equal(probes, afterFirstScan);
+});

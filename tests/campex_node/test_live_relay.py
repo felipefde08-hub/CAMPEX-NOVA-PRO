@@ -183,3 +183,53 @@ def test_config_sync_applies_vision_and_mapping_from_the_cloud(tmp_path):
 
     assert manager.cameras[0].vision_enabled is True
     assert manager.cameras[0].mapping_enabled is True
+
+
+def _cloud_config(*cameras):
+    return SimpleNamespace(fetch_config=lambda: CloudResult(ok=True, data={"cameras": list(cameras)}))
+
+
+def test_config_sync_keeps_the_cloud_copy_of_its_cameras(tmp_path):
+    from campex_node.storage.local_store import LocalStore
+
+    store = LocalStore(tmp_path / "node.sqlite3")
+    store.initialize()
+    # Saved by older versions when vision was toggled in the Node panel.
+    store.save_local_camera(NodeCameraConfig(id="cam_cloud", name="Doca", rtsp_url="rtsp://10.0.0.1/old"))
+    store.save_local_camera(NodeCameraConfig(id="local_extra", name="Extra", rtsp_url="rtsp://10.0.0.7/live"))
+    manager = FakeCameraManager([])
+    cloud_camera = {"id": "cam_cloud", "name": "Doca", "source_uri": "rtsp://10.0.0.5/new", "mapping_enabled": True}
+    sync = ConfigSyncService(
+        settings=_settings(tmp_path), cloud_client=_cloud_config(cloud_camera), camera_manager=manager, store=store
+    )
+
+    sync.sync_once()
+
+    cameras = {camera.id: camera for camera in manager.cameras}
+    assert cameras["cam_cloud"].rtsp_url == "rtsp://10.0.0.5/new"
+    assert cameras["cam_cloud"].mapping_enabled is True
+    assert cameras["local_extra"].rtsp_url == "rtsp://10.0.0.7/live"
+    assert [camera.id for camera in store.get_local_cameras()] == ["local_extra"]
+
+
+def test_config_sync_stops_cameras_deleted_in_the_cloud(tmp_path):
+    from dataclasses import replace
+
+    from campex_node.storage.local_store import LocalStore
+
+    store = LocalStore(tmp_path / "node.sqlite3")
+    store.initialize()
+    camera = {"id": "cam_cloud", "name": "Doca", "source_uri": "rtsp://10.0.0.5/stream"}
+    manager = FakeCameraManager([])
+    first = ConfigSyncService(
+        settings=_settings(tmp_path), cloud_client=_cloud_config(camera), camera_manager=manager, store=store
+    )
+    first.sync_once()
+    # After a restart the cached camera is part of the boot settings.
+    settings = replace(_settings(tmp_path), cameras=tuple(manager.cameras))
+    sync = ConfigSyncService(settings=settings, cloud_client=_cloud_config(), camera_manager=manager, store=store)
+
+    sync.sync_once()
+    sync.sync_once()
+
+    assert manager.cameras == []

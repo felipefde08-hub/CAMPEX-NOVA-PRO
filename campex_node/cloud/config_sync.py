@@ -36,6 +36,11 @@ class ConfigSyncService:
         )
         self.last_error: str | None = None
         self.last_count = 0
+        # Every id the Cloud has sent; such a camera only runs while the Cloud
+        # still lists it, so a camera deleted there stops here too.
+        self._cloud_ids: set[str] = (
+            {camera.id for camera in store.get_cached_cloud_cameras()} if store is not None else set()
+        )
 
     def start(self) -> None:
         if not self._thread.is_alive():
@@ -85,11 +90,19 @@ class ConfigSyncService:
                     separators=(",", ":"),
                 ),
             )
-        cameras_by_id = {camera.id: camera for camera in self.settings.cameras}
+        self._cloud_ids.update(camera.id for camera in remote_cameras)
+        cameras_by_id = {
+            camera.id: camera for camera in self.settings.cameras if camera.id not in self._cloud_ids
+        }
         cameras_by_id.update({camera.id: camera for camera in remote_cameras})
         if self.store is not None:
-            # Local overrides (e.g. vision toggled on this Node) win over the Cloud copy.
-            cameras_by_id.update({camera.id: camera for camera in self.store.get_local_cameras()})
+            # The Cloud copy of its cameras always wins: a copy saved on this
+            # Node would keep an old RTSP URL or toggle forever.
+            for camera in self.store.get_local_cameras():
+                if camera.id in self._cloud_ids:
+                    self.store.delete_local_camera(camera.id)
+                else:
+                    cameras_by_id[camera.id] = camera
         cameras = list(cameras_by_id.values())
         self.camera_manager.apply_configs(cameras)
         self.last_error = None

@@ -12,6 +12,8 @@ param(
   [Parameter(Mandatory = $true)][string]$StatusUrl,
   [Parameter(Mandatory = $true)][string]$ResultPath,
   [Parameter(Mandatory = $true)][string]$LogPath,
+  # Written by the restarted Node with the port it chose; wins over StatusUrl.
+  [string]$PortFile = "",
   [int]$HealthTimeoutSeconds = 240
 )
 
@@ -51,11 +53,19 @@ function Stop-NodeFrom([string]$Folder) {
     Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
+function Get-StatusUrl {
+  if ($PortFile -and (Test-Path -LiteralPath $PortFile)) {
+    $port = (Get-Content -LiteralPath $PortFile -Raw -ErrorAction SilentlyContinue)
+    if ($port -and $port.Trim() -match '^\d+$') { return "http://127.0.0.1:$($port.Trim())/api/status" }
+  }
+  return $StatusUrl
+}
+
 function Wait-NodeVersion([string]$Expected) {
   $deadline = (Get-Date).AddSeconds($HealthTimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
     try {
-      $status = Invoke-RestMethod -Uri $StatusUrl -TimeoutSec 5 -UseBasicParsing
+      $status = Invoke-RestMethod -Uri (Get-StatusUrl) -TimeoutSec 5 -UseBasicParsing
       if ($status.version -eq $Expected) { return $true }
     } catch { }
     Start-Sleep -Seconds 3

@@ -1,9 +1,23 @@
 import { createMediaUrl } from "./media-auth.js";
 import { getApiToken, getSessionToken } from "./api-token.js";
 const queryApiBaseUrl = new URLSearchParams(window.location.search).get("api");
-const localApiBaseUrl = "http://127.0.0.1:8787/api";
-const localNodeApiBaseUrl = "http://127.0.0.1:8787/api";
+// The Node prefers 8787 but takes the next free port when another program
+// holds it; the range matches PORT_RANGE_SIZE in campex_node/desktop_launcher.py.
+const LOCAL_NODE_HOST = "http://127.0.0.1";
+const LOCAL_NODE_FIRST_PORT = 8787;
+const LOCAL_NODE_PORT_COUNT = 20;
+const LOCAL_NODE_PORT_KEY = "campex.local_node_port";
+const LOCAL_NODE_RESCAN_MS = 60000;
 const isLocalFrontend = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+let localNodePort = initialLocalNodePort();
+let localNodeDiscovery = null;
+let lastFailedDiscoveryAt = 0;
+// A dev server on localhost (not the Node's own panel): the API base below is
+// fixed for the page's lifetime, so find the Node's port first.
+if (isLocalFrontend && !queryApiBaseUrl && !window.CAMPEX_API_BASE_URL && !isLocalNodePort(window.location.port)) {
+  await discoverLocalNode();
+}
+const localApiBaseUrl = `${localNodeOrigin()}/api`;
 const isHttpFrontend = ["http:", "https:"].includes(window.location.protocol);
 const isHostedFrontend = isHttpFrontend && window.location.protocol === "https:" && !isLocalFrontend;
 const storedApiBaseUrl = localStorage.getItem("campex.backend_url") || "";
@@ -33,22 +47,101 @@ function normalizeApiBaseUrl(value) {
 }
 
 function isLocalNodeApiBase(value) {
-  return /^https?:\/\/(127\.0\.0\.1|localhost):8787\/api\/?$/i.test(String(value || "").trim());
+  const match = /^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)\/api\/?$/i.exec(String(value || "").trim());
+  return Boolean(match) && isLocalNodePort(match[1]);
+}
+
+function isLocalNodePort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= LOCAL_NODE_FIRST_PORT && port < LOCAL_NODE_FIRST_PORT + LOCAL_NODE_PORT_COUNT;
+}
+
+function initialLocalNodePort() {
+  // The Node's own panel is served by the Node: same port.
+  if (isLocalFrontend && isLocalNodePort(window.location.port)) return Number(window.location.port);
+  try {
+    const stored = localStorage.getItem(LOCAL_NODE_PORT_KEY);
+    if (isLocalNodePort(stored)) return Number(stored);
+  } catch {
+    // Storage blocked: fall back to the default port.
+  }
+  return LOCAL_NODE_FIRST_PORT;
+}
+
+export function localNodeOrigin() {
+  return `${LOCAL_NODE_HOST}:${localNodePort}`;
+}
+
+async function isCampexNodeAt(port) {
+  try {
+    const response = await fetch(`${LOCAL_NODE_HOST}:${port}/api/status`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!response.ok) return false;
+    const status = await response.json();
+    return Boolean(status && "node_id" in status);
+  } catch {
+    return false;
+  }
+}
+
+// Finds the port the local Node is on and remembers it. Returns false when no
+// Node answers; a failed scan is not repeated for a minute so dashboards on
+// computers without a Node do not keep probing.
+export function discoverLocalNode() {
+  if (localNodeDiscovery) return localNodeDiscovery;
+  if (Date.now() - lastFailedDiscoveryAt < LOCAL_NODE_RESCAN_MS) return Promise.resolve(false);
+  localNodeDiscovery = (async () => {
+    const ports = Array.from({ length: LOCAL_NODE_PORT_COUNT }, (_, index) => LOCAL_NODE_FIRST_PORT + index);
+    const found = await Promise.all(ports.map(async (port) => ((await isCampexNodeAt(port)) ? port : null)));
+    const available = found.filter((port) => port !== null);
+    if (!available.length) {
+      lastFailedDiscoveryAt = Date.now();
+      return false;
+    }
+    localNodePort = available.includes(localNodePort) ? localNodePort : available[0];
+    try {
+      localStorage.setItem(LOCAL_NODE_PORT_KEY, String(localNodePort));
+    } catch {
+      // Not remembered across reloads; discovery runs again next time.
+    }
+    return true;
+  })().finally(() => {
+    localNodeDiscovery = null;
+  });
+  return localNodeDiscovery;
+}
+
+// fetch() against the local Node; when it does not answer, looks for it on
+// the other ports and retries once there.
+export async function fetchLocalNode(path, { timeoutMs = 10000, ...options } = {}) {
+  const attempt = () => fetch(`${localNodeOrigin()}${path}`, {
+    ...options,
+    signal: options.signal || AbortSignal.timeout(timeoutMs),
+  });
+  try {
+    return await attempt();
+  } catch (error) {
+    const previousPort = localNodePort;
+    if ((await discoverLocalNode()) && localNodePort !== previousPort) return attempt();
+    throw error;
+  }
 }
 
 function shouldUseLocalNodeCameraId(cameraId = "") {
   return String(cameraId || "").startsWith("local_");
 }
 
-async function requestLocalNodeJson(path, options = {}) {
-  const response = await fetch(`${localNodeApiBaseUrl}${path}`, {
+async function requestLocalNodeJson(path, { timeoutMs = 10000, ...options } = {}) {
+  const response = await fetchLocalNode(`/api${path}`, {
     ...options,
+    timeoutMs,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
       ...(options.headers || {}),
     },
-    signal: options.signal || AbortSignal.timeout(10000),
   });
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
@@ -67,9 +160,7 @@ async function requestLocalNodeJson(path, options = {}) {
 async function maybeListLocalNodeCameras() {
   if (!isHostedFrontend || isLocalNodeApi) return [];
   try {
-    return await requestLocalNodeJson("/cameras", {
-      signal: AbortSignal.timeout(1500),
-    });
+    return await requestLocalNodeJson("/cameras", { timeoutMs: 1500 });
   } catch {
     return [];
   }
@@ -404,7 +495,10 @@ export async function listCameras() {
     if (isHostedFrontend && String(camera.id || "").startsWith("local_")) continue;
     merged.set(camera.id, camera);
   }
+  // The local Node also lists the Cloud cameras it captures; those must keep
+  // the Cloud copy, whose health says the frames come through the Node relay.
   for (const camera of localCameras) {
+    if (!shouldUseLocalNodeCameraId(camera.id)) continue;
     merged.set(camera.id, { ...camera, runtime: "local_node" });
   }
   return Array.from(merged.values());
@@ -849,7 +943,8 @@ export async function revokeNode(nodeId) {
 export function getBackendUrl() { return API_BASE_URL; }
 
 export async function connectBackend(mode, token) {
-  const base = mode === "local" ? "http://127.0.0.1:8787/api" : window.CAMPEX_API_BASE_URL;
+  if (mode === "local") await discoverLocalNode();
+  const base = mode === "local" ? `${localNodeOrigin()}/api` : window.CAMPEX_API_BASE_URL;
   if (!base) throw new Error("Endereço do backend não configurado.");
   const response = await fetch(`${base}/cameras`, {
     headers: { Accept: "application/json", ...(token ? { "X-CAMPEX-Token": token.trim() } : {}) },

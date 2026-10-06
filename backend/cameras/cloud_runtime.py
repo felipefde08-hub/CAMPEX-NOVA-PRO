@@ -35,6 +35,7 @@ VIEWER_ACTIVE_SECONDS = 20
 LIVE_UPLOAD_SECONDS = 1.0
 IDLE_UPLOAD_SECONDS = 10.0
 TEST_JOB_TTL_SECONDS = 90
+NODE_ONLINE_SECONDS = 120
 MAX_FRAME_BYTES = 1_500_000
 _NEVER_REPORTED = "1970-01-01T00:00:00+00:00"
 
@@ -83,6 +84,11 @@ def _seconds_since(value: str | None) -> float | None:
     return None if parsed is None else (_utc_now() - parsed).total_seconds()
 
 
+def _node_is_online(last_seen_at: str | None) -> bool:
+    seen_for = _seconds_since(last_seen_at)
+    return seen_for is not None and seen_for <= NODE_ONLINE_SECONDS
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
@@ -115,19 +121,32 @@ class CloudCameraRuntime:
     # ------------------------------------------------------------------
 
     def node_cameras(self, organization_id: str, node_id: str) -> list[dict[str, Any]]:
+        # A camera pinned to a revoked, deleted or offline Node is up for grabs:
+        # re-pairing used to create a new Node and leave the cameras on the old one.
         with connect(self.database_target) as connection:
             rows = connection.execute(
                 """
                 SELECT id, name, source_type, source_uri, enabled, vision_enabled,
-                       mapping_enabled, updated_at
+                       mapping_enabled, updated_at, node_id
                 FROM cameras
                 WHERE organization_id = ?
                   AND source_type IN ('rtsp', 'ip_camera')
-                  AND (node_id IS NULL OR node_id = ?)
                 ORDER BY created_at ASC
                 """,
-                (organization_id, node_id),
+                (organization_id,),
             ).fetchall()
+            online_nodes = {
+                node["id"]
+                for node in connection.execute(
+                    "SELECT id, last_seen_at FROM campex_nodes WHERE organization_id = ? AND revoked_at IS NULL",
+                    (organization_id,),
+                ).fetchall()
+                if _node_is_online(node["last_seen_at"])
+            }
+        rows = [
+            row for row in rows
+            if not row["node_id"] or row["node_id"] == node_id or row["node_id"] not in online_nodes
+        ]
         return [
             {
                 "id": row["id"],
@@ -156,6 +175,16 @@ class CloudCameraRuntime:
                 if report.camera_id not in cameras:
                     continue
                 self._store_report(connection, organization_id, node_id, report, now)
+                if report.status == "ONLINE":
+                    # The Node that reaches the camera keeps it, so a Node
+                    # coming back online does not capture it a second time.
+                    connection.execute(
+                        """
+                        UPDATE cameras SET node_id = ?
+                        WHERE id = ? AND organization_id = ? AND (node_id IS NULL OR node_id <> ?)
+                        """,
+                        (node_id, report.camera_id, organization_id, node_id),
+                    )
             for job_id, result in test_results or []:
                 connection.execute(
                     """
@@ -480,12 +509,18 @@ class CloudCameraRuntime:
             )
 
     def assign_default_node(self, camera_id: str, organization_id: str) -> None:
-        """Pins a new camera to the organization's Node when there is exactly one."""
+        """Pins a new camera to the organization's Node when there is only one candidate.
+
+        With several Nodes registered, the only one seen recently wins; an
+        unpinned camera would be captured by every Node at once.
+        """
         with connect(self.database_target) as connection:
             nodes = connection.execute(
-                "SELECT id FROM campex_nodes WHERE organization_id = ? AND revoked_at IS NULL",
+                "SELECT id, last_seen_at FROM campex_nodes WHERE organization_id = ? AND revoked_at IS NULL",
                 (organization_id,),
             ).fetchall()
+            if len(nodes) > 1:
+                nodes = [node for node in nodes if _node_is_online(node["last_seen_at"])]
             if len(nodes) == 1:
                 connection.execute(
                     "UPDATE cameras SET node_id = ? WHERE id = ? AND organization_id = ? AND node_id IS NULL",
@@ -507,8 +542,7 @@ class CloudCameraRuntime:
                 raise CloudCameraError(
                     "Nenhum CAMPEX Node conectado. Instale e pareie o Node no computador da rede das câmeras."
                 )
-            seen_for = _seconds_since(node["last_seen_at"])
-            if seen_for is None or seen_for > 120:
+            if not _node_is_online(node["last_seen_at"]):
                 raise CloudCameraError("O CAMPEX Node está offline. Abra o Node no computador da rede das câmeras.")
             job_id = f"ctj_{uuid4().hex}"
             expires_at = (_utc_now() + timedelta(seconds=TEST_JOB_TTL_SECONDS)).isoformat()

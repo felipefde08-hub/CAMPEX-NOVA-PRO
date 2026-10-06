@@ -76,24 +76,17 @@ class NodeRepository:
                 return None
 
             organization_id = row["organization_id"]
-            connection.execute(
-                """
-                INSERT INTO campex_nodes (
-                    id, organization_id, name, token_hash, status, version,
-                    platform, hostname, last_seen_at, revoked_at, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """,
-                (
-                    node_id,
-                    organization_id,
-                    node_name,
-                    token_hash,
-                    version,
-                    platform,
-                    hostname,
-                    now.isoformat(),
-                ),
+            node_id = _reusable_node_id(connection, organization_id, hostname=hostname) or node_id
+            _save_paired_node(
+                connection,
+                node_id=node_id,
+                organization_id=organization_id,
+                name=node_name,
+                token_hash=token_hash,
+                version=version,
+                platform=platform,
+                hostname=hostname,
+                now=now.isoformat(),
             )
             connection.execute(
                 """
@@ -228,24 +221,25 @@ class NodeRepository:
             if row is None:
                 return None
             display_name = (node_name or row["node_name"] or row["hostname"] or "CAMPEX Node").strip()
-            connection.execute(
-                """
-                INSERT INTO campex_nodes (
-                    id, organization_id, name, token_hash, status, version,
-                    platform, hostname, last_seen_at, revoked_at, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """,
-                (
-                    node_id,
+            node_id = (
+                _reusable_node_id(
+                    connection,
                     organization_id,
-                    display_name,
-                    token_hash,
-                    row["version"],
-                    row["platform"],
-                    row["hostname"],
-                    now.isoformat(),
-                ),
+                    node_public_id=row["node_public_id"],
+                    hostname=row["hostname"],
+                )
+                or node_id
+            )
+            _save_paired_node(
+                connection,
+                node_id=node_id,
+                organization_id=organization_id,
+                name=display_name,
+                token_hash=token_hash,
+                version=row["version"],
+                platform=row["platform"],
+                hostname=row["hostname"],
+                now=now.isoformat(),
             )
             connection.execute(
                 """
@@ -412,8 +406,97 @@ class NodeRepository:
                 """,
                 (_utc_now().isoformat(), node_id, organization_id),
             )
+            if cursor.rowcount:
+                # Let another Node of the organization pick these cameras up.
+                connection.execute(
+                    "UPDATE cameras SET node_id = NULL WHERE node_id = ? AND organization_id = ?",
+                    (node_id, organization_id),
+                )
             connection.commit()
             return cursor.rowcount > 0
+
+
+def _reusable_node_id(
+    connection,
+    organization_id: str,
+    *,
+    node_public_id: str | None = None,
+    hostname: str | None = None,
+) -> str | None:
+    """The active Node a re-pairing computer already had in this organization.
+
+    Pairing again (reinstall, lost token, "desparear") must keep the same
+    node_id, otherwise the cameras pinned to the old id are never sent to it.
+    """
+    if node_public_id:
+        row = connection.execute(
+            """
+            SELECT id FROM campex_nodes
+            WHERE organization_id = ? AND revoked_at IS NULL
+              AND (
+                id = ?
+                OR id IN (
+                    SELECT authorized_node_id FROM node_pairing_sessions
+                    WHERE node_public_id = ? AND organization_id = ?
+                      AND authorized_node_id IS NOT NULL
+                )
+              )
+            ORDER BY last_seen_at DESC
+            LIMIT 1
+            """,
+            (organization_id, node_public_id, node_public_id, organization_id),
+        ).fetchone()
+        if row is not None:
+            return row["id"]
+    if hostname:
+        rows = connection.execute(
+            """
+            SELECT id FROM campex_nodes
+            WHERE organization_id = ? AND revoked_at IS NULL AND hostname = ?
+            """,
+            (organization_id, hostname),
+        ).fetchall()
+        # An ambiguous hostname is not enough to take over another Node.
+        if len(rows) == 1:
+            return rows[0]["id"]
+    return None
+
+
+def _save_paired_node(
+    connection,
+    *,
+    node_id: str,
+    organization_id: str,
+    name: str,
+    token_hash: str,
+    version: str,
+    platform: str | None,
+    hostname: str | None,
+    now: str,
+) -> None:
+    """Creates the Node, or rotates the token of the one being re-paired."""
+    cursor = connection.execute(
+        """
+        UPDATE campex_nodes
+        SET name = ?, token_hash = ?, status = 'online', version = ?,
+            platform = COALESCE(?, platform), hostname = COALESCE(?, hostname),
+            last_seen_at = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND organization_id = ? AND revoked_at IS NULL
+        """,
+        (name, token_hash, version, platform, hostname, now, node_id, organization_id),
+    )
+    if cursor.rowcount:
+        return
+    connection.execute(
+        """
+        INSERT INTO campex_nodes (
+            id, organization_id, name, token_hash, status, version,
+            platform, hostname, last_seen_at, revoked_at, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, 'online', ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        (node_id, organization_id, name, token_hash, version, platform, hostname, now),
+    )
 
 
 def _generate_pairing_code() -> str:

@@ -63,6 +63,8 @@ import {
   testCamera,
   testCameraSource,
   fetchCameraSnapshot,
+  fetchLocalNode,
+  localNodeOrigin,
   testEmailNotification,
   testTelegramNotification,
   updateCamera,
@@ -86,8 +88,6 @@ import {
 import { currentRoute, routes } from "./state.js";
 
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
-const CAMPEX_NODE_LOCAL_URL = "http://127.0.0.1:8787";
-const CAMPEX_NODE_LOCAL_APP_URL = `${CAMPEX_NODE_LOCAL_URL}/app`;
 const CAMPEX_NODE_DOWNLOAD_URL =
   window.CAMPEX_NODE_DOWNLOAD_URL ||
   "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/latest/download/CampexNode-windows.zip";
@@ -1277,19 +1277,19 @@ function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) 
   mediaHost.querySelector("img").addEventListener("error", () => {
     // Mark as frameless so the next status refresh reopens the stream.
     mediaHost.dataset.localFrames = "false";
-    renderMediaPlaceholder("Aguardando frames do CAMPEX Node local. Verifique se o Node está aberto em http://127.0.0.1:8787 e se a câmera está online.");
+    renderMediaPlaceholder(`Aguardando frames do CAMPEX Node local. Verifique se o Node está aberto em ${localNodeOrigin()} e se a câmera está online.`);
   });
 }
 
 function localNodeStreamUrl(cameraId) {
-  return `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(cameraId)}/stream?t=${Date.now()}`;
+  return `${localNodeOrigin()}/api/cameras/${encodeURIComponent(cameraId)}/stream?t=${Date.now()}`;
 }
 
 async function fetchLocalNodeSnapshot(cameraId, { overlay = false } = {}) {
   const params = new URLSearchParams({ t: String(Date.now()) });
   if (overlay) params.set("overlay", "true");
-  const response = await fetch(
-    `${CAMPEX_NODE_LOCAL_URL}/api/cameras/${encodeURIComponent(cameraId)}/snapshot?${params}`,
+  const response = await fetchLocalNode(
+    `/api/cameras/${encodeURIComponent(cameraId)}/snapshot?${params}`,
     { cache: "no-store", headers: { Accept: "image/jpeg" } },
   );
   if (!response.ok) {
@@ -1336,7 +1336,7 @@ function canEmbedLocalNodeMedia() {
 }
 
 function localNodeLiveUrl(cameraId = "") {
-  const url = new URL(CAMPEX_NODE_LOCAL_APP_URL);
+  const url = new URL(`${localNodeOrigin()}/app`);
   if (cameraId) {
     url.searchParams.set("camera", cameraId);
   }
@@ -5658,7 +5658,7 @@ async function refreshBackendStatus() {
       statusElement.dataset.state = newState;
       statusText.textContent = backendFailureCount < 3 ? "Verificando Node local" : "Node local indisponível";
       if (backendFailureCount >= 3) {
-        notify("Node local indisponível", "Abra o CampexNode.exe e confirme que ele esta rodando em 127.0.0.1:8787.", "error", 8000);
+        notify("Node local indisponível", `Abra o CampexNode.exe e confirme que ele esta rodando em ${localNodeOrigin().replace("http://", "")}.`, "error", 8000);
       }
     }
     if (backendFailureCount >= 3) {

@@ -266,6 +266,9 @@ class UpdateService:
             str(self.updates_dir / "last_update.json"),
             "-LogPath",
             str(logs_dir / "campex-node-update.log"),
+            # The restarted Node may pick another port if this one got taken.
+            "-PortFile",
+            str(self.settings.data_dir / "campex-node.port"),
         ]
         self._set("restarting", f"Reiniciando para a versão {manifest.version}.")
         logger.info("Installing CAMPEX Node %s; the Node will restart", manifest.version)

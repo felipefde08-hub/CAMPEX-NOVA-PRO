@@ -57,6 +57,16 @@ class PairingAuthorizePayload(BaseModel):
     node_name: str | None = Field(default=None, max_length=120)
 
 
+class CloudManagedCameraError(ValueError):
+    """The camera belongs to the CAMPEX Cloud and is changed from its dashboard."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Esta câmera é gerenciada pela CAMPEX Cloud. Altere-a pelo painel da Cloud; "
+            "o Node aplica a mudança em alguns segundos."
+        )
+
+
 class LocalNodeRuntime:
     def __init__(self) -> None:
         self.lifecycle = self._build_from_persisted_connection()
@@ -114,8 +124,11 @@ class LocalNodeRuntime:
             raise ValueError("Camera name is required.")
         if not rtsp_url:
             raise ValueError("RTSP URL is required.")
+        camera_id = _camera_id(payload.id)
+        if self._is_cloud_camera(camera_id):
+            raise CloudManagedCameraError()
         camera = NodeCameraConfig(
-            id=_camera_id(payload.id),
+            id=camera_id,
             name=payload.name.strip(),
             rtsp_url=rtsp_url,
             enabled=payload.enabled,
@@ -130,6 +143,8 @@ class LocalNodeRuntime:
         current = existing.get(camera_id)
         if current is None:
             raise ValueError("Camera not found.")
+        if self._is_cloud_camera(camera_id):
+            raise CloudManagedCameraError()
         rtsp_url = (payload.rtsp_url or payload.source_uri or current.rtsp_url).strip()
         camera = NodeCameraConfig(
             id=camera_id,
@@ -143,9 +158,14 @@ class LocalNodeRuntime:
         return self._camera_response(camera)
 
     def delete_camera(self, camera_id: str) -> None:
+        if self._is_cloud_camera(camera_id):
+            raise CloudManagedCameraError()
         self.lifecycle.store.delete_local_camera(camera_id)
         cameras = [camera for camera in self.lifecycle.camera_manager.configs() if camera.id != camera_id]
         self._apply_camera_configs(cameras)
+
+    def _is_cloud_camera(self, camera_id: str) -> bool:
+        return any(camera.id == camera_id for camera in self.lifecycle.store.get_cached_cloud_cameras())
 
     def _upsert_camera_config(self, camera: NodeCameraConfig) -> None:
         cameras = {item.id: item for item in self.lifecycle.camera_manager.configs()}
@@ -310,6 +330,8 @@ class LocalNodeRuntime:
         current = cameras.get(camera_id)
         if current is None:
             raise ValueError("Camera not found.")
+        if self._is_cloud_camera(camera_id):
+            raise CloudManagedCameraError()
         updated = NodeCameraConfig(
             id=current.id,
             name=current.name,
@@ -531,7 +553,9 @@ class LocalNodeRuntime:
         camera_configs = {
             camera.id: camera for camera in lifecycle.store.get_cached_cloud_cameras()
         }
-        camera_configs.update({camera.id: camera for camera in lifecycle.store.get_local_cameras()})
+        for camera in lifecycle.store.get_local_cameras():
+            # Cameras that came from the Cloud keep the Cloud settings.
+            camera_configs.setdefault(camera.id, camera)
         cached_cameras = tuple(camera_configs.values())
         if not meta.get("cloud_url") and not lifecycle.settings.cloud_url:
             if cached_cameras:
@@ -617,7 +641,8 @@ def create_app() -> FastAPI:
     def frontend_config() -> Response:
         return Response(
             content=(
-                'window.CAMPEX_API_BASE_URL = "http://127.0.0.1:8787/api";\n'
+                # Same origin: the Node may not be on its default port.
+                'window.CAMPEX_API_BASE_URL = `${window.location.origin}/api`;\n'
                 f'window.CAMPEX_NODE_DOWNLOAD_URL = "{_node_download_url()}";\n'
             ),
             media_type="application/javascript",
@@ -751,6 +776,8 @@ def create_app() -> FastAPI:
     def start_camera_vision(camera_id: str) -> dict:
         try:
             return runtime.set_camera_vision(camera_id, True)
+        except CloudManagedCameraError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -758,6 +785,8 @@ def create_app() -> FastAPI:
     def stop_camera_vision(camera_id: str) -> dict:
         try:
             return runtime.set_camera_vision(camera_id, False)
+        except CloudManagedCameraError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -766,6 +795,8 @@ def create_app() -> FastAPI:
         try:
             runtime.set_camera_vision(camera_id, False)
             return runtime.set_camera_vision(camera_id, True)
+        except CloudManagedCameraError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -804,12 +835,17 @@ def create_app() -> FastAPI:
     def update_camera(camera_id: str, payload: LocalCameraPayload) -> dict:
         try:
             return runtime.update_camera(camera_id, payload)
+        except CloudManagedCameraError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.delete("/api/cameras/{camera_id}", status_code=204, response_class=Response, response_model=None)
     def delete_camera(camera_id: str) -> Response:
-        runtime.delete_camera(camera_id)
+        try:
+            runtime.delete_camera(camera_id)
+        except CloudManagedCameraError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return Response(status_code=204)
 
     @app.get("/api/cameras/{camera_id}/health")

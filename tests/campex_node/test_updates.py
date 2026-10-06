@@ -101,6 +101,8 @@ def test_newer_signed_release_is_installed_and_node_restarts(node):
     staging = command[command.index("-Source") + 1]
     assert (update_module.Path(staging) / "CampexNode.exe").read_bytes() == b"new exe"
     assert (node["settings"].data_dir / "updates" / "apply_update.ps1").is_file()
+    # The restarted Node reports the port it took, which may not be the current one.
+    assert command[command.index("-PortFile") + 1] == str(node["settings"].data_dir / "campex-node.port")
 
 
 def test_manifest_signed_with_another_key_is_rejected(node):

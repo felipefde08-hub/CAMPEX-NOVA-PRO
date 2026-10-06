@@ -1,7 +1,8 @@
+// On localhost js/api.js finds the CAMPEX Node itself: it is not always on 8787.
 window.CAMPEX_API_BASE_URL =
   window.CAMPEX_API_BASE_URL ||
   (["localhost", "127.0.0.1"].includes(window.location.hostname)
-    ? "http://127.0.0.1:8787/api"
+    ? ""
     : "https://campex-backend.vercel.app/api/v1");
 
 window.CAMPEX_NODE_DOWNLOAD_URL =

@@ -91,3 +91,34 @@ def test_local_node_snapshot_waits_with_jpeg_when_frame_is_missing(monkeypatch, 
     assert response.headers["content-type"].startswith("image/jpeg")
     assert response.headers["x-campex-frame"] == "waiting"
     assert response.content.startswith(b"\xff\xd8")
+
+
+def test_node_panel_does_not_override_cloud_cameras(tmp_path):
+    from types import SimpleNamespace
+
+    from campex_node.core.config import NodeCameraConfig
+    from campex_node.local_app import CloudManagedCameraError
+    from campex_node.storage.local_store import LocalStore
+
+    store = LocalStore(tmp_path / "node.sqlite3")
+    store.initialize()
+    store.set_meta(
+        "cloud_cameras_json",
+        '[{"id":"cam_cloud","name":"Doca","rtsp_url":"rtsp://10.0.0.5/stream"}]',
+    )
+    camera = NodeCameraConfig(id="cam_cloud", name="Doca", rtsp_url="rtsp://10.0.0.5/stream")
+    runtime = LocalNodeRuntime.__new__(LocalNodeRuntime)
+    runtime.lifecycle = SimpleNamespace(store=store, camera_manager=SimpleNamespace(configs=lambda: [camera]))
+
+    for change in (
+        lambda: runtime.set_camera_vision("cam_cloud", True),
+        lambda: runtime.delete_camera("cam_cloud"),
+    ):
+        try:
+            change()
+        except CloudManagedCameraError:
+            pass
+        else:
+            raise AssertionError("Cloud camera was changed from the Node panel")
+
+    assert store.get_local_cameras() == []

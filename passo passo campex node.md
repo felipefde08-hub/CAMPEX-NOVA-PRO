@@ -27,7 +27,9 @@ Conteudo principal:
 - `node.sqlite3`: banco local com pareamento, fila, cache de cameras e metadados;
 - `logs\campex-node.log`: logs persistentes rotativos;
 - `logs\campex-node-bootstrap.log`: log de inicializacao do executavel;
-- `node_id`: identidade local quando aplicavel.
+- `node_id`: identidade local quando aplicavel;
+- `campex-node.lock`: trava que impede dois Nodes ao mesmo tempo nesta pasta (abrir o executavel de novo so abre o painel do Node que ja esta rodando);
+- `campex-node.port`: porta do painel local. E 8787, ou a proxima livre (ate 8806) quando outro programa ocupa a 8787; o painel da Cloud encontra o Node nessa faixa sozinho.
 
 Tokens, senhas e dados de pareamento nao ficam embutidos no executavel.
 
