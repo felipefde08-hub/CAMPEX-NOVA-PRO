@@ -94,7 +94,7 @@ import { currentRoute, routes } from "./state.js";
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
 const CAMPEX_NODE_DOWNLOAD_URL =
   window.CAMPEX_NODE_DOWNLOAD_URL ||
-  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/download/campex-node-local-v1/CampexNode-0.3.2-windows.zip";
+  "https://github.com/felipefde08-hub/CAMPEX-NOVA-PRO/releases/latest/download/CampexNode-windows.zip";
 
 const statusElement = document.querySelector("#backend-status");
 const statusText = statusElement.querySelector(".status-text");
