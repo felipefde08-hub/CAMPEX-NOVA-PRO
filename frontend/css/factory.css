@@ -1,0 +1,337 @@
+/* Fábrica: factory monitoring served by the CAMPEX Node. */
+
+.factory-toolbar {
+  flex-wrap: wrap;
+  align-items: end;
+}
+
+.factory-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-right: auto;
+}
+
+.factory-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.factory-tabs button[aria-selected="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+.factory-tabs svg {
+  width: 16px;
+  height: 16px;
+}
+
+#factory-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.factory-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  padding: 12px 14px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.factory-notice svg {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--color-accent);
+}
+
+.factory-hint {
+  margin: 0;
+  color: var(--color-subtle);
+  font-size: 12px;
+}
+
+.factory-change {
+  display: inline;
+  margin-left: 4px;
+  color: var(--color-critical);
+}
+
+.factory-change[data-better="true"] {
+  color: var(--color-online);
+}
+
+.factory-live {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 10px;
+}
+
+.factory-live-item {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  padding: 12px;
+}
+
+.factory-live-item small {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.factory-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.factory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.factory-table th,
+.factory-table td {
+  border-bottom: 1px solid var(--color-border-soft);
+  padding: 10px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.factory-table th {
+  background: var(--color-panel-soft);
+  color: var(--color-muted);
+  font-weight: 600;
+}
+
+.factory-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.factory-table td small {
+  display: block;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.factory-table .severity-badge {
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.factory-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.factory-inline input {
+  width: 4.5rem;
+}
+
+.factory-bars {
+  display: flex;
+  align-items: end;
+  gap: 4px;
+  height: 160px;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  padding: 12px 12px 4px;
+}
+
+.factory-bar {
+  display: grid;
+  flex: 1 0 22px;
+  grid-template-rows: 1fr auto;
+  height: 100%;
+}
+
+.factory-bar span {
+  align-self: end;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  background: var(--color-accent);
+}
+
+.factory-bar small {
+  color: var(--color-subtle);
+  font-size: 10px;
+  text-align: center;
+}
+
+.factory-occupancy {
+  grid-template-columns: minmax(0, 1fr) 8rem;
+}
+
+.factory-occupancy small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.factory-ratio {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(229, 174, 72, 0.35);
+}
+
+.factory-ratio span {
+  display: block;
+  height: 100%;
+  background: var(--color-online);
+}
+
+.factory-page .link-button {
+  min-height: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--color-accent);
+  font-size: 12px;
+}
+
+.factory-page [data-video] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.factory-page [data-video] svg {
+  width: 14px;
+  height: 14px;
+}
+
+.factory-shift-form {
+  margin-top: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  padding: 16px;
+}
+
+.factory-shift-form h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.factory-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 10px;
+}
+
+.factory-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.factory-days legend {
+  margin-bottom: 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.factory-video-window {
+  width: min(1100px, 100%);
+}
+
+.factory-video-window video {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
+}
+
+.zone-settings {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 12px;
+}
+
+.zone-settings legend {
+  padding: 0 4px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.zone-settings[hidden] {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .factory-tabs span {
+    display: none;
+  }
+
+  .factory-occupancy {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The tabs sit inside .ops-toolbar, whose last button is the primary one. */
+.factory-page .factory-tabs button:last-child {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--color-text);
+}
+
+.factory-page .factory-tabs button[aria-selected="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+/* Cards with a label, a big number and a detail line, stacked. */
+.factory-page .settings-grid {
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+}
+
+.factory-page .metric-item {
+  grid-template-columns: 1fr;
+  gap: 6px;
+  align-items: start;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  padding: 14px 16px;
+}
+
+.factory-page .metric-item:last-child {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.factory-page .metric-item strong {
+  font-size: 24px;
+}
+
+.factory-page .ops-grid > div {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}

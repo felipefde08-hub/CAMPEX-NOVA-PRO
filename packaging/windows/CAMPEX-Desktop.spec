@@ -21,6 +21,8 @@ def safe_collect_all(package: str):
 torch_datas, torch_binaries, torch_hiddenimports = safe_collect_all("torch")
 torchvision_datas, torchvision_binaries, torchvision_hiddenimports = safe_collect_all("torchvision")
 ultralytics_datas, ultralytics_binaries, ultralytics_hiddenimports = safe_collect_all("ultralytics")
+av_datas, av_binaries, av_hiddenimports = safe_collect_all("av")
+tzdata_datas, tzdata_binaries, tzdata_hiddenimports = safe_collect_all("tzdata")
 
 # Automatic updates: the swap script and the release public key travel with
 # the Node. Without the key the packaged Node keeps updates disabled.
@@ -37,6 +39,7 @@ a = Analysis(
         *torch_binaries,
         *torchvision_binaries,
         *ultralytics_binaries,
+        *av_binaries,
     ],
     datas=[
         (str(ROOT / "frontend"), "frontend"),
@@ -45,6 +48,8 @@ a = Analysis(
         *torch_datas,
         *torchvision_datas,
         *ultralytics_datas,
+        *av_datas,
+        *tzdata_datas,
     ],
     hiddenimports=[
         "campex_node.local_app",
@@ -78,7 +83,9 @@ a = Analysis(
     + collect_submodules("cv2")
     + torch_hiddenimports
     + torchvision_hiddenimports
-    + ultralytics_hiddenimports,
+    + ultralytics_hiddenimports
+    + av_hiddenimports
+    + tzdata_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

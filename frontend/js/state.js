@@ -3,6 +3,10 @@ export const routes = {
     title: "Painel",
     message: "Resumo operacional de câmeras, eventos, zonas e investigações.",
   },
+  factory: {
+    title: "Fábrica",
+    message: "Máquinas, paradas, turnos, ocupação, expedição e gravações do CAMPEX Node.",
+  },
   wall: {
     title: "Mural",
     message: "Monitoramento operacional de múltiplas câmeras.",

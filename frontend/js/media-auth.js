@@ -20,7 +20,7 @@ export async function createMediaUrl(apiBaseUrl, getCredentials) {
         const target = new URL(event.data.url);
         const base = new URL(`${apiBaseUrl}/`);
         const path = target.pathname.slice(base.pathname.length);
-        const permitted = /^(cameras\/[^/]+\/(stream|video|snapshot)|videos\/[^/]+\/(video|debug-video)|events\/[^/]+\/evidence|operations\/stream)$/.test(path);
+        const permitted = /^(cameras\/[^/]+\/(stream|video|snapshot)|videos\/[^/]+\/(video|debug-video)|events\/[^/]+\/evidence|recordings\/[^/]+\/file|operations\/stream)$/.test(path);
         if (target.origin !== base.origin || !target.pathname.startsWith(base.pathname) || !permitted) {
           throw new Error('Invalid media destination');
         }

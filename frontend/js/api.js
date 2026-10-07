@@ -959,3 +959,74 @@ export async function connectBackend(mode, token) {
   localStorage.setItem("campex.backend_url", base);
   return base;
 }
+
+// Factory monitoring lives on the CAMPEX Node: the panel served by the Node
+// calls it directly; the Cloud dashboard reaches the Node on this computer.
+function nodeJson(path, options = {}) {
+  return isLocalNodeApi ? requestJson(path, options) : requestLocalNodeJson(path, options);
+}
+
+function queryString(params = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (Array.isArray(value)) value.forEach((item) => query.append(key, item));
+    else if (value !== undefined && value !== null && value !== "") query.set(key, value);
+  });
+  return query.toString() ? `?${query}` : "";
+}
+
+export function getFactorySettings() {
+  return nodeJson("/factory/settings");
+}
+
+export function updateFactorySettings(payload) {
+  return nodeJson("/factory/settings", { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export function listShifts() {
+  return nodeJson("/factory/shifts");
+}
+
+export function createShift(payload) {
+  return nodeJson("/factory/shifts", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateShift(shiftId, payload) {
+  return nodeJson(`/factory/shifts/${encodeURIComponent(shiftId)}`, { method: "PATCH", body: JSON.stringify(payload) });
+}
+
+export function deleteShift(shiftId) {
+  return nodeJson(`/factory/shifts/${encodeURIComponent(shiftId)}`, { method: "DELETE" });
+}
+
+export function getFactoryLive(cameraId = "") {
+  return nodeJson(`/factory/live${queryString({ camera_id: cameraId })}`);
+}
+
+// kind: machines | stops | hourly | shifts | occupancy | first-arrival | breaks
+//       | after-hours | docks | lines | summary
+export function getFactoryAnalytics(kind, params = {}) {
+  return nodeJson(`/analytics/${kind}${queryString(params)}`);
+}
+
+export function getMachineSpeed(zoneId, params = {}) {
+  return nodeJson(`/analytics/machines/${encodeURIComponent(zoneId)}/speed${queryString(params)}`);
+}
+
+export function addProductionCount(payload) {
+  return nodeJson("/production/counts", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function getRecordingStatus() {
+  return nodeJson("/recordings/status");
+}
+
+export function findRecording(cameraId, at) {
+  return nodeJson(`/cameras/${encodeURIComponent(cameraId)}/recording${queryString({ at })}`);
+}
+
+export function recordingFileUrl(segmentId, offsetSeconds = 0) {
+  const fragment = offsetSeconds ? `#t=${Number(offsetSeconds).toFixed(1)}` : "";
+  if (isLocalNodeApi) return `${mediaUrl(`${API_BASE_URL}/recordings/${encodeURIComponent(segmentId)}/file`)}${fragment}`;
+  return `${localNodeOrigin()}/api/recordings/${encodeURIComponent(segmentId)}/file${fragment}`;
+}
