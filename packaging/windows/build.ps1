@@ -108,8 +108,24 @@ Como usar:
 1. Extraia este .zip em uma pasta local.
 2. Abra CampexNode.exe. Mantenha CampexNode.exe e a pasta _internal juntos e
    do mesmo pacote; nao copie arquivos de versoes diferentes por cima.
-3. O painel local abrira em http://127.0.0.1:8787.
-4. Configure/conecte o Node e cadastre as cameras.
+3. O painel abre em http://127.0.0.1:8787/app neste computador.
+4. No primeiro acesso, crie a conta de administrador (so neste computador).
+   Depois, cadastre a equipe em Configuracoes > Usuarios.
+5. Cadastre as cameras, desenhe as zonas e os turnos em Fabrica > Configuracao.
+
+Acesso pela rede da fabrica:
+- Outros computadores abrem http://IP-DESTE-COMPUTADOR:8787/app e entram com
+  login. Na primeira execucao o Windows pergunta se permite o acesso pela
+  rede: aceite para liberar.
+- Para deixar o painel so neste computador, defina a variavel de ambiente
+  CAMPEX_NODE_HOST=127.0.0.1.
+
+Gravacao continua e backups:
+- O Node grava as cameras em %LOCALAPPDATA%\CAMPEX\node\recordings e para de
+  gravar quando o disco fica com menos de 10 GB livres. Para gravar em outro
+  disco, defina CAMPEX_NODE_RECORDING_DIR (ex.: D:\CampexGravacoes).
+- Uma copia do banco e feita todo dia em %LOCALAPPDATA%\CAMPEX\node\backups.
+  Para guardar em outro disco, defina CAMPEX_NODE_BACKUP_DIR.
 
 Se aparecer "O Windows nao pode acessar o dispositivo, caminho ou arquivo
 especificado", o antivirus ou o bloqueio de arquivos baixados impediu a
@@ -119,10 +135,7 @@ Se o Defender removeu o arquivo, restaure em Seguranca do Windows > Protecao
 contra virus e ameacas > Historico de protecao, adicione a pasta em Exclusoes
 e extraia o .zip novamente.
 
-Esta versao inclui Edge Vision offline inicial com OpenCV HOG para deteccao
-local de pessoas nas cameras com Vision ativada.
-
-Dados, logs e credenciais locais ficam em:
+Dados, logs, contas e configuracoes ficam em:
 %LOCALAPPDATA%\CAMPEX\node
 
 Para rodar em segundo plano ao entrar no Windows, use o instalador de tarefa

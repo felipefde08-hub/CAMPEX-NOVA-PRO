@@ -105,3 +105,19 @@ def test_retention_frees_space_when_the_disk_is_low(tmp_path):
     )
     assert service.enforce_retention() == 3
     assert store.total_bytes() == 0
+
+
+def test_recorder_does_not_write_when_the_disk_is_low(tmp_path, monkeypatch):
+    settings = _settings(tmp_path, recording_min_free_gb=1_000_000.0, camera_reconnect_seconds=0.0)
+    store = _store(settings)
+    camera = NodeCameraConfig(id="cam-1", name="Prensa", rtsp_url=str(tmp_path / "missing.mp4"))
+    recorder = CameraRecorder(camera, settings, store)
+    sessions = []
+    monkeypatch.setattr(recorder, "record_session", lambda: sessions.append(1))
+    recorder.start()
+    import time
+
+    time.sleep(0.3)
+    recorder.stop()
+    assert recorder.status == "DISK_FULL"
+    assert sessions == []

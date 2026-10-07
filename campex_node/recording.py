@@ -28,6 +28,7 @@ MP4_OPTIONS = {"movflags": "frag_keyframe+empty_moov+default_base_moof"}
 PROGRESS_SECONDS = 15.0
 SYNC_SECONDS = 5.0
 RETENTION_SECONDS = 60.0
+DISK_RETRY_SECONDS = 60.0
 GB = 1024**3
 
 SCHEMA = (
@@ -235,6 +236,12 @@ class CameraRecorder:
 
     def _run(self) -> None:
         while not self._stop.is_set():
+            if self._disk_full():
+                # Retention frees space from old segments; until then nothing
+                # is written, so a full disk never stops the computer.
+                self.status, self.error = "DISK_FULL", "Pouco espaço livre no disco da gravação."
+                self._stop.wait(DISK_RETRY_SECONDS)
+                continue
             try:
                 self.record_session()
             except Exception as exc:
@@ -270,6 +277,9 @@ class CameraRecorder:
                 elif packet.is_keyframe and writer.elapsed(packet) >= self.settings.recording_segment_seconds:
                     anchor = writer.started_at + timedelta(seconds=writer.duration)
                     self._close_segment(writer)
+                    writer = None
+                    if self._disk_full():
+                        break
                     writer = self._open_segment(stream, codec, anchor)
                 writer.write(packet)
                 if writer.should_report():
@@ -280,6 +290,10 @@ class CameraRecorder:
             source.close()
             if self.status == "RECORDING":
                 self.status = "STOPPED"
+
+    def _disk_full(self) -> bool:
+        free = _free_bytes(self.settings.recordings_path)
+        return free is not None and free < self.settings.recording_min_free_gb * GB
 
     def _open_segment(self, stream, codec: str, started_at: datetime) -> "_SegmentWriter":
         extension = ".mp4" if codec in MP4_CODECS else ".mkv"
@@ -472,6 +486,9 @@ class RecordingService:
 
 
 def _free_bytes(path: Path) -> int | None:
+    # The folder may not exist yet: measure the disk it will be created on.
+    while not path.exists() and path.parent != path:
+        path = path.parent
     try:
         return shutil.disk_usage(path).free
     except OSError:
