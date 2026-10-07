@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 
 from campex_node.activity import ActivityStore
 from campex_node.analytics import FactoryAnalytics
+from campex_node.auth import NodeAuthStore
+from campex_node.backup import BackupService
 from campex_node.cameras.manager import CameraManager
 from campex_node.cloud.client import CloudClient
 from campex_node.cloud.config_sync import ConfigSyncService
@@ -50,6 +52,8 @@ class NodeLifecycle:
         self.factory_store = FactoryStore(settings.database_path)
         self.activity_store = ActivityStore(settings.database_path)
         self.recording_store = RecordingStore(settings.database_path)
+        self.auth_store = NodeAuthStore(settings.database_path)
+        self.backups = BackupService(settings.database_path, settings.backups_path, settings.backup_keep)
         self.analytics = FactoryAnalytics(
             self.events_store, self.activity_store, self.factory_store, self.recording_store
         )
@@ -69,6 +73,7 @@ class NodeLifecycle:
         self.factory_store.initialize()
         self.activity_store.initialize()
         self.recording_store.initialize()
+        self.auth_store.initialize()
         self.node_id = self._get_or_create_node_id()
         cloud_status = self.cloud_client.check_connection()
         if cloud_status.ok:
@@ -119,6 +124,7 @@ class NodeLifecycle:
         self.machines.start()
         self.recording = RecordingService(self.settings, self.camera_manager, self.recording_store)
         self.recording.start()
+        self.backups.start()
         if self.cloud_client.is_configured():
             self.config_sync.start()
         self.telemetry = TelemetryCollector(
@@ -190,6 +196,7 @@ class NodeLifecycle:
             self.telemetry.stop()
         if self.heartbeat is not None:
             self.heartbeat.stop()
+        self.backups.stop()
         if self.recording is not None:
             self.recording.stop()
         if self.machines is not None:

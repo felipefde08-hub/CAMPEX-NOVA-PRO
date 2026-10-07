@@ -30,12 +30,19 @@ const API_BASE_URL =
     (!isLocalFrontend ? usableStoredApiBaseUrl : "") ||
     (isLocalFrontend ? localApiBaseUrl : "")
   );
-const isLocalNodeApi = isLocalNodeApiBase(API_BASE_URL);
+// The Node sets this in /config.js: the panel is served by the Node itself,
+// opened on its computer or from another one on the factory network.
+const servedByNode = Boolean(window.CAMPEX_NODE_PANEL);
+const isLocalNodeApi = servedByNode || isLocalNodeApiBase(API_BASE_URL);
 
-const mediaUrl = await createMediaUrl(API_BASE_URL, () => ({
-  token: getApiToken(),
-  session: getSessionToken(),
-}));
+// Media from the Node authenticates with its session cookie (same origin; the
+// network address is plain HTTP, where service workers are not available).
+const mediaUrl = servedByNode
+  ? (url) => url
+  : await createMediaUrl(API_BASE_URL, () => ({
+    token: getApiToken(),
+    session: getSessionToken(),
+  }));
 
 function normalizeApiBaseUrl(value) {
   const trimmed = String(value || "").trim().replace(/\/$/, "");
@@ -69,6 +76,7 @@ function initialLocalNodePort() {
 }
 
 export function localNodeOrigin() {
+  if (window.CAMPEX_NODE_PANEL) return window.location.origin;
   return `${LOCAL_NODE_HOST}:${localNodePort}`;
 }
 
@@ -372,6 +380,57 @@ export function authLogout() {
 
 export function authListUsers() {
   return requestJson("/auth/users");
+}
+
+// Node accounts: the first one is the administrator, who then creates the rest.
+export function authSetup() {
+  return requestJson("/auth/setup");
+}
+
+export function authCreateUser({ name, email, password, role }) {
+  return requestJson("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name, email, password, role }),
+  });
+}
+
+export function authUpdateUser(userId, payload) {
+  return requestJson(`/auth/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function authDeleteUser(userId) {
+  return requestJson(`/auth/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+}
+
+export function authChangePassword(currentPassword, newPassword) {
+  return requestJson("/auth/password", {
+    method: "POST",
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+export function getBackupStatus() {
+  return requestJson("/backup/status");
+}
+
+export function backupDownloadUrl() {
+  assertApiBaseUrl();
+  return `${API_BASE_URL}/backup`;
+}
+
+export async function restoreBackup(file) {
+  assertApiBaseUrl();
+  const response = await fetch(`${API_BASE_URL}/backup/restore`, {
+    method: "POST",
+    headers: { ...credentialHeaders(), "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+  return body;
 }
 
 export function getRuntimeSettings() {

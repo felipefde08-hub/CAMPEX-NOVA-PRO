@@ -149,6 +149,9 @@ class NodeSettings:
     recording_min_free_gb: float = 10.0
     recording_max_gb: float = 0.0  # 0 = limited only by free space and age
     machine_monitor_interval_seconds: float = 0.2
+    # Daily copies of the Node database; default: <data_dir>/backups.
+    backup_dir: Path | None = None
+    backup_keep: int = 14
     live_frame_max_width: int = 960
     live_frame_jpeg_quality: int = 70
     outbound_max_pending: int = 5000
@@ -160,6 +163,10 @@ class NodeSettings:
     @property
     def recordings_path(self) -> Path:
         return self.recording_dir or self.data_dir / "recordings"
+
+    @property
+    def backups_path(self) -> Path:
+        return self.backup_dir or self.data_dir / "backups"
 
     @classmethod
     def from_env(cls) -> "NodeSettings":
@@ -213,6 +220,12 @@ class NodeSettings:
             recording_min_free_gb=_env_float("CAMPEX_NODE_RECORDING_MIN_FREE_GB", 10.0),
             recording_max_gb=_env_float("CAMPEX_NODE_RECORDING_MAX_GB", 0.0),
             machine_monitor_interval_seconds=_env_float("CAMPEX_NODE_MACHINE_MONITOR_SECONDS", 0.2),
+            backup_dir=(
+                Path(os.environ["CAMPEX_NODE_BACKUP_DIR"]).expanduser().resolve()
+                if os.getenv("CAMPEX_NODE_BACKUP_DIR")
+                else None
+            ),
+            backup_keep=_env_int("CAMPEX_NODE_BACKUP_KEEP", 14),
             live_frame_max_width=_env_int("CAMPEX_NODE_LIVE_FRAME_MAX_WIDTH", 960),
             live_frame_jpeg_quality=_env_int("CAMPEX_NODE_LIVE_FRAME_JPEG_QUALITY", 70),
             outbound_max_pending=_env_int("CAMPEX_NODE_QUEUE_MAX_ITEMS", 5000),

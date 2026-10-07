@@ -11,8 +11,8 @@ from typing import Any
 
 import time
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,10 @@ from backend.cameras.security import sanitize_error_message
 from backend.config import ROOT_DIR as BACKEND_ROOT_DIR
 from backend.middleware.cors import LocalNetworkCORSMiddleware
 
+from backend.auth.service import AuthError
 from campex_node.analytics import resolve_period
+from campex_node.auth import SESSION_TTL, NodeUser
+from campex_node.backup import backup_database, backup_filename, restore_database, validate_backup
 from campex_node.core.config import NodeCameraConfig, NodeSettings
 from campex_node.node_ui import NODE_HTML
 
@@ -82,6 +85,28 @@ class ZoneUpdatePayload(BaseModel):
     settings: dict[str, Any] | None = None
 
 
+class RegisterPayload(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str | None = None
+
+
+class LoginPayload(BaseModel):
+    email: str
+    password: str
+
+
+class UserUpdatePayload(BaseModel):
+    role: str | None = Field(default=None, pattern="^(admin|operator)$")
+    password: str | None = None
+
+
+class PasswordChangePayload(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class FactorySettingsPayload(BaseModel):
     timezone: str | None = Field(default=None, max_length=64)
     currency: str | None = Field(default=None, max_length=3)
@@ -137,6 +162,27 @@ class LocalNodeRuntime:
         self.lifecycle = self._build_from_persisted_connection()
         self.lifecycle.initialize()
         self.lifecycle.start()
+
+    def restore_database(self, backup: Path) -> Path:
+        """Replaces the database with a validated backup and restarts the Node.
+
+        The current database is kept next to the backups first, so a wrong
+        restore can be undone.
+        """
+        validate_backup(backup)
+        settings = self.lifecycle.settings
+        safety = backup_database(
+            settings.database_path, settings.backups_path / f"antes-da-restauracao-{backup_filename()}"
+        )
+        self.lifecycle.stop()
+        try:
+            restore_database(backup, settings.database_path)
+        finally:
+            backup.unlink(missing_ok=True)
+            self.lifecycle = self._build_from_persisted_connection()
+            self.lifecycle.initialize()
+            self.lifecycle.start()
+        return safety
 
     def reconfigure(self, payload: CloudConnectionPayload) -> dict | None:
         from campex_node.main import build_lifecycle
@@ -674,6 +720,22 @@ def create_app() -> FastAPI:
                 response.headers["Access-Control-Allow-Private-Network"] = "true"
         return response
 
+    @app.middleware("http")
+    async def require_login(request: Request, call_next):
+        # The panel is reachable from the factory network: every API call
+        # needs a signed-in user, except from this computer itself (the Node
+        # window and local tools) and the few calls that come before login.
+        path = request.url.path
+        if (
+            path.startswith("/api/")
+            and request.method != "OPTIONS"
+            and path not in PUBLIC_API_PATHS
+            and not _is_local_request(request)
+            and _session_user(runtime, request) is None
+        ):
+            return JSONResponse({"detail": "Faça login para continuar."}, status_code=401)
+        return await call_next(request)
+
     app.state.runtime = runtime
     frontend_dir = Path(__file__).resolve().parents[1] / "frontend"
     assets_dir = frontend_dir / "assets"
@@ -708,6 +770,8 @@ def create_app() -> FastAPI:
             content=(
                 # Same origin: the Node may not be on its default port.
                 'window.CAMPEX_API_BASE_URL = `${window.location.origin}/api`;\n'
+                # Served by the Node: sign in against it, also from the network.
+                "window.CAMPEX_NODE_PANEL = true;\n"
                 f'window.CAMPEX_NODE_DOWNLOAD_URL = "{_node_download_url()}";\n'
             ),
             media_type="application/javascript",
@@ -726,8 +790,136 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/status")
-    def status() -> dict:
-        return runtime.status()
+    def status(request: Request) -> dict:
+        return {**runtime.status(), "panel_urls": _panel_urls(request)}
+
+    # Accounts: the same contract as the CAMPEX Cloud /auth API.
+
+    @app.get("/api/auth/setup")
+    def auth_setup(request: Request) -> dict:
+        return {
+            "needs_setup": runtime.lifecycle.auth_store.needs_setup(),
+            "local": _is_local_request(request),
+        }
+
+    @app.post("/api/auth/register", status_code=201)
+    def auth_register(payload: RegisterPayload, request: Request, response: Response) -> dict:
+        store = runtime.lifecycle.auth_store
+        try:
+            if store.needs_setup():
+                # The first account is the administrator, created at the Node's
+                # own computer so nobody on the network can claim it.
+                if not _is_local_request(request):
+                    raise AuthError("Crie a primeira conta no computador onde o CAMPEX Node está instalado.", 403)
+                user = store.create_user(name=payload.name, email=payload.email, password=payload.password, role="admin")
+                session = store.create_session(user, request.headers.get("user-agent"))
+                _set_session_cookie(request, response, session.token)
+                return session.as_dict()
+            _require_admin(runtime, request)
+            user = store.create_user(
+                name=payload.name, email=payload.email, password=payload.password, role=payload.role or "operator"
+            )
+        except AuthError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.message) from error
+        return {"user": user.as_dict()}
+
+    @app.post("/api/auth/login")
+    def auth_login(payload: LoginPayload, request: Request, response: Response) -> dict:
+        try:
+            session = runtime.lifecycle.auth_store.login(
+                email=payload.email, password=payload.password, user_agent=request.headers.get("user-agent")
+            )
+        except AuthError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.message) from error
+        _set_session_cookie(request, response, session.token)
+        return session.as_dict()
+
+    @app.get("/api/auth/me")
+    def auth_me(request: Request) -> dict:
+        user = _session_user(runtime, request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Sessão expirada. Entre novamente.")
+        return {"user": user.as_dict()}
+
+    @app.post("/api/auth/logout", status_code=204, response_class=Response, response_model=None)
+    def auth_logout(request: Request) -> Response:
+        runtime.lifecycle.auth_store.logout(_session_token(request))
+        response = Response(status_code=204)
+        response.delete_cookie(_cookie_name(request), path="/")
+        return response
+
+    @app.get("/api/auth/users")
+    def auth_users() -> list[dict]:
+        return [user.as_dict() for user in runtime.lifecycle.auth_store.list_users()]
+
+    @app.patch("/api/auth/users/{user_id}")
+    def auth_update_user(user_id: str, payload: UserUpdatePayload, request: Request) -> dict:
+        _require_admin(runtime, request)
+        try:
+            user = runtime.lifecycle.auth_store.update_user(user_id, role=payload.role, password=payload.password)
+        except AuthError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.message) from error
+        return {"user": user.as_dict()}
+
+    @app.delete("/api/auth/users/{user_id}", status_code=204, response_class=Response, response_model=None)
+    def auth_delete_user(user_id: str, request: Request) -> Response:
+        admin = _require_admin(runtime, request)
+        if admin is not None and admin.id == user_id:
+            raise HTTPException(status_code=400, detail="Você não pode excluir a própria conta.")
+        try:
+            runtime.lifecycle.auth_store.delete_user(user_id)
+        except AuthError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.message) from error
+        return Response(status_code=204)
+
+    @app.post("/api/auth/password", status_code=204, response_class=Response, response_model=None)
+    def auth_change_password(payload: PasswordChangePayload, request: Request) -> Response:
+        user = _session_user(runtime, request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Sessão expirada. Entre novamente.")
+        try:
+            runtime.lifecycle.auth_store.change_password(user, payload.current_password, payload.new_password)
+        except AuthError as error:
+            raise HTTPException(status_code=error.status_code, detail=error.message) from error
+        response = Response(status_code=204)
+        response.delete_cookie(_cookie_name(request), path="/")
+        return response
+
+    # Backups of the Node database (zones, shifts, events, history, users).
+
+    @app.get("/api/backup/status")
+    def backup_status() -> dict:
+        return runtime.lifecycle.backups.status()
+
+    @app.get("/api/backup")
+    def download_backup(request: Request):
+        _require_admin(runtime, request)
+        settings = runtime.lifecycle.settings
+        name = backup_filename()
+        path = backup_database(settings.database_path, settings.backups_path / "downloads" / name)
+        return FileResponse(path, media_type="application/vnd.sqlite3", filename=name)
+
+    @app.post("/api/backup/restore")
+    async def restore_backup(request: Request) -> dict:
+        _require_admin(runtime, request)
+        settings = runtime.lifecycle.settings
+        upload = settings.backups_path / "uploads" / f"restore-{uuid.uuid4().hex}.sqlite3"
+        upload.parent.mkdir(parents=True, exist_ok=True)
+        size = 0
+        with upload.open("wb") as handle:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_BACKUP_BYTES:
+                    handle.close()
+                    upload.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="Arquivo de backup grande demais.")
+                handle.write(chunk)
+        try:
+            safety = runtime.restore_database(upload)
+        except ValueError as exc:
+            upload.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "previous_database": safety.name}
 
     @app.get("/api/health")
     def health() -> dict:
@@ -1211,6 +1403,83 @@ def create_app() -> FastAPI:
         }
 
     return app
+
+
+# Cookies are shared by every port of a host: the port in the name keeps two
+# Nodes (or a Node and a dev server) on one computer from mixing sessions.
+SESSION_COOKIE_PREFIX = "campex_session_"
+SESSION_HEADER = "x-campex-session"
+PUBLIC_API_PATHS = frozenset(
+    {"/api/health", "/api/status", "/api/auth/setup", "/api/auth/login", "/api/auth/register", "/api/auth/logout"}
+)
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+MAX_BACKUP_BYTES = 4 * 1024**3
+
+
+def _is_local_request(request: Request) -> bool:
+    """A request from the Node's own computer, addressed to it by a loopback name.
+
+    Checking the Host header too keeps a web page that rebinds its domain to
+    127.0.0.1 from passing as local.
+    """
+    client = request.client.host if request.client else ""
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0].strip("[]").lower()
+    return client in LOOPBACK_HOSTS and host in LOOPBACK_HOSTS
+
+
+def _session_token(request: Request) -> str | None:
+    # The panel sends the header; images and videos carry the cookie.
+    return request.headers.get(SESSION_HEADER) or request.cookies.get(_cookie_name(request)) or None
+
+
+def _session_user(runtime: "LocalNodeRuntime", request: Request) -> NodeUser | None:
+    return runtime.lifecycle.auth_store.authenticate(_session_token(request))
+
+
+def _require_admin(runtime: "LocalNodeRuntime", request: Request) -> NodeUser | None:
+    """The signed-in administrator; None when the call comes from the Node's computer."""
+    user = _session_user(runtime, request)
+    if user is not None and user.is_admin:
+        return user
+    if user is None and _is_local_request(request):
+        return None
+    raise HTTPException(status_code=403, detail="Apenas administradores podem fazer isso.")
+
+
+def _cookie_name(request: Request) -> str:
+    return f"{SESSION_COOKIE_PREFIX}{request.url.port or 80}"
+
+
+def _set_session_cookie(request: Request, response: Response, token: str) -> None:
+    response.set_cookie(
+        _cookie_name(request),
+        token,
+        max_age=int(SESSION_TTL.total_seconds()),
+        httponly=True,
+        samesite="strict",
+        path="/",
+    )
+
+
+def _panel_urls(request: Request) -> list[str]:
+    """Addresses where other computers on the network open this panel."""
+    import socket
+
+    port = request.url.port or 80
+    addresses: set[str] = set()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            # No packet is sent: this only asks which interface routes outwards.
+            probe.connect(("10.255.255.255", 1))
+            addresses.add(probe.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addresses.add(info[4][0])
+    except OSError:
+        pass
+    return [f"http://{address}:{port}/app" for address in sorted(addresses) if not address.startswith("127.")]
 
 
 def _evidence_file(data_dir: Path, stored: str) -> Path | None:

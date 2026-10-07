@@ -18,6 +18,8 @@ LOCK_FILE_NAME = "campex-node.lock"
 PORT_FILE_NAME = "campex-node.port"
 # The dashboard looks for the Node on the same range.
 PORT_RANGE_SIZE = 20
+# This computer opens its own panel through the loopback address.
+LOCAL_HOST = "127.0.0.1"
 # A lock that could not be created must not stop the Node from starting.
 _NO_LOCK = object()
 
@@ -26,7 +28,9 @@ def main(argv: list[str] | None = None) -> int:
     multiprocessing.freeze_support()
     _bootstrap_log("launcher starting")
     parser = argparse.ArgumentParser(description="Run CAMPEX Node desktop launcher.")
-    parser.add_argument("--host", default="127.0.0.1")
+    # Listens on the factory network so other computers open the panel (they
+    # sign in; see local_app). CAMPEX_NODE_HOST=127.0.0.1 keeps it on this PC.
+    parser.add_argument("--host", default=os.getenv("CAMPEX_NODE_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args(argv)
@@ -42,20 +46,20 @@ def main(argv: list[str] | None = None) -> int:
     instance_lock = _acquire_instance_lock(data_dir / LOCK_FILE_NAME)
     if instance_lock is None:
         running_port = _read_port(port_file) or args.port
-        url = f"http://{args.host}:{running_port}"
+        url = f"http://{LOCAL_HOST}:{running_port}"
         _bootstrap_log(f"another CAMPEX Node is running at {url}")
         if not args.no_browser:
             webbrowser.open(url)
         return 0
 
-    port = _select_port(args.host, args.port)
+    port = _select_port(LOCAL_HOST, args.port)
     if port != args.port:
         _bootstrap_log(f"port {args.port} is used by another program; using {port}")
     # The updater checks the restarted Node on this port.
     os.environ["CAMPEX_NODE_PORT"] = str(port)
     _write_port(port_file, port)
-    url = f"http://{args.host}:{port}"
-    _bootstrap_log(f"selected url {url}")
+    url = f"http://{LOCAL_HOST}:{port}"
+    _bootstrap_log(f"selected url {url} (listening on {args.host})")
 
     try:
         _bootstrap_log("importing uvicorn")

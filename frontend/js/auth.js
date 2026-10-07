@@ -5,30 +5,25 @@ import {
   authLogout,
   authMe,
   authRegister,
+  authSetup,
   usesLocalNodeApi,
 } from "./api.js";
 
-// Accounts live in the CAMPEX Cloud database. Only the panel served by the
-// local CAMPEX Node (no database, single machine) keeps accounts in this
-// browser's localStorage.
-const LOCAL_USERS_KEY = "campex.auth.users";
-const LOCAL_SESSION_KEY = "campex.auth.session";
+// Accounts live on the server the panel talks to: the CAMPEX Node's own
+// database, or the CAMPEX Cloud. The browser keeps only the session token.
+const LEGACY_LOCAL_KEYS = ["campex.auth.users", "campex.auth.session"];
 const MIN_PASSWORD_LENGTH = 8;
 
-let cloudUsers = null;
+let serverUsers = null;
 
-function readJson(key, fallback) {
+// Older Node panels kept accounts in this browser; they are no longer used.
+LEGACY_LOCAL_KEYS.forEach((key) => {
   try {
-    const parsed = JSON.parse(localStorage.getItem(key) || "");
-    return parsed ?? fallback;
+    localStorage.removeItem(key);
   } catch {
-    return fallback;
+    // Storage blocked: nothing to clean up.
   }
-}
-
-function writeJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-}
+});
 
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
@@ -49,145 +44,93 @@ function validateAccount({ name, email, password }) {
 function friendlyError(error) {
   if (error instanceof TypeError) {
     // fetch() rejects with TypeError when the server cannot be reached.
-    return new Error("Não foi possível conectar ao servidor CAMPEX. Verifique sua internet e tente novamente.");
+    return new Error(
+      usesLocalNodeApi()
+        ? "Não foi possível conectar ao CAMPEX Node. Verifique se ele está aberto e se este computador está na rede da fábrica."
+        : "Não foi possível conectar ao servidor CAMPEX. Verifique sua internet e tente novamente.",
+    );
   }
   return error;
 }
 
-function randomSalt() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-async function hashPassword(password, salt) {
-  const payload = new TextEncoder().encode(`${salt}:${password}`);
-  const digest = await crypto.subtle.digest("SHA-256", payload);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function publicUser(user) {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    created_at: user.created_at,
-  };
-}
-
-function listLocalUsers() {
-  const users = readJson(LOCAL_USERS_KEY, []);
-  return Array.isArray(users) ? users : [];
-}
-
 export function getCurrentUser() {
-  if (!usesLocalNodeApi()) {
-    return getCloudSession()?.user || null;
-  }
-  const session = readJson(LOCAL_SESSION_KEY, null);
-  if (!session?.user_id) return null;
-  const user = listLocalUsers().find((item) => item.id === session.user_id);
-  return user ? publicUser(user) : null;
+  return getCloudSession()?.user || null;
+}
+
+export function isAdmin() {
+  return getCurrentUser()?.role === "admin";
 }
 
 export function listUsers() {
-  if (!usesLocalNodeApi()) {
-    const current = getCurrentUser();
-    return cloudUsers || (current ? [current] : []);
+  const current = getCurrentUser();
+  return serverUsers || (current ? [current] : []);
+}
+
+// On the Node, whether the first (administrator) account still has to be
+// created, and whether this browser runs on the Node's computer, the only
+// place where that is allowed.
+export async function getAuthSetup() {
+  if (!usesLocalNodeApi()) return { needs_setup: false, local: false, node: false };
+  try {
+    return { ...(await authSetup()), node: true };
+  } catch {
+    return { needs_setup: false, local: false, node: true };
   }
-  return listLocalUsers();
 }
 
 export async function createAccount({ name, email, password }) {
   validateAccount({ name, email, password });
-  if (!usesLocalNodeApi()) {
-    try {
-      const session = await authRegister({ name: String(name).trim(), email: normalizeEmail(email), password });
-      setCloudSession(session);
-      cloudUsers = [session.user];
-      return session.user;
-    } catch (error) {
-      throw friendlyError(error);
-    }
+  try {
+    const session = await authRegister({ name: String(name).trim(), email: normalizeEmail(email), password });
+    setCloudSession(session);
+    serverUsers = [session.user];
+    return session.user;
+  } catch (error) {
+    throw friendlyError(error);
   }
-
-  const normalizedEmail = normalizeEmail(email);
-  const users = listLocalUsers();
-  if (users.some((user) => user.email === normalizedEmail)) {
-    throw new Error("Já existe uma conta com este email.");
-  }
-  const salt = randomSalt();
-  const now = new Date().toISOString();
-  const user = {
-    id: `usr_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`,
-    name: String(name).trim(),
-    email: normalizedEmail,
-    role: "operator",
-    password_salt: salt,
-    password_hash: await hashPassword(password, salt),
-    created_at: now,
-  };
-  writeJson(LOCAL_USERS_KEY, [...users, user]);
-  writeJson(LOCAL_SESSION_KEY, { user_id: user.id, signed_in_at: now });
-  return publicUser(user);
 }
 
 export async function signIn({ email, password }) {
-  if (!usesLocalNodeApi()) {
-    try {
-      const session = await authLogin({ email: normalizeEmail(email), password });
-      setCloudSession(session);
-      cloudUsers = null;
-      return session.user;
-    } catch (error) {
-      throw friendlyError(error);
-    }
+  try {
+    const session = await authLogin({ email: normalizeEmail(email), password });
+    setCloudSession(session);
+    serverUsers = null;
+    return session.user;
+  } catch (error) {
+    throw friendlyError(error);
   }
-
-  const normalizedEmail = normalizeEmail(email);
-  const user = listLocalUsers().find((item) => item.email === normalizedEmail);
-  if (!user) {
-    throw new Error("Email ou senha inválidos.");
-  }
-  const passwordHash = await hashPassword(password, user.password_salt);
-  if (passwordHash !== user.password_hash) {
-    throw new Error("Email ou senha inválidos.");
-  }
-  writeJson(LOCAL_SESSION_KEY, { user_id: user.id, signed_in_at: new Date().toISOString() });
-  return publicUser(user);
 }
 
 export function signOut() {
   setApiToken("");
-  if (!usesLocalNodeApi() && getCloudSession()) {
+  if (getCloudSession()) {
     // Revoke on the server too; the local session is cleared regardless.
     authLogout().catch(() => {});
   }
   setCloudSession(null);
-  cloudUsers = null;
-  localStorage.removeItem(LOCAL_SESSION_KEY);
+  serverUsers = null;
 }
 
-// Confirms the stored cloud session is still valid and refreshes the user
-// data. Returns false only when the server rejected the session; network
-// failures keep the user signed in so a flaky connection does not log them out.
+export async function refreshUsers() {
+  serverUsers = await authListUsers();
+  return serverUsers;
+}
+
+// Confirms the stored session is still valid and refreshes the user data.
+// Returns false only when the server rejected the session; network failures
+// keep the user signed in so a flaky connection does not log them out.
 export async function verifySession() {
-  if (usesLocalNodeApi() || !getCloudSession()) return true;
+  if (!getCloudSession()) return true;
   try {
     const { user } = await authMe();
     const session = getCloudSession();
     if (session) setCloudSession({ ...session, user });
-    authListUsers()
-      .then((users) => {
-        cloudUsers = users;
-      })
-      .catch(() => {});
+    refreshUsers().catch(() => {});
     return true;
   } catch (error) {
     if (error?.status === 401) {
       setCloudSession(null);
-      cloudUsers = null;
+      serverUsers = null;
       return false;
     }
     return true;

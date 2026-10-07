@@ -8,6 +8,10 @@ from campex_node.local_app import LocalNodeRuntime, create_app
 from campex_node.main import build_lifecycle
 
 
+# Requests from the Node's own computer, which does not need to sign in.
+NODE_COMPUTER = {"base_url": "http://127.0.0.1", "client": ("127.0.0.1", 50000)}
+
+
 def test_local_node_diagnostics_do_not_expose_tokens(monkeypatch, tmp_path):
     monkeypatch.setenv("CAMPEX_NODE_DATA_DIR", str(tmp_path / "node"))
     monkeypatch.setenv("CAMPEX_NODE_TOKEN", "secret-node-token")
@@ -58,7 +62,7 @@ def test_local_node_allows_hosted_frontend_private_network_preflight(monkeypatch
     monkeypatch.setenv("CAMPEX_NODE_DATA_DIR", str(tmp_path / "node"))
     app = create_app()
 
-    with TestClient(app) as client:
+    with TestClient(app, **NODE_COMPUTER) as client:
         for path in (
             "/api/operations/summary",
             "/api/cameras",
@@ -84,7 +88,7 @@ def test_local_node_snapshot_waits_with_jpeg_when_frame_is_missing(monkeypatch, 
     monkeypatch.setenv("CAMPEX_NODE_DATA_DIR", str(tmp_path / "node"))
     app = create_app()
 
-    with TestClient(app) as client:
+    with TestClient(app, **NODE_COMPUTER) as client:
         response = client.get("/api/cameras/local_missing/snapshot")
 
     assert response.status_code == 200
@@ -130,7 +134,7 @@ def test_local_node_serves_zones_events_and_clip(monkeypatch, tmp_path):
     monkeypatch.setenv("CAMPEX_NODE_DATA_DIR", str(tmp_path / "node"))
     app = create_app()
 
-    with TestClient(app) as client:
+    with TestClient(app, **NODE_COMPUTER) as client:
         lifecycle = app.state.runtime.lifecycle
         camera = NodeCameraConfig(id="cam-6", name="Canal6", rtsp_url="rtsp://camera/6")
         monkeypatch.setattr(lifecycle.camera_manager, "configs", lambda: [camera])

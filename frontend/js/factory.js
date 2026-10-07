@@ -1,18 +1,22 @@
 import {
   addProductionCount,
+  backupDownloadUrl,
   createShift,
   deleteShift,
   findRecording,
   getFactoryAnalytics,
   getFactoryLive,
+  getBackupStatus,
   getFactorySettings,
   getMachineSpeed,
   getRecordingStatus,
   listShifts,
   listZones,
   recordingFileUrl,
+  restoreBackup,
   updateFactorySettings,
 } from "./api.js";
+import { isAdmin } from "./auth.js";
 
 const PERIODS = [
   ["today", "Hoje"],
@@ -98,6 +102,7 @@ export async function renderFactoryPage(appView, helpers) {
   });
   panel.addEventListener("change", (event) => {
     if (["factory-day", "factory-min-stop"].includes(event.target.id)) loadTab();
+    if (event.target.id === "factory-restore-file") restoreFrom(event.target);
   });
   ui.refreshIcons();
   try {
@@ -401,11 +406,12 @@ async function loadLogistics() {
 // Setup
 
 async function loadSetup() {
-  const [settings, shifts, recording, zones] = await Promise.all([
+  const [settings, shifts, recording, zones, backup] = await Promise.all([
     getFactorySettings(),
     listShifts(),
     getRecordingStatus(),
     listZones(),
+    getBackupStatus().catch(() => null),
   ]);
   const countable = zones.filter((zone) => ["machine", "line"].includes(zone.type));
   const cameras = Object.entries(recording.cameras || {});
@@ -460,6 +466,19 @@ async function loadSetup() {
             item.error ? escapeHtml(item.error) : item.first ? `desde ${dateTime(item.first)}` : "",
           )).join("")}
         </div>
+        <h2>Backup</h2>
+        <div class="object-list">
+          ${line("Cópia automática", backup?.latest ? `Última: ${escapeHtml(backup.latest)}` : "Ainda nenhuma", backup ? `${backup.count} de ${backup.keep} cópias diárias em ${escapeHtml(backup.path)}` : "")}
+        </div>
+        ${isAdmin() ? `
+        <div class="factory-backup-actions">
+          <a class="secondary-action" href="${backupDownloadUrl()}" download><i data-lucide="hard-drive-download" aria-hidden="true"></i>Baixar backup agora</a>
+          <label class="secondary-action factory-restore">
+            <i data-lucide="archive-restore" aria-hidden="true"></i>Restaurar backup…
+            <input type="file" id="factory-restore-file" accept=".sqlite3,.sqlite,.db" hidden />
+          </label>
+        </div>
+        <small class="factory-hint">O backup tem zonas, turnos, eventos, histórico das máquinas e contas. Os vídeos ficam na pasta de gravações.</small>` : `<small class="factory-hint">Só administradores baixam ou restauram backups.</small>`}
         <h2>Produção manual / CLP</h2>
         ${countable.length ? `
         <form id="factory-count-form" class="stack-form">
@@ -518,6 +537,24 @@ async function submitForm(form) {
     await loadTab();
   } catch (error) {
     ui.notify("Não foi possível salvar", error.message, "error");
+  }
+}
+
+async function restoreFrom(input) {
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  const confirmed = window.confirm(
+    `Restaurar "${file.name}"? Zonas, turnos, eventos, histórico e contas voltam ao que estava no backup. ` +
+    "O banco atual é guardado antes, na pasta de backups.",
+  );
+  if (!confirmed) return;
+  try {
+    await restoreBackup(file);
+    ui.notify("Backup restaurado", "O CAMPEX Node reiniciou com os dados do backup. Entre de novo.", "success");
+    window.dispatchEvent(new CustomEvent("campex:session-expired"));
+  } catch (error) {
+    ui.notify("Não foi possível restaurar", error.message, "error");
   }
 }
 

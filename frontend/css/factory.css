@@ -335,3 +335,21 @@
   align-content: start;
   gap: 12px;
 }
+
+.factory-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.factory-backup-actions .secondary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.factory-backup-actions svg {
+  width: 16px;
+  height: 16px;
+}

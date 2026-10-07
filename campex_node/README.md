@@ -127,6 +127,38 @@ The Node also emits `camera_status_changed` events when a camera changes state.
 Logs sanitize RTSP credentials and error messages before writing them. The Node
 never prints camera credentials, API keys or tokens intentionally.
 
+## Accounts and Network Access
+
+The Node is the factory's server: accounts, zones, shifts, events, machine
+history and the recording index all live in its SQLite file.
+
+- The desktop launcher listens on the factory network (`0.0.0.0`). Other
+  computers open the panel at `http://<node-ip>:<port>/app`; `/api/status`
+  lists these addresses in `panel_urls`. Set `CAMPEX_NODE_HOST=127.0.0.1` to
+  keep the panel on this computer only.
+- The first account is the administrator and can only be created on the
+  Node's own computer. The administrator then creates the team's accounts in
+  Configurações → Usuários. Nobody signs themselves up afterwards.
+- From the network every `/api` call needs a session (the `X-CAMPEX-Session`
+  header, or the `campex_session_<port>` cookie that images and videos carry). Calls
+  from the Node's own computer, addressed to `127.0.0.1`/`localhost`, do not.
+- Passwords are hashed with scrypt; changing one signs the account out
+  everywhere.
+
+## Backups
+
+A backup is a copy of the Node database (zones, shifts, events, machine
+history, counters, accounts and the recording index). Videos stay in the
+recordings folder and are not part of it.
+
+- One copy per day is kept automatically in `CAMPEX_NODE_BACKUP_DIR`
+  (default `<data_dir>/backups`); `CAMPEX_NODE_BACKUP_KEEP` sets how many
+  (default 14). Point the folder at another disk or a network share to survive
+  a failed computer.
+- Administrators download a backup or restore one in Fábrica → Configuração
+  (`GET /api/backup`, `POST /api/backup/restore`). A restore keeps the current
+  database as `antes-da-restauracao-*.sqlite3` first and restarts the Node.
+
 ## Run as a Local Service
 
 Service-ready packaging files are available in `packaging/`:

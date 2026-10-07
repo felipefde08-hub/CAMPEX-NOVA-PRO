@@ -80,6 +80,7 @@ import {
 } from "./api.js";
 import {
   createAccount,
+  getAuthSetup,
   getCurrentUser,
   listUsers,
   signIn,
@@ -87,6 +88,7 @@ import {
   verifySession,
 } from "./auth.js";
 import { renderFactoryPage } from "./factory.js";
+import { renderNodeUsers } from "./node-users.js";
 import { currentRoute, routes } from "./state.js";
 
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
@@ -365,6 +367,32 @@ function renderAuthScreen(mode = "login") {
   });
   setAuthMode(mode);
   refreshIcons();
+  applyNodeAuthSetup(authScreen);
+}
+
+// On the CAMPEX Node nobody signs themselves up: the first account is the
+// administrator, created on the Node's computer, who then adds the team.
+async function applyNodeAuthSetup(authScreen) {
+  const setup = await getAuthSetup();
+  if (!setup.node || !authScreen.isConnected) return;
+  authScreen.querySelectorAll(".auth-switch").forEach((item) => {
+    item.hidden = true;
+  });
+  if (!setup.needs_setup) {
+    const note = document.createElement("p");
+    note.className = "auth-switch";
+    note.textContent = "Não tem acesso? Peça uma conta ao administrador da fábrica.";
+    authScreen.querySelector("#login-form").append(note);
+    return;
+  }
+  setAuthMode("signup");
+  document.querySelector("#auth-title").textContent = "Configure o CAMPEX Node";
+  document.querySelector("#auth-subtitle").textContent = setup.local
+    ? "Crie a conta de administrador. Depois, ela cadastra as contas da equipe."
+    : "Abra este painel no computador onde o CAMPEX Node está instalado para criar a conta de administrador.";
+  if (!setup.local) {
+    authScreen.querySelector("#signup-form button[type='submit']").disabled = true;
+  }
 }
 
 function setAuthMode(mode) {
@@ -4914,6 +4942,7 @@ function securitySettingsMarkup() {
 }
 
 function usersSettingsMarkup() {
+  if (usesLocalNodeApi()) return `<div id="node-users-panel"></div>`;
   const users = listUsers();
   const invites = readStoredSettings("campex.user_invites", { items: [] }).items || [];
   return `
@@ -4999,6 +5028,10 @@ function wireSettingsTab(tabId) {
 async function hydrateSettingsTab(tabId) {
   if (tabId === "general") {
     fillLocalSettings();
+    return;
+  }
+  if (tabId === "users" && usesLocalNodeApi()) {
+    await renderNodeUsers(document.querySelector("#node-users-panel"), { notify, refreshIcons, settingsCard });
     return;
   }
   if (tabId === "nodes") {

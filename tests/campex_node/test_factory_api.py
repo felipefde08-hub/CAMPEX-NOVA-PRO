@@ -9,6 +9,10 @@ from campex_node.local_app import create_app
 from campex_node.recording import Segment
 
 
+# Requests from the Node's own computer, which does not need to sign in.
+NODE_COMPUTER = {"base_url": "http://127.0.0.1", "client": ("127.0.0.1", 50000)}
+
+
 SQUARE = [[0.1, 0.1], [0.5, 0.1], [0.5, 0.9], [0.1, 0.9]]
 
 
@@ -22,7 +26,7 @@ def _client(monkeypatch, tmp_path):
 
 def test_shifts_and_factory_settings(monkeypatch, tmp_path):
     app, _camera = _client(monkeypatch, tmp_path)
-    with TestClient(app) as client:
+    with TestClient(app, **NODE_COMPUTER) as client:
         assert client.get("/api/factory/settings").json() == {"timezone": "America/Sao_Paulo", "currency": "BRL"}
         assert client.patch("/api/factory/settings", json={"timezone": "Mars/Base"}).status_code == 400
 
@@ -45,7 +49,7 @@ def test_shifts_and_factory_settings(monkeypatch, tmp_path):
 
 def test_machine_zones_carry_settings_and_take_external_counts(monkeypatch, tmp_path):
     app, camera = _client(monkeypatch, tmp_path)
-    with TestClient(app) as client:
+    with TestClient(app, **NODE_COMPUTER) as client:
         monkeypatch.setattr(app.state.runtime.lifecycle.camera_manager, "configs", lambda: [camera])
         machine = client.post(
             "/api/zones",
@@ -94,7 +98,7 @@ def test_machine_zones_carry_settings_and_take_external_counts(monkeypatch, tmp_
 
 def test_recording_lookup_serves_the_segment_with_seek_offset(monkeypatch, tmp_path):
     app, _camera = _client(monkeypatch, tmp_path)
-    with TestClient(app) as client:
+    with TestClient(app, **NODE_COMPUTER) as client:
         lifecycle = app.state.runtime.lifecycle
         started = datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc)
         path = lifecycle.settings.recordings_path / "cam-1" / "2026-10-07" / "120000_rec_a.mp4"
