@@ -5,8 +5,9 @@ import platform
 import sys
 import uuid
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import time
 
@@ -19,6 +20,7 @@ from backend.cameras.security import sanitize_error_message
 from backend.config import ROOT_DIR as BACKEND_ROOT_DIR
 from backend.middleware.cors import LocalNetworkCORSMiddleware
 
+from campex_node.analytics import resolve_period
 from campex_node.core.config import NodeCameraConfig, NodeSettings
 from campex_node.node_ui import NODE_HTML
 
@@ -59,19 +61,53 @@ class PairingAuthorizePayload(BaseModel):
     node_name: str | None = Field(default=None, max_length=120)
 
 
+ZONE_TYPE_PATTERN = "^(monitored|restricted|machine|station|dock|area|line)$"
+
+
 class ZoneCreatePayload(BaseModel):
     camera_id: str = Field(min_length=1, max_length=120)
     name: str = Field(min_length=1, max_length=120)
-    type: str = Field(pattern="^(monitored|restricted)$")
+    type: str = Field(pattern=ZONE_TYPE_PATTERN)
     enabled: bool = True
-    points: list[list[float]] = Field(min_length=3)
+    # A counting line has 2 points; every other zone is a polygon.
+    points: list[list[float]] = Field(min_length=2)
+    settings: dict[str, Any] | None = None
 
 
 class ZoneUpdatePayload(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
-    type: str | None = Field(default=None, pattern="^(monitored|restricted)$")
+    type: str | None = Field(default=None, pattern=ZONE_TYPE_PATTERN)
     enabled: bool | None = None
     points: list[list[float]] | None = None
+    settings: dict[str, Any] | None = None
+
+
+class FactorySettingsPayload(BaseModel):
+    timezone: str | None = Field(default=None, max_length=64)
+    currency: str | None = Field(default=None, max_length=3)
+
+
+class ShiftBreakPayload(BaseModel):
+    name: str = Field(default="Intervalo", max_length=60)
+    start: str
+    end: str
+
+
+class ShiftPayload(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    start: str | None = None
+    end: str | None = None
+    days: list[int] | None = None
+    breaks: list[ShiftBreakPayload] | None = None
+    enabled: bool | None = None
+
+
+class ProductionCountPayload(BaseModel):
+    """A count from a PLC, sensor or operator, added to a machine or line."""
+
+    zone_id: str = Field(min_length=1, max_length=120)
+    count: int = Field(ge=1, le=100000)
+    at: datetime | None = None
 
 
 class EventUpdatePayload(BaseModel):
@@ -886,7 +922,9 @@ def create_app() -> FastAPI:
 
     @app.get("/api/zones")
     def list_zones(camera_id: str | None = None) -> list[dict]:
-        return [zone.as_dict() for zone in runtime.lifecycle.events_store.list_zones(camera_id)]
+        store = runtime.lifecycle.events_store
+        settings = store.zone_settings(camera_id)
+        return [{**zone.as_dict(), "settings": settings.get(zone.id, {})} for zone in store.list_zones(camera_id)]
 
     @app.post("/api/zones", status_code=201)
     def create_zone(payload: ZoneCreatePayload) -> dict:
@@ -899,10 +937,11 @@ def create_app() -> FastAPI:
                 zone_type=payload.type,
                 points=payload.points,
                 enabled=payload.enabled,
+                settings=payload.settings,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return zone.as_dict()
+        return runtime.lifecycle.events_store.zone_dict(zone)
 
     @app.patch("/api/zones/{zone_id}")
     def update_zone(zone_id: str, payload: ZoneUpdatePayload) -> dict:
@@ -912,7 +951,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if zone is None:
             raise HTTPException(status_code=404, detail="Zone not found.")
-        return zone.as_dict()
+        return runtime.lifecycle.events_store.zone_dict(zone)
 
     @app.delete("/api/zones/{zone_id}", status_code=204, response_class=Response, response_model=None)
     def delete_zone(zone_id: str) -> Response:
@@ -971,6 +1010,205 @@ def create_app() -> FastAPI:
     @app.get("/api/diagnostics")
     def diagnostics() -> dict:
         return runtime.diagnostics()
+
+    # Factory configuration
+
+    @app.get("/api/factory/settings")
+    def factory_settings() -> dict:
+        return runtime.lifecycle.factory_store.settings()
+
+    @app.patch("/api/factory/settings")
+    def update_factory_settings(payload: FactorySettingsPayload) -> dict:
+        try:
+            return runtime.lifecycle.factory_store.update_settings(payload.model_dump(exclude_none=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/factory/shifts")
+    def list_shifts() -> list[dict]:
+        return [shift.as_dict() for shift in runtime.lifecycle.factory_store.list_shifts()]
+
+    @app.post("/api/factory/shifts", status_code=201)
+    def create_shift(payload: ShiftPayload) -> dict:
+        try:
+            return runtime.lifecycle.factory_store.create_shift(payload.model_dump(exclude_none=True)).as_dict()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.patch("/api/factory/shifts/{shift_id}")
+    def update_shift(shift_id: str, payload: ShiftPayload) -> dict:
+        try:
+            shift = runtime.lifecycle.factory_store.update_shift(shift_id, payload.model_dump(exclude_none=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if shift is None:
+            raise HTTPException(status_code=404, detail="Shift not found.")
+        return shift.as_dict()
+
+    @app.delete("/api/factory/shifts/{shift_id}", status_code=204, response_class=Response, response_model=None)
+    def delete_shift(shift_id: str) -> Response:
+        if not runtime.lifecycle.factory_store.delete_shift(shift_id):
+            raise HTTPException(status_code=404, detail="Shift not found.")
+        return Response(status_code=204)
+
+    @app.get("/api/factory/live")
+    def factory_live(camera_id: str | None = None) -> dict:
+        """What the monitors see right now: machine states and zone occupancy."""
+        lifecycle = runtime.lifecycle
+        zones = {zone.id: zone for zone in lifecycle.events_store.list_zones(camera_id)}
+        now = datetime.now(timezone.utc)
+        shift = lifecycle.factory_store.shift_at(now)
+
+        def named(items: list[dict]) -> list[dict]:
+            return [{**item, "name": zones[item["zone_id"]].name} for item in items if item["zone_id"] in zones]
+
+        # Every machine is listed: one the monitor has no frames for is UNKNOWN.
+        sampled = {item["zone_id"]: item for item in lifecycle.machines.snapshot(camera_id)} if lifecycle.machines else {}
+        machines = [
+            {
+                **sampled.get(zone.id, {"zone_id": zone.id, "camera_id": zone.camera_id, "state": "UNKNOWN", "since": None}),
+                "name": zone.name,
+            }
+            for zone in zones.values()
+            if zone.type == "machine" and zone.enabled
+        ]
+        return {
+            "at": now.isoformat(),
+            "shift": shift.as_dict() if shift else None,
+            "working_time": lifecycle.factory_store.is_working_time(now),
+            "machines": machines,
+            "occupancy": named(lifecycle.occupancy.snapshot(camera_id)) if lifecycle.occupancy else [],
+        }
+
+    @app.post("/api/production/counts", status_code=201)
+    def add_production_count(payload: ProductionCountPayload) -> dict:
+        zone = runtime.lifecycle.events_store.get_zone(payload.zone_id)
+        if zone is None or zone.type not in ("machine", "line"):
+            raise HTTPException(status_code=404, detail="Machine or counting line not found.")
+        at = payload.at or datetime.now(timezone.utc)
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        runtime.lifecycle.activity_store.add_count(zone.id, at, "external", payload.count)
+        return {"ok": True, "zone_id": zone.id, "count": payload.count, "at": at.isoformat()}
+
+    # Analytics: every endpoint takes period=today|yesterday|week|last_week|month|last_month
+    # or an explicit start/end (ISO 8601).
+
+    def _range(period: str | None, start: str | None, end: str | None) -> tuple[datetime, datetime]:
+        try:
+            return resolve_period(runtime.lifecycle.factory_store, period=period, start=start, end=end)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    def _day(value: str | None) -> date:
+        if not value:
+            return runtime.lifecycle.factory_store.local_date(datetime.now(timezone.utc))
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD.") from exc
+
+    @app.get("/api/analytics/machines")
+    def analytics_machines(period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+        return runtime.lifecycle.analytics.machines(*_range(period, start, end))
+
+    @app.get("/api/analytics/stops")
+    def analytics_stops(
+        period: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        zone_id: str | None = None,
+        min_minutes: float = Query(0, ge=0),
+    ) -> list[dict]:
+        return runtime.lifecycle.analytics.stops(*_range(period, start, end), min_seconds=min_minutes * 60, zone_id=zone_id)
+
+    @app.get("/api/analytics/machines/{zone_id}/speed")
+    def analytics_speed(zone_id: str, period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+        return runtime.lifecycle.analytics.speed(zone_id, *_range(period, start, end))
+
+    @app.get("/api/analytics/hourly")
+    def analytics_hourly(
+        period: str | None = None, start: str | None = None, end: str | None = None, zone_id: str | None = None
+    ) -> dict:
+        return runtime.lifecycle.analytics.hourly(*_range(period, start, end), zone_id=zone_id)
+
+    @app.get("/api/analytics/shifts")
+    def analytics_shifts(period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+        return runtime.lifecycle.analytics.shifts(*_range(period, start, end))
+
+    @app.get("/api/analytics/occupancy")
+    def analytics_occupancy(
+        period: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+        zone_id: str | None = None,
+        min_vacant_minutes: float = Query(1, ge=0),
+    ) -> list[dict]:
+        return runtime.lifecycle.analytics.occupancy(
+            *_range(period, start, end), zone_id=zone_id, min_vacant_seconds=min_vacant_minutes * 60
+        )
+
+    @app.get("/api/analytics/first-arrival")
+    def analytics_first_arrival(date: str | None = None, zone_id: list[str] | None = Query(None)) -> dict:
+        return runtime.lifecycle.analytics.first_arrival(_day(date), zone_id)
+
+    @app.get("/api/analytics/breaks")
+    def analytics_breaks(date: str | None = None) -> list[dict]:
+        return runtime.lifecycle.analytics.breaks(_day(date))
+
+    @app.get("/api/analytics/after-hours")
+    def analytics_after_hours(period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+        return runtime.lifecycle.analytics.after_hours(*_range(period, start, end))
+
+    @app.get("/api/analytics/docks")
+    def analytics_docks(period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+        return runtime.lifecycle.analytics.docks(*_range(period, start, end))
+
+    @app.get("/api/analytics/lines")
+    def analytics_lines(period: str | None = None, start: str | None = None, end: str | None = None) -> list[dict]:
+        return runtime.lifecycle.analytics.lines(*_range(period, start, end))
+
+    @app.get("/api/analytics/summary")
+    def analytics_summary(period: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+        return runtime.lifecycle.analytics.summary(*_range(period, start, end))
+
+    # Recordings
+
+    @app.get("/api/recordings")
+    def list_recordings(
+        camera_id: str | None = None, period: str | None = None, start: str | None = None, end: str | None = None
+    ) -> list[dict]:
+        begin, finish = _range(period, start, end)
+        return [segment.as_dict() for segment in runtime.lifecycle.recording_store.list(camera_id, begin, finish)]
+
+    @app.get("/api/recordings/status")
+    def recordings_status() -> dict:
+        if runtime.lifecycle.recording is None:
+            return {"enabled": False, "cameras": {}}
+        return runtime.lifecycle.recording.status()
+
+    @app.get("/api/recordings/{segment_id}/file")
+    def recording_file(segment_id: str):
+        segment = runtime.lifecycle.recording_store.get(segment_id)
+        root = runtime.lifecycle.settings.recordings_path.resolve()
+        if segment is None or root not in segment.path.resolve().parents or not segment.path.is_file():
+            raise HTTPException(status_code=404, detail="Recording not found.")
+        return FileResponse(segment.path, media_type=segment.media_type)
+
+    @app.get("/api/cameras/{camera_id}/recording")
+    def camera_recording_at(camera_id: str, at: datetime) -> dict:
+        """The segment that holds the camera's video at a moment, and where in it to seek."""
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        found = runtime.lifecycle.recording_store.at(camera_id, at)
+        if found is None:
+            raise HTTPException(status_code=404, detail="No recording at that time.")
+        segment, offset = found
+        return {
+            "segment": segment.as_dict(),
+            "offset_seconds": round(offset, 2),
+            "url": f"/api/recordings/{segment.id}/file#t={offset:.1f}",
+        }
 
     return app
 

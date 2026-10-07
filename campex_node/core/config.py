@@ -139,6 +139,16 @@ class NodeSettings:
     vision_model: str = "yolo11n.pt"
     pose_model: str = "yolo11n-pose.pt"
     vision_input_size: int = 640
+    # A frame older than this is a frozen stream, not the current scene.
+    vision_stale_frame_seconds: float = 10.0
+    # Continuous recording: the camera stream is remuxed into segments.
+    recording_enabled: bool = True
+    recording_dir: Path | None = None  # default: <data_dir>/recordings
+    recording_segment_seconds: float = 300.0
+    recording_retention_days: float = 30.0
+    recording_min_free_gb: float = 10.0
+    recording_max_gb: float = 0.0  # 0 = limited only by free space and age
+    machine_monitor_interval_seconds: float = 0.2
     live_frame_max_width: int = 960
     live_frame_jpeg_quality: int = 70
     outbound_max_pending: int = 5000
@@ -146,6 +156,10 @@ class NodeSettings:
     update_manifest_url: str = DEFAULT_UPDATE_MANIFEST_URL
     update_check_interval_seconds: float = 6 * 60 * 60
     cameras: tuple[NodeCameraConfig, ...] = field(default_factory=tuple)
+
+    @property
+    def recordings_path(self) -> Path:
+        return self.recording_dir or self.data_dir / "recordings"
 
     @classmethod
     def from_env(cls) -> "NodeSettings":
@@ -187,6 +201,18 @@ class NodeSettings:
             vision_model=os.getenv("CAMPEX_NODE_VISION_MODEL", "yolo11n.pt"),
             pose_model=os.getenv("CAMPEX_NODE_POSE_MODEL", "yolo11n-pose.pt"),
             vision_input_size=_env_int("CAMPEX_NODE_VISION_INPUT_SIZE", 640),
+            vision_stale_frame_seconds=_env_float("CAMPEX_NODE_VISION_STALE_FRAME_SECONDS", 10.0),
+            recording_enabled=_env_bool("CAMPEX_NODE_RECORDING_ENABLED", True),
+            recording_dir=(
+                Path(os.environ["CAMPEX_NODE_RECORDING_DIR"]).expanduser().resolve()
+                if os.getenv("CAMPEX_NODE_RECORDING_DIR")
+                else None
+            ),
+            recording_segment_seconds=_env_float("CAMPEX_NODE_RECORDING_SEGMENT_SECONDS", 300.0),
+            recording_retention_days=_env_float("CAMPEX_NODE_RECORDING_RETENTION_DAYS", 30.0),
+            recording_min_free_gb=_env_float("CAMPEX_NODE_RECORDING_MIN_FREE_GB", 10.0),
+            recording_max_gb=_env_float("CAMPEX_NODE_RECORDING_MAX_GB", 0.0),
+            machine_monitor_interval_seconds=_env_float("CAMPEX_NODE_MACHINE_MONITOR_SECONDS", 0.2),
             live_frame_max_width=_env_int("CAMPEX_NODE_LIVE_FRAME_MAX_WIDTH", 960),
             live_frame_jpeg_quality=_env_int("CAMPEX_NODE_LIVE_FRAME_JPEG_QUALITY", 70),
             outbound_max_pending=_env_int("CAMPEX_NODE_QUEUE_MAX_ITEMS", 5000),
@@ -215,6 +241,14 @@ class NodeSettings:
             raise ValueError("CAMPEX_NODE_VISION_INTERVAL_SECONDS must be greater than zero.")
         if not 0.0 <= self.vision_confidence <= 1.0:
             raise ValueError("CAMPEX_NODE_VISION_CONFIDENCE must be between 0 and 1.")
+        if self.vision_stale_frame_seconds <= 0:
+            raise ValueError("CAMPEX_NODE_VISION_STALE_FRAME_SECONDS must be greater than zero.")
+        if self.recording_segment_seconds < 10:
+            raise ValueError("CAMPEX_NODE_RECORDING_SEGMENT_SECONDS must be at least 10.")
+        if self.recording_retention_days <= 0 or self.recording_min_free_gb < 0 or self.recording_max_gb < 0:
+            raise ValueError("Recording retention limits must be positive.")
+        if self.machine_monitor_interval_seconds <= 0:
+            raise ValueError("CAMPEX_NODE_MACHINE_MONITOR_SECONDS must be greater than zero.")
         if self.outbound_max_pending < 1:
             raise ValueError("CAMPEX_NODE_QUEUE_MAX_ITEMS must be at least 1.")
         if self.update_check_interval_seconds < 60:

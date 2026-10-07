@@ -1,5 +1,6 @@
 import { getApiToken, setApiToken } from "./api-token.js";
 import {
+  usesLocalNodeApi,
   createCamera,
   createInvestigation,
   createMachine,
@@ -85,6 +86,7 @@ import {
   signOut,
   verifySession,
 } from "./auth.js";
+import { renderFactoryPage } from "./factory.js";
 import { currentRoute, routes } from "./state.js";
 
 const VERCEL_SAFE_VIDEO_UPLOAD_BYTES = 4 * 1024 * 1024;
@@ -105,6 +107,119 @@ const toastStack = document.querySelector("#toast-stack");
 let activeMediaCameraId = null;
 let zoneDrawingPoints = [];
 let zonePreviewZones = [];
+
+// Zone types. Event zones exist in the Cloud and on the Node; the factory
+// types are monitored by the CAMPEX Node only.
+const ZONE_TYPES = {
+  monitored: { label: "Monitorada", color: "#f0c94a" },
+  restricted: { label: "Restrita", color: "#ff4d4d" },
+  machine: { label: "Máquina", color: "#5ea8ff", node: true },
+  station: { label: "Estação de trabalho", color: "#3dc983", node: true },
+  dock: { label: "Doca", color: "#b48cff", node: true },
+  area: { label: "Área (fora do expediente)", color: "#ff9f43", node: true },
+  line: { label: "Linha de contagem", color: "#ffffff", node: true },
+};
+
+// [setting, label, input type, help]
+const ZONE_SETTING_FIELDS = {
+  machine: [
+    ["line", "Linha", "text", "Ex.: Linha 2"],
+    ["cost_per_hour", "Custo da hora parada", "number", "Na moeda da fábrica"],
+    ["stop_after_seconds", "Parada após (s) sem movimento", "number", ""],
+    ["motion_threshold", "Sensibilidade de movimento (0–1)", "number", "Fração da área que precisa mudar; padrão 0.015"],
+    ["requires_operator", "Exige operador", "checkbox", ""],
+    ["operator_absent_seconds", "Alerta sem operador após (s)", "number", ""],
+  ],
+  station: [
+    ["line", "Linha", "text", ""],
+    ["vacant_alert_seconds", "Alerta de estação vazia após (s)", "number", "Só durante os turnos"],
+  ],
+  dock: [["min_visit_seconds", "Visita mínima (s)", "number", "Veículo parado por menos que isso não conta"]],
+  area: [["after_hours_alert", "Alertar presença fora do expediente", "checkbox", ""]],
+  line: [
+    ["subject", "Conta", "select:person=Pessoas,vehicle=Veículos,any=Pessoas e veículos", ""],
+    ["direction", "Sentido", "select:any=Ambos,a_to_b=Só A→B,b_to_a=Só B→A", ""],
+  ],
+};
+
+const ZONE_SETTING_DEFAULTS = {
+  stop_after_seconds: 30,
+  motion_threshold: 0.015,
+  operator_absent_seconds: 60,
+  vacant_alert_seconds: 300,
+  min_visit_seconds: 120,
+  after_hours_alert: true,
+};
+
+function zoneTypeOptions() {
+  const nodeTypes = usesLocalNodeApi();
+  return Object.entries(ZONE_TYPES)
+    .filter(([, type]) => nodeTypes || !type.node)
+    .map(([value, type]) => `<option value="${value}">${type.label}</option>`)
+    .join("");
+}
+
+function zoneSettingsFieldsets() {
+  return Object.entries(ZONE_SETTING_FIELDS).map(([type, fields]) => `
+    <fieldset class="zone-settings" data-zone-settings="${type}" hidden>
+      <legend>${ZONE_TYPES[type].label}</legend>
+      ${fields.map(([key, label, kind, help]) => zoneSettingInput(key, label, kind, help)).join("")}
+    </fieldset>
+  `).join("");
+}
+
+function zoneSettingInput(key, label, kind, help) {
+  const name = `setting_${key}`;
+  const value = ZONE_SETTING_DEFAULTS[key];
+  if (kind === "checkbox") {
+    return `<label class="inline-toggle"><input type="checkbox" name="${name}" ${value ? "checked" : ""} /> ${label}</label>`;
+  }
+  if (kind.startsWith("select:")) {
+    const options = kind.slice(7).split(",").map((item) => item.split("="));
+    return `<label>${label}<select name="${name}">${options.map(([option, text]) => `<option value="${option}">${text}</option>`).join("")}</select></label>`;
+  }
+  const step = key === "motion_threshold" ? "0.001" : "any";
+  return `<label>${label}<input name="${name}" type="${kind}" ${kind === "number" ? `min="0" step="${step}"` : ""} value="${value ?? ""}" />${help ? `<small>${help}</small>` : ""}</label>`;
+}
+
+function showZoneSettings() {
+  const form = document.querySelector("#zone-form");
+  if (!form) return;
+  const type = form.elements.type.value;
+  form.querySelectorAll("[data-zone-settings]").forEach((fieldset) => {
+    fieldset.hidden = fieldset.dataset.zoneSettings !== type;
+  });
+  if (type === "line" && zoneDrawingPoints.length > 2) {
+    zoneDrawingPoints = zoneDrawingPoints.slice(0, 2);
+    updateZonePointsField();
+  }
+  drawZoneCanvas();
+}
+
+function readZoneSettings(form, type) {
+  const settings = {};
+  // Types share setting names (e.g. line): read only the selected type's fields.
+  const fieldset = form.querySelector(`[data-zone-settings="${type}"]`);
+  (ZONE_SETTING_FIELDS[type] || []).forEach(([key, , kind]) => {
+    const input = fieldset?.querySelector(`[name="setting_${key}"]`);
+    if (!input) return;
+    if (kind === "checkbox") settings[key] = input.checked;
+    else if (kind === "number") {
+      if (input.value !== "") settings[key] = Number(input.value);
+    } else settings[key] = input.value;
+  });
+  return settings;
+}
+
+function zoneSettingsSummary(zone) {
+  const settings = zone.settings || {};
+  const parts = [];
+  if (settings.line) parts.push(settings.line);
+  if (settings.cost_per_hour) parts.push(`custo/h ${settings.cost_per_hour}`);
+  if (settings.requires_operator) parts.push("exige operador");
+  if (zone.type === "line") parts.push(`${settings.subject || "person"} · ${settings.direction || "any"}`);
+  return parts.join(" · ");
+}
 let machineDrawingPoints = [];
 let machinePreviewMachines = [];
 let machineClickDetectMode = false;
@@ -368,6 +483,11 @@ function renderRoute() {
 
   if (routeKey === "dashboard") {
     renderDashboardPage();
+    return;
+  }
+
+  if (routeKey === "factory") {
+    renderFactoryPage(appView, { notify, refreshIcons });
     return;
   }
 
@@ -3162,11 +3282,9 @@ async function renderZonesPage() {
           <form id="zone-form" class="stack-form">
             <label>Nome<input name="name" required placeholder="Porta principal" /></label>
             <label>Tipo
-              <select name="type">
-                <option value="monitored">Monitorada</option>
-                <option value="restricted">Restrita</option>
-              </select>
+              <select name="type">${zoneTypeOptions()}</select>
             </label>
+            ${zoneSettingsFieldsets()}
             <label>Pontos normalizados
               <textarea name="points" rows="6">[]</textarea>
             </label>
@@ -3182,7 +3300,7 @@ async function renderZonesPage() {
   document.querySelector("#zone-refresh").addEventListener("click", loadZonesPageData);
   document.querySelector("#zone-form").addEventListener("submit", saveZone);
   document.querySelector("#zone-form").elements.points.addEventListener("input", syncZonePointsFromTextarea);
-  document.querySelector("#zone-form").elements.type.addEventListener("change", drawZoneCanvas);
+  document.querySelector("#zone-form").elements.type.addEventListener("change", showZoneSettings);
   document.querySelector("#zone-undo-point").addEventListener("click", undoZonePoint);
   document.querySelector("#zone-clear-points").addEventListener("click", clearZoneDrawing);
   document.querySelector("#zone-use-full-frame").addEventListener("click", useFullFrameZone);
@@ -3225,9 +3343,9 @@ function zoneRow(zone, camera) {
       <div>
         <strong>${zone.name}</strong>
         <span>${camera?.name || zone.camera_id} - ${zone.points.length} pontos</span>
-        <small>${zone.points.map((point) => `[${point.join(", ")}]`).join(" ")}</small>
+        <small>${escapeHtml(zoneSettingsSummary(zone)) || zone.points.map((point) => `[${point.join(", ")}]`).join(" ")}</small>
       </div>
-      <span class="severity-badge" data-severity="${zone.type === "restricted" ? "critical" : "attention"}">${zone.type}</span>
+      <span class="severity-badge" data-severity="${zone.type === "restricted" ? "critical" : "attention"}">${ZONE_TYPES[zone.type]?.label || zone.type}</span>
       <label class="inline-toggle"><input type="checkbox" data-zone-action="toggle" ${zone.enabled ? "checked" : ""} /> Ativa</label>
       <div class="row-actions"><button type="button" data-zone-action="delete">Excluir</button></div>
     </article>
@@ -3267,6 +3385,8 @@ function addZonePoint(event) {
   if (!rect.width || !rect.height) return;
   const x = clamp01((event.clientX - rect.left) / rect.width);
   const y = clamp01((event.clientY - rect.top) / rect.height);
+  // A counting line has two ends: a third click moves the second end.
+  if (currentZoneType() === "line" && zoneDrawingPoints.length >= 2) zoneDrawingPoints.pop();
   zoneDrawingPoints.push([roundPoint(x), roundPoint(y)]);
   updateZonePointsField();
   drawZoneCanvas();
@@ -3311,9 +3431,19 @@ function useFullFrameZone() {
   drawZoneCanvas();
 }
 
+function currentZoneType() {
+  return document.querySelector("#zone-form")?.elements.type.value || "restricted";
+}
+
 function updateZoneDrawStatus(message = "") {
   const status = document.querySelector("#zone-draw-status");
   if (!status) return;
+  if (!message && currentZoneType() === "line") {
+    status.textContent = zoneDrawingPoints.length < 2
+      ? `Marque o ponto ${zoneDrawingPoints.length ? "B" : "A"} da linha.`
+      : "Linha pronta: A→B. Clique de novo para mover o ponto B.";
+    return;
+  }
   status.textContent = message || (
     zoneDrawingPoints.length < 3
       ? `${zoneDrawingPoints.length} ponto(s). Marque pelo menos 3.`
@@ -3336,16 +3466,16 @@ function drawZoneCanvas() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, rect.width, rect.height);
   zonePreviewZones.forEach((zone) => drawZonePolygon(ctx, zone.points, rect, zone.type, false));
-  drawZonePolygon(ctx, zoneDrawingPoints, rect, document.querySelector("#zone-form")?.elements.type.value || "restricted", true);
+  drawZonePolygon(ctx, zoneDrawingPoints, rect, currentZoneType(), true);
   updateZoneDrawStatus();
 }
 
 function drawZonePolygon(ctx, points, rect, type, editing) {
   if (!points?.length) return;
-  const color = type === "restricted" ? "#ff4d4d" : "#f0c94a";
+  const color = ZONE_TYPES[type]?.color || "#f0c94a";
   ctx.lineWidth = editing ? 3 : 2;
   ctx.strokeStyle = color;
-  ctx.fillStyle = editing ? "rgba(255, 77, 77, 0.22)" : "rgba(240, 201, 74, 0.12)";
+  ctx.fillStyle = `${color}${editing ? "38" : "1f"}`;
   ctx.beginPath();
   points.forEach(([x, y], index) => {
     const px = Number(x) * rect.width;
@@ -3370,7 +3500,7 @@ function drawZonePolygon(ctx, points, rect, type, editing) {
       ctx.font = "10px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(index + 1), px, py);
+      ctx.fillText(type === "line" ? (index ? "B" : "A") : String(index + 1), px, py);
     }
   });
 }
@@ -3396,21 +3526,31 @@ async function saveZone(event) {
     notify("Pontos inválidos", "Use JSON como [[0.1,0.1],[0.9,0.1],[0.9,0.9]].", "error");
     return;
   }
-  if (!Array.isArray(points) || points.length < 3) {
-    notify("Zona incompleta", "Desenhe pelo menos 3 pontos na imagem.", "warning");
+  const type = form.elements.type.value;
+  const needed = type === "line" ? 2 : 3;
+  if (!Array.isArray(points) || points.length < needed || (type === "line" && points.length !== 2)) {
+    notify("Zona incompleta", type === "line" ? "Marque os 2 pontos da linha." : "Desenhe pelo menos 3 pontos na imagem.", "warning");
     return;
   }
-  await createZone({
+  const payload = {
     camera_id: cameraId,
     name: form.elements.name.value.trim(),
-    type: form.elements.type.value,
+    type,
     enabled: form.elements.enabled.checked,
     points,
-  });
+  };
+  if (ZONE_SETTING_FIELDS[type]) payload.settings = readZoneSettings(form, type);
+  try {
+    await createZone(payload);
+  } catch (error) {
+    notify("Não foi possível salvar a zona", error.message, "error");
+    return;
+  }
   form.reset();
   zoneDrawingPoints = [];
   form.elements.points.value = "[]";
   form.elements.enabled.checked = true;
+  showZoneSettings();
   await loadZonesPageData();
   notify("Zona salva", "A zona foi cadastrada para essa câmera.", "success");
 }

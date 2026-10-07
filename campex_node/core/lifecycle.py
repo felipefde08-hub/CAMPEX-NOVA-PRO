@@ -6,6 +6,8 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
+from campex_node.activity import ActivityStore
+from campex_node.analytics import FactoryAnalytics
 from campex_node.cameras.manager import CameraManager
 from campex_node.cloud.client import CloudClient
 from campex_node.cloud.config_sync import ConfigSyncService
@@ -14,6 +16,9 @@ from campex_node.cloud.live_relay import LiveRelayService
 from campex_node.cloud.sync import SyncService
 from campex_node.core.config import NodeSettings
 from campex_node.events import NodeEventPipeline, NodeEventStore
+from campex_node.factory import FactoryStore
+from campex_node.monitors import MachineMonitor, OccupancyMonitor, ZoneCache
+from campex_node.recording import RecordingService, RecordingStore
 from campex_node.storage.local_store import LocalStore
 from campex_node.telemetry.collector import TelemetryCollector
 from campex_node.updates.service import UpdateService
@@ -42,7 +47,16 @@ class NodeLifecycle:
         self.sync: SyncService | None = None
         self.telemetry: TelemetryCollector | None = None
         self.events_store = NodeEventStore(settings.database_path)
+        self.factory_store = FactoryStore(settings.database_path)
+        self.activity_store = ActivityStore(settings.database_path)
+        self.recording_store = RecordingStore(settings.database_path)
+        self.analytics = FactoryAnalytics(
+            self.events_store, self.activity_store, self.factory_store, self.recording_store
+        )
         self.vision: EdgeVisionService | None = None
+        self.occupancy: OccupancyMonitor | None = None
+        self.machines: MachineMonitor | None = None
+        self.recording: RecordingService | None = None
         self.live_relay: LiveRelayService | None = None
         self.updates: UpdateService | None = None
         self._running = False
@@ -52,6 +66,9 @@ class NodeLifecycle:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
         self.events_store.initialize()
+        self.factory_store.initialize()
+        self.activity_store.initialize()
+        self.recording_store.initialize()
         self.node_id = self._get_or_create_node_id()
         cloud_status = self.cloud_client.check_connection()
         if cloud_status.ok:
@@ -81,8 +98,27 @@ class NodeLifecycle:
             self.settings.data_dir,
             fps=1.0 / max(0.05, self.settings.vision_interval_seconds),
         )
-        self.vision = EdgeVisionService(self.settings, self.camera_manager, events)
+        evidence_dir = self.settings.data_dir / "evidence"
+        zones = ZoneCache(self.events_store)
+        self.occupancy = OccupancyMonitor(
+            self.events_store, self.activity_store, self.factory_store, evidence_dir, zones=zones
+        )
+        self.vision = EdgeVisionService(self.settings, self.camera_manager, events, observers=[self.occupancy])
         self.vision.start()
+        self.machines = MachineMonitor(
+            events_store=self.events_store,
+            activity=self.activity_store,
+            occupancy=self.occupancy,
+            evidence_dir=evidence_dir,
+            camera_manager=self.camera_manager,
+            people=self.vision.people_boxes,
+            interval_seconds=self.settings.machine_monitor_interval_seconds,
+            stale_frame_seconds=self.settings.vision_stale_frame_seconds,
+            zones=zones,
+        )
+        self.machines.start()
+        self.recording = RecordingService(self.settings, self.camera_manager, self.recording_store)
+        self.recording.start()
         if self.cloud_client.is_configured():
             self.config_sync.start()
         self.telemetry = TelemetryCollector(
@@ -154,8 +190,13 @@ class NodeLifecycle:
             self.telemetry.stop()
         if self.heartbeat is not None:
             self.heartbeat.stop()
+        if self.recording is not None:
+            self.recording.stop()
+        if self.machines is not None:
+            self.machines.stop()
         if self.vision is not None:
             self.vision.stop()
+        self.activity_store.flush()
         self.camera_manager.stop()
         self._running = False
         self.started_at = None

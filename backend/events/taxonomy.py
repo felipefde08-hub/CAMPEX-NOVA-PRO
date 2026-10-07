@@ -122,6 +122,11 @@ EVENT_TYPE_CATEGORY_MAP = {
     "MISSING_OPERATOR": "missing_operator",
     "MANUAL_REWORK": "manual_rework",
     "QUEUE_GROWTH": "queue_growth",
+    # CAMPEX Node factory monitors
+    "MACHINE_STOPPED": "idle",
+    "STATION_VACANT": "missing_operator",
+    "AFTER_HOURS_PRESENCE": "unsafe_presence",
+    "DOCK_VISIT": "other",
 }
 
 

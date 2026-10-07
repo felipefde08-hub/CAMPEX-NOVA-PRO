@@ -4,6 +4,10 @@ pydantic==2.11.7
 opencv-python-headless==4.12.0.88
 numpy==2.2.6
 psutil==7.1.3
+# Continuous recording remuxes the camera stream without re-encoding.
+av==17.0.0
+# Shift schedules use IANA time zones; Windows ships no tz database.
+tzdata==2025.3
 cryptography==46.0.4
 pyinstaller==6.16.0
 torch==2.14.0

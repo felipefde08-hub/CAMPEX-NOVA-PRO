@@ -22,11 +22,12 @@ from backend.vision.models import BoundingBox, Detection, TrackedObject
 from backend.vision.tracker import ByteTrackTracker
 from backend.zones.engine import SpatialEngine
 from backend.zones.models import Zone, ZonePoint
+from campex_node.factory import EVENT_ZONE_TYPES, ZONE_TYPES, normalize_zone_settings
+from campex_node.storage.sqlite import add_column
 
 
 logger = logging.getLogger("campex.node.events")
 
-ZONE_TYPES = ("monitored", "restricted")
 # Clip frames are downscaled to this width and kept as JPEG in the pre-roll
 # buffer so a few seconds of 1080p per camera stay a few MB.
 CLIP_MAX_WIDTH = 960
@@ -44,6 +45,7 @@ SCHEMA = (
         type TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         points TEXT NOT NULL,
+        settings TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
@@ -86,6 +88,7 @@ class NodeEventStore:
         with closing(self._connect()) as connection:
             for statement in SCHEMA:
                 connection.execute(statement)
+            add_column(connection, "zones", "settings", "TEXT NOT NULL DEFAULT '{}'")
             # Open events from a previous run lost their tracking state; they
             # can never get an exit, so stop presenting them as ongoing.
             rows = connection.execute("SELECT id, metadata FROM events WHERE status = 'OPEN'").fetchall()
@@ -110,6 +113,21 @@ class NodeEventStore:
                 rows = connection.execute("SELECT * FROM zones ORDER BY created_at ASC").fetchall()
         return [_row_to_zone(row) for row in rows]
 
+    def zone_settings(self, camera_id: str | None = None) -> dict[str, dict[str, Any]]:
+        """zone_id -> attributes for the zone's type (cost, operator rules...)."""
+        with closing(self._connect()) as connection:
+            if camera_id:
+                rows = connection.execute(
+                    "SELECT id, type, settings FROM zones WHERE camera_id = ?", (camera_id,)
+                ).fetchall()
+            else:
+                rows = connection.execute("SELECT id, type, settings FROM zones").fetchall()
+        return {row["id"]: normalize_zone_settings(row["type"], _loads(row["settings"])) for row in rows}
+
+    def zone_dict(self, zone: Zone) -> dict[str, Any]:
+        settings = self.zone_settings(zone.camera_id).get(zone.id) or normalize_zone_settings(zone.type, None)
+        return {**zone.as_dict(), "settings": settings}
+
     def get_zone(self, zone_id: str) -> Zone | None:
         with closing(self._connect()) as connection:
             row = connection.execute("SELECT * FROM zones WHERE id = ?", (zone_id,)).fetchone()
@@ -123,29 +141,45 @@ class NodeEventStore:
         zone_type: str,
         points: list[list[float]],
         enabled: bool = True,
+        settings: dict[str, Any] | None = None,
     ) -> Zone:
         zone_id = f"zone_{uuid4().hex[:12]}"
         now = _utc_now()
+        zone_type = _zone_type(zone_type)
         with closing(self._connect()) as connection:
             connection.execute(
                 """
-                INSERT INTO zones (id, camera_id, name, type, enabled, points, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO zones (id, camera_id, name, type, enabled, points, settings, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (zone_id, camera_id, name, _zone_type(zone_type), int(enabled), _points_json(points), now, now),
+                (
+                    zone_id, camera_id, name, zone_type, int(enabled), _points_json(points, zone_type),
+                    json.dumps(normalize_zone_settings(zone_type, settings)), now, now,
+                ),
             )
             connection.commit()
         self.zones_version += 1
         return self.get_zone(zone_id)  # type: ignore[return-value]
 
     def update_zone(self, zone_id: str, updates: dict[str, Any]) -> Zone | None:
+        current = self.get_zone(zone_id)
+        if current is None:
+            return None
+        zone_type = _zone_type(updates.get("type") or current.type)
         columns = {
             "name": lambda value: value,
             "type": _zone_type,
             "enabled": lambda value: int(bool(value)),
-            "points": _points_json,
+            "points": lambda value: _points_json(value, zone_type),
         }
         fields = [(column, convert(updates[column])) for column, convert in columns.items() if column in updates]
+        if "points" not in updates and zone_type != current.type:
+            fields.append(("points", _points_json([point.as_list() for point in current.points], zone_type)))
+        if "settings" in updates or zone_type != current.type:
+            # A new type starts from its own defaults.
+            base = self.zone_settings(current.camera_id).get(zone_id) if zone_type == current.type else None
+            settings = normalize_zone_settings(zone_type, updates.get("settings"), base)
+            fields.append(("settings", json.dumps(settings)))
         if fields:
             assignments = ", ".join(f"{column} = ?" for column, _ in fields)
             with closing(self._connect()) as connection:
@@ -276,6 +310,17 @@ class NodeEventStore:
             ).fetchall()
         return [_row_to_event(row) for row in rows]
 
+    def events_between(self, start: datetime, end: datetime, event_type: str | None = None) -> list[Event]:
+        """Events that started in [start, end), oldest first."""
+        query = "SELECT * FROM events WHERE started_at >= ? AND started_at < ?"
+        params: list[Any] = [start.astimezone(timezone.utc).isoformat(), end.astimezone(timezone.utc).isoformat()]
+        if event_type:
+            query += " AND type = ?"
+            params.append(event_type)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(query + " ORDER BY started_at ASC", params).fetchall()
+        return [_row_to_event(row) for row in rows]
+
     def delete_event(self, event_id: str) -> bool:
         with closing(self._connect()) as connection:
             cursor = connection.execute("DELETE FROM events WHERE id = ?", (event_id,))
@@ -307,7 +352,9 @@ class _CameraBuffer:
 class ClipRecorder:
     """Writes one WebM clip per event: pre-roll, the event, then post-roll.
 
-    Frames arrive at the vision loop's rate, so the clip plays at that rate.
+    Frames arrive at the vision loop's real rate (the configured interval plus
+    inference time, shared between cameras), so each clip is encoded at the
+    rate measured over its pre-roll and plays back in real time.
     """
 
     def __init__(self, evidence_dir: Path, fps: float) -> None:
@@ -341,7 +388,7 @@ class ClipRecorder:
         height, width = first.shape[:2]
         event_dir = self.evidence_dir / event_id
         event_dir.mkdir(parents=True, exist_ok=True)
-        path, writer = _open_writer(event_dir, self.fps, (width, height))
+        path, writer = _open_writer(event_dir, _measured_fps(buffer, self.fps), (width, height))
         if writer is None:
             logger.warning("No video codec available for event clip", extra={"event_id": event_id})
             return
@@ -380,6 +427,7 @@ class NodeEventPipeline:
         self.evidence = EvidenceRecorder(storage_dir=self.evidence_dir)
         self.clips = ClipRecorder(self.evidence_dir, fps)
         self._trackers: dict[str, ByteTrackTracker] = {}
+        self._active: set[str] = set()
         self._zones: dict[str, list[Zone]] = {}
         self._zones_loaded: tuple[float, int] | None = None
         self._lock = threading.Lock()
@@ -392,22 +440,32 @@ class NodeEventPipeline:
         *,
         now: float,
         observed_at: datetime | None = None,
+        tracked: bool = False,
     ) -> list[Event]:
+        """``tracked``: detections already carry the vision tracker's IDs."""
         with self._lock:
             zones = self._camera_zones(camera_id, now)
             if not zones:
                 self._forget(camera_id, "zone_removed")
                 return []
             timestamp = observed_at or datetime.now(timezone.utc)
-            tracker = self._trackers.setdefault(camera_id, ByteTrackTracker())
-            tracked = tracker.update(camera_id, [_to_detection(item) for item in detections], timestamp)
+            self._active.add(camera_id)
+            if tracked:
+                objects = [
+                    _to_tracked(item, camera_id, timestamp)
+                    for item in detections
+                    if getattr(item, "track_id", None) is not None
+                ]
+            else:
+                tracker = self._trackers.setdefault(camera_id, ByteTrackTracker())
+                objects = tracker.update(camera_id, [_to_detection(item) for item in detections], timestamp)
             self.spatial.update_zones(camera_id, zones)
             height, width = frame.shape[:2]
-            observations, _presence = self.spatial.evaluate(camera_id, tracked, width, height)
+            observations, _presence = self.spatial.evaluate(camera_id, objects, width, height)
             changed = self.engine.process(camera_id, observations, zones)
             for event in changed:
                 if event.ended_at is None:
-                    self._record_start(event, frame, tracked, timestamp)
+                    self._record_start(event, frame, objects, timestamp)
                 else:
                     self.clips.stop(camera_id, event.id, now)
             for event_id, path in self.clips.push(camera_id, frame, now):
@@ -419,8 +477,9 @@ class NodeEventPipeline:
             self._forget(camera_id, reason)
 
     def _forget(self, camera_id: str, reason: str) -> None:
-        if camera_id in self._trackers:
-            self._trackers.pop(camera_id)
+        if camera_id in self._active:
+            self._active.discard(camera_id)
+            self._trackers.pop(camera_id, None)
             self.spatial.reset(camera_id)
             self.engine.mark_camera_unknown(camera_id, reason)
         for event_id, path in self.clips.finish_camera(camera_id):
@@ -439,11 +498,22 @@ class NodeEventPipeline:
         if loaded is None or now - loaded[0] >= ZONE_CACHE_SECONDS or loaded[1] != self.store.zones_version:
             zones: dict[str, list[Zone]] = {}
             for zone in self.store.list_zones():
-                if zone.enabled:
+                if zone.enabled and zone.type in EVENT_ZONE_TYPES:
                     zones.setdefault(zone.camera_id, []).append(zone)
             self._zones = zones
             self._zones_loaded = (now, self.store.zones_version)
         return self._zones.get(camera_id, [])
+
+
+def _to_tracked(item: Any, camera_id: str, timestamp: datetime) -> TrackedObject:
+    return TrackedObject(
+        track_id=int(item.track_id),
+        camera_id=camera_id,
+        class_name=item.class_name,
+        confidence=float(item.confidence),
+        bounding_box=BoundingBox(float(item.x1), float(item.y1), float(item.x2), float(item.y2)),
+        timestamp=timestamp,
+    )
 
 
 def _to_detection(item: Any) -> Detection:
@@ -452,6 +522,15 @@ def _to_detection(item: Any) -> Detection:
         confidence=float(item.confidence),
         bounding_box=BoundingBox(float(item.x1), float(item.y1), float(item.x2), float(item.y2)),
     )
+
+
+def _measured_fps(buffer: _CameraBuffer, fallback: float) -> float:
+    if len(buffer.frames) < 2:
+        return fallback
+    span = buffer.frames[-1][0] - buffer.frames[0][0]
+    if span <= 0:
+        return fallback
+    return max(0.5, min(30.0, (len(buffer.frames) - 1) / span))
 
 
 def _open_writer(event_dir: Path, fps: float, size: tuple[int, int]) -> tuple[Path, Any]:
@@ -490,8 +569,11 @@ def _zone_type(value: str) -> str:
     return value
 
 
-def _points_json(points: list[list[float]]) -> str:
-    if len(points) < 3:
+def _points_json(points: list[list[float]], zone_type: str = "monitored") -> str:
+    if zone_type == "line":
+        if len(points) != 2:
+            raise ValueError("A counting line must have exactly 2 points.")
+    elif len(points) < 3:
         raise ValueError("Zone polygon must have at least 3 points.")
     normalized = []
     for point in points:

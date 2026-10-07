@@ -7,13 +7,14 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import cv2
 
 from campex_node.cameras.manager import CameraManager
 from campex_node.core.config import ROOT_DIR, NodeSettings
 from campex_node.events import NodeEventPipeline
+from campex_node.tracking import EdgeTracker
 
 
 logger = logging.getLogger("campex.node.vision")
@@ -24,6 +25,10 @@ COCO_KEYPOINTS = (
     "left_wrist", "right_wrist", "left_hip", "right_hip",
     "left_knee", "right_knee", "left_ankle", "right_ankle",
 )
+# COCO classes the detector keeps: people plus the vehicles that matter at
+# gates and docks.
+DETECTED_CLASSES = {0: "person", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+VEHICLE_CLASSES = frozenset({"car", "motorcycle", "bus", "truck"})
 # A model that failed to load (e.g. no internet to fetch the pose weights) is
 # retried after this delay instead of on every frame.
 MODEL_RETRY_SECONDS = 60.0
@@ -37,9 +42,11 @@ class EdgeDetection:
     y1: float
     x2: float
     y2: float
+    track_id: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "track_id": self.track_id,
             "class_name": self.class_name,
             "confidence": self.confidence,
             "bounding_box": {
@@ -50,9 +57,9 @@ class EdgeDetection:
             },
         }
 
-    def as_cloud_dict(self, track_id: int) -> dict[str, Any]:
+    def as_cloud_dict(self) -> dict[str, Any]:
         return {
-            "track_id": track_id,
+            "track_id": self.track_id,
             "class_name": self.class_name,
             "confidence": self.confidence,
             "bounding_box": [self.x1, self.y1, self.x2, self.y2],
@@ -75,6 +82,14 @@ class EdgePose:
                 for name, x, y, confidence in self.keypoints
             ],
         }
+
+
+class FrameObserver(Protocol):
+    """Consumes each analysed frame (occupancy, counting lines...)."""
+
+    def observe(self, camera_id: str, frame: Any, detections: list[EdgeDetection], observed_at: datetime) -> None: ...
+
+    def camera_unavailable(self, camera_id: str, reason: str) -> None: ...
 
 
 def resolve_model_path(name: str, data_dir: Path) -> str:
@@ -129,8 +144,9 @@ class _LazyModel:
 class EdgeVisionService:
     """Offline vision loop for CAMPEX Node.
 
-    Person detection uses the bundled Ultralytics YOLO model and falls back to
-    OpenCV HOG when YOLO cannot load. Body mapping uses YOLO Pose.
+    People and vehicles are detected with the bundled Ultralytics YOLO model,
+    falling back to OpenCV HOG (people only) when YOLO cannot load. Body
+    mapping uses YOLO Pose.
     """
 
     def __init__(
@@ -138,10 +154,15 @@ class EdgeVisionService:
         settings: NodeSettings,
         camera_manager: CameraManager,
         events: NodeEventPipeline | None = None,
+        observers: list[FrameObserver] | None = None,
     ) -> None:
         self.settings = settings
         self.camera_manager = camera_manager
         self.events = events
+        self.observers = list(observers or [])
+        self._trackers: dict[str, EdgeTracker] = {}
+        # camera_id -> frame_at of the last analysed frame
+        self._last_frame_at: dict[str, datetime] = {}
         self._hog = cv2.HOGDescriptor()
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
         self._detector = _LazyModel(lambda: resolve_model_path(settings.vision_model, settings.data_dir))
@@ -239,7 +260,12 @@ class EdgeVisionService:
     def cloud_objects(self, camera_id: str) -> list[dict[str, Any]]:
         with self._lock:
             detections = list((self._state.get(camera_id) or {}).get("detections") or [])
-        return [item.as_cloud_dict(index + 1) for index, item in enumerate(detections)]
+        return [item.as_cloud_dict() for item in detections]
+
+    def people_boxes(self, camera_id: str) -> list[tuple[float, float, float, float]]:
+        with self._lock:
+            detections = list((self._state.get(camera_id) or {}).get("detections") or [])
+        return [(item.x1, item.y1, item.x2, item.y2) for item in detections if item.class_name == "person"]
 
     def cloud_poses(self, camera_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -252,7 +278,8 @@ class EdgeVisionService:
         for detection in detections:
             x1, y1, x2, y2 = map(int, (detection.x1, detection.y1, detection.x2, detection.y2))
             cv2.rectangle(frame, (x1, y1), (x2, y2), (125, 179, 255), 2)
-            label = f"{detection.class_name} {detection.confidence:.2f}"
+            prefix = f"#{detection.track_id} " if detection.track_id is not None else ""
+            label = f"{prefix}{detection.class_name} {detection.confidence:.2f}"
             cv2.putText(
                 frame,
                 label,
@@ -284,17 +311,31 @@ class EdgeVisionService:
                 self._set_state(camera.id, status="WAITING_FRAME", detections=[], poses=[])
                 self._events_unavailable(camera.id, "camera_observation_unavailable")
                 continue
+            if frame_at is not None and self._last_frame_at.get(camera.id) == frame_at:
+                continue  # the camera has not delivered a new frame yet
+            age = (datetime.now(timezone.utc) - frame_at).total_seconds() if frame_at else 0.0
+            if age > self.settings.vision_stale_frame_seconds:
+                # The stream froze without disconnecting: the last image is
+                # not what the camera sees now.
+                self._set_state(camera.id, status="STALE_FRAME", detections=[], poses=[], error="Imagem da câmera congelada.")
+                self._events_unavailable(camera.id, "camera_frame_stale")
+                continue
+            if frame_at is not None:
+                self._last_frame_at[camera.id] = frame_at
             updates: dict[str, Any] = {"last_frame_at": frame_at.isoformat() if frame_at else None}
             started = time.perf_counter()
             if camera.vision_enabled:
                 try:
-                    detections, detector = self._detect_people(frame)
+                    detections, detector = self._detect(frame)
+                    tracker = self._trackers.setdefault(camera.id, EdgeTracker())
+                    detections = tracker.update(detections, frame_at or datetime.now(timezone.utc))
                     updates.update(status="RUNNING", detections=detections, detector=detector, error=None)
                 except Exception as exc:
                     updates.update(status="ERROR", detections=[], error=str(exc))
                     self._events_unavailable(camera.id, "detector_error")
                 else:
                     self._process_events(camera.id, frame, detections, frame_at)
+                    self._notify_observers(camera.id, frame, detections, frame_at)
             else:
                 updates.update(status="STOPPED", detections=[])
                 self._events_unavailable(camera.id, "vision_stopped")
@@ -309,11 +350,26 @@ class EdgeVisionService:
         if self.events is None:
             return
         try:
-            self.events.process(camera_id, frame, detections, now=time.monotonic(), observed_at=frame_at)
+            self.events.process(camera_id, frame, detections, now=time.monotonic(), observed_at=frame_at, tracked=True)
         except Exception:
             logger.exception("Event pipeline failed for camera %s", camera_id)
 
+    def _notify_observers(self, camera_id: str, frame, detections: list[EdgeDetection], frame_at) -> None:
+        observed_at = frame_at or datetime.now(timezone.utc)
+        for observer in self.observers:
+            try:
+                observer.observe(camera_id, frame, detections, observed_at)
+            except Exception:
+                logger.exception("Frame observer %s failed for camera %s", type(observer).__name__, camera_id)
+
     def _events_unavailable(self, camera_id: str, reason: str) -> None:
+        self._trackers.pop(camera_id, None)
+        self._last_frame_at.pop(camera_id, None)
+        for observer in self.observers:
+            try:
+                observer.camera_unavailable(camera_id, reason)
+            except Exception:
+                logger.exception("Frame observer %s failed to release camera %s", type(observer).__name__, camera_id)
         if self.events is None:
             return
         try:
@@ -321,14 +377,14 @@ class EdgeVisionService:
         except Exception:
             logger.exception("Event pipeline failed to release camera %s", camera_id)
 
-    def _detect_people(self, frame) -> tuple[list[EdgeDetection], str]:
+    def _detect(self, frame) -> tuple[list[EdgeDetection], str]:
         model = self._detector.get()
         if model is None:
             return self._detect_people_hog(frame), "opencv-hog"
         results = model.predict(
             frame,
             conf=self.settings.vision_confidence,
-            classes=[0],
+            classes=list(DETECTED_CLASSES),
             imgsz=self.settings.vision_input_size,
             verbose=False,
         )
@@ -337,9 +393,13 @@ class EdgeVisionService:
             boxes = getattr(result, "boxes", None)
             if boxes is None:
                 continue
-            for xyxy, confidence in zip(boxes.xyxy.tolist(), boxes.conf.tolist()):
+            classes = boxes.cls.tolist() if getattr(boxes, "cls", None) is not None else [0] * len(boxes.conf)
+            for xyxy, confidence, class_id in zip(boxes.xyxy.tolist(), boxes.conf.tolist(), classes):
+                class_name = DETECTED_CLASSES.get(int(class_id))
+                if class_name is None:
+                    continue
                 x1, y1, x2, y2 = (float(value) for value in xyxy[:4])
-                detections.append(EdgeDetection("person", round(float(confidence), 4), x1, y1, x2, y2))
+                detections.append(EdgeDetection(class_name, round(float(confidence), 4), x1, y1, x2, y2))
         return detections, "yolo"
 
     def _estimate_poses(self, frame) -> dict[str, Any]:
