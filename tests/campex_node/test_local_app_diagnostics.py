@@ -122,3 +122,46 @@ def test_node_panel_does_not_override_cloud_cameras(tmp_path):
             raise AssertionError("Cloud camera was changed from the Node panel")
 
     assert store.get_local_cameras() == []
+
+
+def test_local_node_serves_zones_events_and_clip(monkeypatch, tmp_path):
+    from campex_node.core.config import NodeCameraConfig
+
+    monkeypatch.setenv("CAMPEX_NODE_DATA_DIR", str(tmp_path / "node"))
+    app = create_app()
+
+    with TestClient(app) as client:
+        lifecycle = app.state.runtime.lifecycle
+        camera = NodeCameraConfig(id="cam-6", name="Canal6", rtsp_url="rtsp://camera/6")
+        monkeypatch.setattr(lifecycle.camera_manager, "configs", lambda: [camera])
+        points = [[0.1, 0.1], [0.5, 0.1], [0.5, 0.9]]
+
+        assert client.post(
+            "/api/zones", json={"camera_id": "missing", "name": "Porta", "type": "monitored", "points": points}
+        ).status_code == 404
+        created = client.post(
+            "/api/zones", json={"camera_id": "cam-6", "name": "Porta", "type": "monitored", "points": points}
+        )
+        assert created.status_code == 201
+        zone_id = created.json()["id"]
+        assert [zone["id"] for zone in client.get("/api/zones?camera_id=cam-6").json()] == [zone_id]
+        assert client.patch(f"/api/zones/{zone_id}", json={"enabled": False}).json()["enabled"] is False
+
+        clip = tmp_path / "node" / "evidence" / "evt_x" / "clip.webm"
+        clip.parent.mkdir(parents=True)
+        clip.write_bytes(b"webm")
+        event = lifecycle.events_store.create(event_type="PERSON_MONITORED_ZONE", camera_id="cam-6", zone_id=zone_id)
+        lifecycle.events_store.close(event.id, ended_at="2026-10-06T22:00:09+00:00", duration=9.0)
+        lifecycle.events_store.update_status(event.id, "CLOSED", metadata_update={"clip_path": str(clip)})
+
+        [listed] = client.get("/api/events").json()
+        assert listed["id"] == event.id and listed["duration"] == 9.0
+        response = client.get(f"/api/events/{event.id}/evidence?variant=clip")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "video/webm"
+        assert response.content == b"webm"
+        assert client.get(f"/api/events/{event.id}/evidence?variant=overlay").status_code == 404
+
+        lifecycle.events_store.update_status(event.id, "CLOSED", metadata_update={"clip_path": str(tmp_path / "x.webm")})
+        assert client.get(f"/api/events/{event.id}/evidence?variant=clip").status_code == 404
+        assert client.delete(f"/api/zones/{zone_id}").status_code == 204

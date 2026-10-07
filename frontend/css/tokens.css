@@ -1,35 +1,49 @@
+/* Shared by the CAMPEX panel and the CAMPEX Node page (served at /css). */
 :root {
-  --color-black: #090a0c;
-  --color-ink: #12151a;
-  --color-panel: #171b21;
-  --color-panel-soft: #20262e;
-  --color-elevated: #232a33;
-  --color-border: #313946;
-  --color-border-soft: #252b34;
-  --color-text: #f2f5f8;
-  --color-muted: #9aa6b4;
-  --color-subtle: #6f7b8a;
-  --color-paper: #f7f8fa;
-  --color-paper-muted: #e8ebef;
-  --color-online: #31c46b;
-  --color-attention: #e2b245;
-  --color-critical: #ef5b5b;
-  --color-accent: #7db3ff;
-  --font-display: "Avenir Next", Avenir, "Nunito Sans", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-sans: "Inter", "SF Pro Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", ui-monospace, monospace;
-  --sidebar-width: clamp(14.25rem, 15vw, 16rem);
+  /* Surfaces: neutral graphite, darkest at the edges. */
+  --color-black: #08090b;
+  --color-ink: #0c0e11;
+  --color-canvas: #0e1114;
+  --color-panel: #13171b;
+  --color-panel-soft: #191e23;
+  --color-elevated: #1f252b;
+  --color-border: #2c343c;
+  --color-border-soft: #20262c;
+
+  /* Text */
+  --color-text: #edf1f4;
+  --color-muted: #96a1ac;
+  --color-subtle: #66717c;
+  --color-paper: #edf1f4;
+  --color-paper-muted: #dfe4e9;
+
+  /* Signal: blue marks selection, focus and links; the rest is state. */
+  --color-accent: #5ea8ff;
+  --color-accent-soft: rgba(94, 168, 255, 0.12);
+  --color-online: #3dc983;
+  --color-attention: #e5ae48;
+  --color-critical: #ee6461;
+
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable Text", "Geist", "Inter", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: "Segoe UI Variable Text", "Geist", "Inter", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", "Roboto Mono", ui-monospace, monospace;
+
+  --sidebar-width: clamp(14rem, 15vw, 15.5rem);
   --sidebar-collapsed-width: 4.25rem;
   --workspace-pad: clamp(1rem, 1.55vw, 1.5rem);
   --panel-pad: clamp(0.875rem, 1.2vw, 1.125rem);
   --row-pad: clamp(0.625rem, 0.9vw, 0.875rem);
   --control-height: 2.25rem;
-  --topbar-height: clamp(4rem, 8svh, 4.75rem);
+  --topbar-height: 4rem;
   --media-min-height: clamp(18rem, 54svh, 34rem);
   --media-wall-min-height: clamp(16rem, 46svh, 30rem);
-  --scrollbar-track: rgba(255, 255, 255, 0.035);
-  --scrollbar-thumb: rgba(154, 166, 180, 0.34);
-  --scrollbar-thumb-hover: rgba(125, 179, 255, 0.58);
-  --radius: 8px;
-  --shadow-panel: 0 0.75rem 1.75rem rgba(0, 0, 0, 0.2);
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgba(150, 161, 172, 0.28);
+  --scrollbar-thumb-hover: rgba(94, 168, 255, 0.5);
+
+  /* Radius follows hierarchy: containers > controls > chips. */
+  --radius: 10px;
+  --radius-control: 7px;
+  --radius-chip: 999px;
+  --shadow-panel: none;
 }

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import json
+import math
 import mimetypes
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ASSETS_DIR = ROOT / "frontend" / "assets"
+FRONTEND_DIR = ROOT / "frontend"
+STATIC_DIRS = {"assets": FRONTEND_DIR / "assets", "css": FRONTEND_DIR / "css", "vendor": FRONTEND_DIR / "vendor"}
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -34,8 +37,15 @@ class NodePreviewHandler(BaseHTTPRequestHandler):
             payload.update({"ok": True, "status": "pending"})
             self._send_json(payload)
             return
-        if path.startswith("/assets/"):
-            self._send_asset(path.removeprefix("/assets/"))
+        if path == "/api/events":
+            self._send_json(_events_payload())
+            return
+        if path.startswith("/api/cameras/") and path.endswith("/vision/status"):
+            self._send_json(_vision_payload(path.split("/")[3]))
+            return
+        prefix = path.split("/")[1] if path.count("/") >= 2 else ""
+        if prefix in STATIC_DIRS:
+            self._send_static(STATIC_DIRS[prefix], path.removeprefix(f"/{prefix}/"))
             return
         self.send_error(404)
 
@@ -91,9 +101,9 @@ class NodePreviewHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or "0")
         return self.rfile.read(length) if length else b""
 
-    def _send_asset(self, name: str) -> None:
-        root = ASSETS_DIR.resolve()
-        target = (ASSETS_DIR / name).resolve()
+    def _send_static(self, directory: Path, name: str) -> None:
+        root = directory.resolve()
+        target = (directory / name).resolve()
         if root not in target.parents or not target.exists():
             self.send_error(404)
             return
@@ -107,24 +117,97 @@ class NodePreviewHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+STARTED = datetime.now(timezone.utc)
+CAMERAS = [
+    {"id": "cam_canal6", "name": "Canal 6, porta do galpão", "status": "ONLINE", "vision": True},
+    {"id": "cam_corte_1", "name": "Máquina de corte 1", "status": "ONLINE", "vision": True},
+    {"id": "cam_docas", "name": "Docas", "status": "DEGRADED", "vision": False},
+]
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def _status_payload() -> dict:
+    elapsed = (_now() - STARTED).total_seconds()
     return {
         "node_id": "node_preview_01",
-        "cloud_url": None,
-        "organization_id": "default",
-        "paired": False,
-        "cloud_configured": False,
+        "version": "0.3.2",
+        "update": {"state": "idle", "message": "Versão mais recente instalada", "available_version": None,
+                   "checked_at": (_now() - timedelta(hours=2)).isoformat()},
+        "cloud_url": "https://campex-api.vercel.app/api/v1",
+        "organization_id": "rba-industria",
+        "paired": True,
+        "cloud_configured": True,
         "queue_size": 3,
-        "events_pending": 3,
-        "metrics_pending": 14,
-        "cameras_total": 3,
-        "cameras_online": 2,
+        "last_sync_at": (_now() - timedelta(seconds=12)).isoformat(),
+        "last_heartbeat_at": (_now() - timedelta(seconds=20)).isoformat(),
+        "last_cloud_ok_at": (_now() - timedelta(seconds=12)).isoformat(),
+        "last_cloud_error": None,
+        "uptime_seconds": int(elapsed) + 3 * 3600 + 17 * 60,
+        "data_dir": r"C:\Users\operador\AppData\Local\CAMPEX Node",
+        "logs_dir": r"C:\Users\operador\AppData\Local\CAMPEX Node\logs",
+        "cpu_percent": 34 + 8 * math.sin(elapsed / 7),
+        "ram_percent": 61.0,
+        "cameras_total": len(CAMERAS),
+        "cameras_online": sum(1 for camera in CAMERAS if camera["status"] == "ONLINE"),
         "cameras": [
-            {"id": "cam_entrada", "name": "Entrada principal", "status": "ONLINE"},
-            {"id": "cam_corte_1", "name": "Maquina de corte 1", "status": "ONLINE"},
-            {"id": "cam_docas", "name": "Docas", "status": "DEGRADED"},
+            {
+                "id": camera["id"],
+                "name": camera["name"],
+                "status": camera["status"],
+                "frames_received": int(elapsed * 15),
+                "last_frame_at": (_now() - timedelta(seconds=0 if camera["status"] == "ONLINE" else 14)).isoformat(),
+            }
+            for camera in CAMERAS
         ],
     }
+
+
+def _vision_payload(camera_id: str) -> dict:
+    camera = next((item for item in CAMERAS if item["id"] == camera_id), None)
+    elapsed = (_now() - STARTED).total_seconds()
+    running = bool(camera and camera["vision"])
+    seed = sum(map(ord, camera_id))
+    return {
+        "camera_id": camera_id,
+        "status": "RUNNING" if running else "STOPPED",
+        "metrics": {
+            "camera_fps": round(14.6 + (seed % 5) / 10, 1) if camera and camera["status"] == "ONLINE" else 3.2,
+            "vision_fps": round(2.6 + 0.35 * math.sin(elapsed / 3 + seed), 2) if running else 0,
+            "frames_processed": int(elapsed * 2.7) + seed * 40 if running else 0,
+            "frames_received": int(elapsed * 15),
+        },
+        "components": {"mapping": {"state": "STOPPED", "poses": 0, "error": None}},
+    }
+
+
+def _events_payload() -> list[dict]:
+    base = _now().replace(microsecond=0)
+    rows = [
+        ("PERSON_MONITORED_ZONE", "cam_canal6", "Porta", 2, 7.0, True),
+        ("PERSON_MONITORED_ZONE", "cam_corte_1", "Estação de corte", 9, 312.0, True),
+        ("PERSON_RESTRICTED_ZONE", "cam_corte_1", "Área da lâmina", 26, 4.0, True),
+        ("PERSON_MONITORED_ZONE", "cam_canal6", "Porta", 41, 11.0, True),
+        ("PERSON_MONITORED_ZONE", "cam_canal6", "Porta", 0, None, False),
+    ]
+    events = []
+    for index, (kind, camera, zone, minutes_ago, duration, closed) in enumerate(rows):
+        started = base - timedelta(minutes=minutes_ago, seconds=20)
+        events.append({
+            "id": f"evt_preview{index}",
+            "type": kind,
+            "camera_id": camera,
+            "zone_id": f"zone_{zone}",
+            "track_id": 10 + index,
+            "status": "CLOSED" if closed else "OPEN",
+            "started_at": started.isoformat(),
+            "ended_at": (started + timedelta(seconds=duration)).isoformat() if closed else None,
+            "duration": duration,
+            "metadata": {"zone_name": zone, **({"clip_path": "clip.webm"} if closed else {})},
+        })
+    return sorted(events, key=lambda item: item["started_at"], reverse=True)
 
 
 def _diagnostics_payload() -> dict:

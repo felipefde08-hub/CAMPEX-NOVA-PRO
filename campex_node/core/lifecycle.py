@@ -13,6 +13,7 @@ from campex_node.cloud.heartbeat import HeartbeatService
 from campex_node.cloud.live_relay import LiveRelayService
 from campex_node.cloud.sync import SyncService
 from campex_node.core.config import NodeSettings
+from campex_node.events import NodeEventPipeline, NodeEventStore
 from campex_node.storage.local_store import LocalStore
 from campex_node.telemetry.collector import TelemetryCollector
 from campex_node.updates.service import UpdateService
@@ -40,6 +41,7 @@ class NodeLifecycle:
         self.config_sync: ConfigSyncService | None = None
         self.sync: SyncService | None = None
         self.telemetry: TelemetryCollector | None = None
+        self.events_store = NodeEventStore(settings.database_path)
         self.vision: EdgeVisionService | None = None
         self.live_relay: LiveRelayService | None = None
         self.updates: UpdateService | None = None
@@ -49,6 +51,7 @@ class NodeLifecycle:
     def initialize(self) -> None:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self.store.initialize()
+        self.events_store.initialize()
         self.node_id = self._get_or_create_node_id()
         cloud_status = self.cloud_client.check_connection()
         if cloud_status.ok:
@@ -73,7 +76,12 @@ class NodeLifecycle:
         if self.cloud_client.is_configured():
             self.config_sync.sync_once()
         self.camera_manager.start()
-        self.vision = EdgeVisionService(self.settings, self.camera_manager)
+        events = NodeEventPipeline(
+            self.events_store,
+            self.settings.data_dir,
+            fps=1.0 / max(0.05, self.settings.vision_interval_seconds),
+        )
+        self.vision = EdgeVisionService(self.settings, self.camera_manager, events)
         self.vision.start()
         if self.cloud_client.is_configured():
             self.config_sync.start()

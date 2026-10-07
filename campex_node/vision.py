@@ -13,6 +13,7 @@ import cv2
 
 from campex_node.cameras.manager import CameraManager
 from campex_node.core.config import ROOT_DIR, NodeSettings
+from campex_node.events import NodeEventPipeline
 
 
 logger = logging.getLogger("campex.node.vision")
@@ -132,9 +133,15 @@ class EdgeVisionService:
     OpenCV HOG when YOLO cannot load. Body mapping uses YOLO Pose.
     """
 
-    def __init__(self, settings: NodeSettings, camera_manager: CameraManager) -> None:
+    def __init__(
+        self,
+        settings: NodeSettings,
+        camera_manager: CameraManager,
+        events: NodeEventPipeline | None = None,
+    ) -> None:
         self.settings = settings
         self.camera_manager = camera_manager
+        self.events = events
         self._hog = cv2.HOGDescriptor()
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
         self._detector = _LazyModel(lambda: resolve_model_path(settings.vision_model, settings.data_dir))
@@ -147,6 +154,9 @@ class EdgeVisionService:
             daemon=True,
         )
         self._state: dict[str, dict[str, Any]] = {}
+        # camera_id -> (sampled_at, frames_received, fps); status() is polled by
+        # several callers, so the FPS is only resampled once per window.
+        self._capture_fps: dict[str, tuple[float, int, float | None]] = {}
 
     def start(self) -> None:
         if not self._thread.is_alive():
@@ -170,6 +180,9 @@ class EdgeVisionService:
                 "objects": 0,
                 "error": "Camera not found.",
             }
+        frames_received, camera_fps = self._capture_metrics(camera_id)
+        mapping_status = state.get("mapping_status") or "STOPPED"
+        poses = len(state.get("poses") or [])
         return {
             "camera_id": camera_id,
             "status": state.get("status") or ("STARTING" if camera.vision_enabled else "STOPPED"),
@@ -181,11 +194,42 @@ class EdgeVisionService:
             "inference_ms": state.get("inference_ms"),
             "frames_processed": state.get("frames_processed", 0),
             "vision_fps": state.get("vision_fps", 0),
-            "mapping_status": state.get("mapping_status") or "STOPPED",
+            "mapping_status": mapping_status,
             "mapping_error": state.get("mapping_error"),
-            "poses": len(state.get("poses") or []),
+            "poses": poses,
             "error": state.get("error"),
+            # Same shape the cloud API serves, so the panel reads one format.
+            "metrics": {
+                "camera_fps": camera_fps or 0,
+                "vision_fps": state.get("vision_fps", 0),
+                "inference_ms": state.get("inference_ms"),
+                "frames_processed": state.get("frames_processed", 0),
+                "frames_received": frames_received,
+                "objects_detected": len(state.get("detections") or []),
+            },
+            "components": {
+                "mapping": {
+                    "state": mapping_status,
+                    "poses": poses,
+                    "error": state.get("mapping_error"),
+                }
+            },
         }
+
+    def _capture_metrics(self, camera_id: str) -> tuple[int, float | None]:
+        runtime = next((item for item in self.camera_manager.states() if item.id == camera_id), None)
+        frames_received = runtime.frames_received if runtime else 0
+        now = time.monotonic()
+        with self._lock:
+            previous = self._capture_fps.get(camera_id)
+            if previous is None or frames_received < previous[1]:
+                self._capture_fps[camera_id] = (now, frames_received, None)
+                return frames_received, None
+            sampled_at, sampled_frames, fps = previous
+            if now - sampled_at >= 1.0:
+                fps = round((frames_received - sampled_frames) / (now - sampled_at), 1)
+                self._capture_fps[camera_id] = (now, frames_received, fps)
+        return frames_received, fps
 
     def objects(self, camera_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -233,10 +277,12 @@ class EdgeVisionService:
         for camera in self.camera_manager.configs():
             if not camera.enabled or not (camera.vision_enabled or camera.mapping_enabled):
                 self._set_state(camera.id, status="STOPPED", detections=[], poses=[], mapping_status="STOPPED", mapping_error=None)
+                self._events_unavailable(camera.id, "vision_stopped")
                 continue
             frame, frame_at = self.camera_manager.latest_frame(camera.id)
             if frame is None:
                 self._set_state(camera.id, status="WAITING_FRAME", detections=[], poses=[])
+                self._events_unavailable(camera.id, "camera_observation_unavailable")
                 continue
             updates: dict[str, Any] = {"last_frame_at": frame_at.isoformat() if frame_at else None}
             started = time.perf_counter()
@@ -246,14 +292,34 @@ class EdgeVisionService:
                     updates.update(status="RUNNING", detections=detections, detector=detector, error=None)
                 except Exception as exc:
                     updates.update(status="ERROR", detections=[], error=str(exc))
+                    self._events_unavailable(camera.id, "detector_error")
+                else:
+                    self._process_events(camera.id, frame, detections, frame_at)
             else:
                 updates.update(status="STOPPED", detections=[])
+                self._events_unavailable(camera.id, "vision_stopped")
             if camera.mapping_enabled:
                 updates.update(self._estimate_poses(frame))
             else:
                 updates.update(poses=[], mapping_status="STOPPED", mapping_error=None)
             updates["inference_ms"] = round((time.perf_counter() - started) * 1000, 1)
             self._set_state(camera.id, **updates)
+
+    def _process_events(self, camera_id: str, frame, detections: list[EdgeDetection], frame_at) -> None:
+        if self.events is None:
+            return
+        try:
+            self.events.process(camera_id, frame, detections, now=time.monotonic(), observed_at=frame_at)
+        except Exception:
+            logger.exception("Event pipeline failed for camera %s", camera_id)
+
+    def _events_unavailable(self, camera_id: str, reason: str) -> None:
+        if self.events is None:
+            return
+        try:
+            self.events.camera_unavailable(camera_id, reason)
+        except Exception:
+            logger.exception("Event pipeline failed to release camera %s", camera_id)
 
     def _detect_people(self, frame) -> tuple[list[EdgeDetection], str]:
         model = self._detector.get()
