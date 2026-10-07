@@ -17,6 +17,7 @@ frontend/config.local.js
 .pytest_cache/
 .tmp/
 .playwright-cli/
+.playwright-mcp/
 .coverage
 htmlcov/
 build/
