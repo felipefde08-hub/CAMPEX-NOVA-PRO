@@ -9,7 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 import cv2
@@ -82,6 +82,8 @@ class NodeEventStore:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
         self.zones_version = 0
+        # Called with each event created or changed (the Cloud outbox).
+        self.listeners: list[Callable[[Event], None]] = []
 
     def initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,7 +243,9 @@ class NodeEventStore:
                 ),
             )
             connection.commit()
-        return self.get(event_id)  # type: ignore[return-value]
+        event = self.get(event_id)
+        self._notify(event)
+        return event  # type: ignore[return-value]
 
     def get(self, event_id: str) -> Event | None:
         with closing(self._connect()) as connection:
@@ -283,10 +287,21 @@ class NodeEventStore:
                 (status, next_ended_at, next_duration, json.dumps(metadata), _utc_now(), event_id),
             )
             connection.commit()
-        return self.get(event_id)
+        event = self.get(event_id)
+        self._notify(event)
+        return event
 
     def close(self, event_id: str, ended_at: str | None = None, duration: float | None = None) -> Event | None:
         return self.update_status(event_id, "CLOSED", ended_at, duration)
+
+    def _notify(self, event: Event | None) -> None:
+        if event is None:
+            return
+        for listener in self.listeners:
+            try:
+                listener(event)
+            except Exception:
+                logger.exception("Event listener failed for %s", event.id)
 
     def list_events(
         self,

@@ -33,6 +33,7 @@ ZONE_SUBJECTS = {
     "station": ("person",),
     "dock": ("vehicle",),
     "area": ("person", "vehicle"),
+    "occupancy": ("person",),
 }
 SUBJECT_KIND = {"person": PERSON_OCCUPANCY, "vehicle": VEHICLE_OCCUPANCY}
 # Detections drop out for a frame or two; a zone only turns vacant after
@@ -45,6 +46,11 @@ CONFIRM_FRAMES = 2
 TOUCH_SECONDS = 30.0
 ZONE_CACHE_SECONDS = 2.0
 LINE_TRACK_SECONDS = 5.0
+# Occupancy limits: the count must stay at or under the limit this long
+# before the limit is considered respected again (detections flicker).
+LIMIT_CLEAR_SECONDS = 10.0
+# A person's stay ends when their track is not seen for this long.
+DWELL_GONE_SECONDS = 10.0
 
 # Machine motion analysis
 ROI_WIDTH = 160
@@ -52,6 +58,19 @@ PIXEL_DELTA = 25
 RUN_WINDOW_SECONDS = 5.0
 RUN_MIN_MOTION_SAMPLES = 2
 PERSON_BOX_PADDING = 0.15
+
+# Machine signal lights
+LIGHT_MIN_VALUE = 200  # HSV brightness of a lit pixel
+LIGHT_MIN_SATURATION = 80  # a colored light, as opposed to white glare
+LIGHT_WHITE_MAX_SATURATION = 60
+# Hue ranges (OpenCV, 0-179) of each light color; red wraps around 0.
+LIGHT_HUES = {"red": ((0, 10), (160, 179)), "yellow": ((15, 35),), "green": ((40, 85),), "blue": ((95, 130),)}
+# A light counts as lit if it was lit this recently, so a blinking light
+# stays "on" between flashes.
+LIGHT_HOLD_SECONDS = 2.0
+# Below this share of the light visible (a person in front of it), the
+# sample says nothing.
+LIGHT_MIN_VISIBLE = 0.5
 
 
 class ZoneCache:
@@ -147,6 +166,21 @@ class _Presence:
     peak: int = 0
     count: int = 0
     event_id: str | None = None
+    # Occupancy limit
+    over_since: datetime | None = None
+    under_since: datetime | None = None
+    limit_peak: int = 0
+    limit_event_id: str | None = None
+
+
+@dataclass
+class _Dwell:
+    zone_id: str
+    camera_id: str
+    track_id: int
+    first_seen: datetime
+    last_seen: datetime
+    event_id: str | None = None
 
 
 @dataclass
@@ -166,7 +200,11 @@ class OccupancyMonitor:
     - STATION_VACANT: a station empty for longer than its alert time, during
       working hours (any time when no shifts are configured);
     - AFTER_HOURS_PRESENCE: someone or a vehicle in an area outside the shifts;
-    - DOCK_VISIT: a vehicle parked at a dock for at least ``min_visit_seconds``.
+    - DOCK_VISIT: a vehicle parked at a dock for at least ``min_visit_seconds``;
+    - OCCUPANCY_LIMIT: more people in an occupancy zone than ``max_people``
+      for ``over_limit_seconds``;
+    - LONG_PRESENCE: one person (one track) in an occupancy zone for longer
+      than ``max_dwell_seconds``. A track that switches restarts the count.
     """
 
     def __init__(
@@ -183,6 +221,7 @@ class OccupancyMonitor:
         self.zones = zones or ZoneCache(events_store)
         self._presence: dict[tuple[str, str], _Presence] = {}
         self._lines: dict[tuple[str, int], _LinePoint] = {}
+        self._dwell: dict[tuple[str, int], _Dwell] = {}
         self._lock = threading.Lock()
 
     def presence(self, zone_id: str, subject: str = "person") -> tuple[str | None, datetime | None]:
@@ -223,8 +262,11 @@ class OccupancyMonitor:
                 for subject in ZONE_SUBJECTS.get(zone.type, ()):
                     count = sum(1 for foot in feet[subject] if _inside(foot, points, margin))
                     self._update(zone, settings, subject, count, observed_at, frame)
+                if zone.type == "occupancy" and float(settings.get("max_dwell_seconds") or 0) > 0:
+                    self._track_dwell(zone, settings, detections, points, width, height, observed_at, frame)
             self._forget_removed(camera_id, {zone.id for zone, _ in zones})
             self._prune_lines(observed_at)
+            self._prune_dwell(camera_id, observed_at)
 
     def camera_unavailable(self, camera_id: str, reason: str) -> None:
         with self._lock:
@@ -233,6 +275,10 @@ class OccupancyMonitor:
                     continue
                 self._release(item, reason)
                 del self._presence[key]
+            for key, dwell in list(self._dwell.items()):
+                if dwell.camera_id == camera_id:
+                    self._end_dwell(dwell, {"knowledge_state": "UNKNOWN", "uncertainty_reason": reason})
+                    del self._dwell[key]
 
     def _update(self, zone: Zone, settings: dict[str, Any], subject: str, count: int, at: datetime, frame: Any) -> None:
         item = self._presence.setdefault((zone.id, subject), _Presence(zone.id, zone.camera_id, subject))
@@ -259,6 +305,8 @@ class OccupancyMonitor:
             self.activity.touch(item.interval_id, at, item.peak)
             item.last_touch = at
         self._check_alerts(item, zone, settings, at, frame)
+        if zone.type == "occupancy":
+            self._check_limit(item, zone, settings, at, frame)
 
     def _transition(self, item: _Presence, zone: Zone, settings: dict[str, Any], state: str, at: datetime, frame: Any) -> None:
         if item.interval_id:
@@ -312,18 +360,85 @@ class OccupancyMonitor:
                 metadata={"subject": "vehicle"},
             )
 
+    def _check_limit(self, item: _Presence, zone: Zone, settings: dict[str, Any], at: datetime, frame: Any) -> None:
+        limit = float(settings.get("max_people") or 0)
+        if limit <= 0:
+            return
+        if item.count > limit:
+            item.under_since = None
+            item.over_since = item.over_since or at
+            item.limit_peak = max(item.limit_peak, item.count)
+            if item.limit_event_id is None and (at - item.over_since).total_seconds() >= float(settings["over_limit_seconds"]):
+                item.limit_event_id = self.events.open(
+                    event_type="OCCUPANCY_LIMIT", zone=zone, severity="attention", started_at=item.over_since, frame=frame,
+                    metadata={"max_people": int(limit), "people": item.count},
+                )
+            return
+        item.under_since = item.under_since or at
+        if (at - item.under_since).total_seconds() < LIMIT_CLEAR_SECONDS:
+            return
+        if item.limit_event_id:
+            self.events.close(item.limit_event_id, item.under_since, {"peak": item.limit_peak, "max_people": int(limit)})
+            item.limit_event_id = None
+        item.over_since, item.limit_peak = None, 0
+
+    def _track_dwell(
+        self,
+        zone: Zone,
+        settings: dict[str, Any],
+        detections: list[Any],
+        points: list[tuple[float, float]],
+        width: int,
+        height: int,
+        at: datetime,
+        frame: Any,
+    ) -> None:
+        max_dwell = float(settings["max_dwell_seconds"])
+        for detection in detections:
+            track_id = getattr(detection, "track_id", None)
+            if track_id is None or _subject(detection.class_name) != "person":
+                continue
+            if not _inside(_foot(detection, width, height), points):
+                continue
+            key = (zone.id, int(track_id))
+            dwell = self._dwell.get(key)
+            if dwell is None:
+                dwell = self._dwell[key] = _Dwell(zone.id, zone.camera_id, int(track_id), at, at)
+            dwell.last_seen = at
+            if dwell.event_id is None and (at - dwell.first_seen).total_seconds() >= max_dwell:
+                dwell.event_id = self.events.open(
+                    event_type="LONG_PRESENCE", zone=zone, severity="attention", started_at=dwell.first_seen, frame=frame,
+                    metadata={"track_id": dwell.track_id, "max_dwell_seconds": max_dwell},
+                )
+
+    def _prune_dwell(self, camera_id: str, at: datetime) -> None:
+        for key, dwell in list(self._dwell.items()):
+            if dwell.camera_id == camera_id and (at - dwell.last_seen).total_seconds() > DWELL_GONE_SECONDS:
+                self._end_dwell(dwell)
+                del self._dwell[key]
+
+    def _end_dwell(self, dwell: _Dwell, metadata: dict[str, Any] | None = None) -> None:
+        if dwell.event_id:
+            seconds = round((dwell.last_seen - dwell.first_seen).total_seconds(), 1)
+            self.events.close(dwell.event_id, dwell.last_seen, {"dwell_seconds": seconds, **(metadata or {})})
+
     def _release(self, item: _Presence, reason: str) -> None:
         ended = item.last_frame or item.state_since
         if item.interval_id and ended:
             self.activity.close(item.interval_id, ended, item.peak)
-        if item.event_id and ended:
-            self.events.close(item.event_id, ended, {"knowledge_state": "UNKNOWN", "uncertainty_reason": reason})
+        for event_id in (item.event_id, item.limit_event_id):
+            if event_id and ended:
+                self.events.close(event_id, ended, {"knowledge_state": "UNKNOWN", "uncertainty_reason": reason})
 
     def _forget_removed(self, camera_id: str, zone_ids: set[str]) -> None:
         for key, item in list(self._presence.items()):
             if item.camera_id == camera_id and item.zone_id not in zone_ids:
                 self._release(item, "zone_removed")
                 del self._presence[key]
+        for key, dwell in list(self._dwell.items()):
+            if dwell.camera_id == camera_id and dwell.zone_id not in zone_ids:
+                self._end_dwell(dwell, {"knowledge_state": "UNKNOWN", "uncertainty_reason": "zone_removed"})
+                del self._dwell[key]
 
     def _count_line(
         self, zone: Zone, settings: dict[str, Any], detections: list[Any], width: int, height: int, at: datetime
@@ -380,10 +495,14 @@ class _Machine:
     mask: np.ndarray | None = None
     stop_event_id: str | None = None
     operator_event_id: str | None = None
+    # Signal light machines
+    light_level: float | None = None
+    last_lit: datetime | None = None
 
 
 class MachineMonitor:
-    """Decides whether each machine is running from movement in its area.
+    """Decides whether each machine is running from movement in its area,
+    or from a signal light (``detection: light``).
 
     Every sample compares the machine's area with the previous frame (people
     detected by the vision loop are masked out, so an operator walking past
@@ -394,6 +513,11 @@ class MachineMonitor:
     - STOPPED after ``stop_after_seconds`` without movement, starting at the
       last movement seen;
     - UNKNOWN while the camera is offline or frozen (never counted as downtime).
+
+    A signal light gives the same running signal as movement: lit (or unlit,
+    for a light that means "stopped") within ``LIGHT_HOLD_SECONDS``. The
+    lit share of the light's area is compared with the levels calibrated on
+    the camera, so a dim LED and a bright tower light both work.
 
     Each burst of movement after a still sample counts as one cycle (a press
     stroke, a robot pick). It raises MACHINE_STOPPED for every stop and, for
@@ -446,6 +570,7 @@ class MachineMonitor:
                     "state": item.state or UNKNOWN,
                     "since": iso(item.state_since),
                     "activity": round(item.activity, 4),
+                    "light_level": round(item.light_level, 4) if item.light_level is not None else None,
                     "last_motion_at": iso(item.last_motion),
                     "stop_event_id": item.stop_event_id,
                     "operator_event_id": item.operator_event_id,
@@ -461,6 +586,12 @@ class MachineMonitor:
             except Exception:
                 logger.exception("Machine monitor loop failed")
             self._stop.wait(self.interval_seconds)
+
+    def light_level(self, zone_id: str) -> float | None:
+        """The lit share of a signal light's area in the latest sample."""
+        with self._lock:
+            machine = self._machines.get(zone_id)
+            return machine.light_level if machine else None
 
     def _sample_cameras(self) -> None:
         for camera in self.camera_manager.configs():
@@ -514,29 +645,12 @@ class MachineMonitor:
         x1, y1, x2, y2 = machine.roi
         if x2 - x1 < 2 or y2 - y1 < 2:
             return
-        gray = cv2.cvtColor(cv2.resize(frame[y1:y2, x1:x2], machine.roi_size, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
-        previous, machine.prev_gray = machine.prev_gray, gray
+        crop = cv2.resize(frame[y1:y2, x1:x2], machine.roi_size, interpolation=cv2.INTER_AREA)
         machine.last_sample = at
-        if previous is None or machine.monitoring_since is None:
-            machine.monitoring_since = at
-            if machine.state == UNKNOWN:
-                machine.state = None  # decide afresh once frames are back
+        light = settings.get("detection") == "light"
+        moving = self._light_signal(machine, settings, crop, people, at) if light else self._motion_signal(machine, settings, crop, people, at)
+        if moving is None:
             return
-
-        valid = machine.mask.copy()
-        scale_x, scale_y = machine.roi_size[0] / (x2 - x1), machine.roi_size[1] / (y2 - y1)
-        for px1, py1, px2, py2 in people:
-            pad_x, pad_y = (px2 - px1) * PERSON_BOX_PADDING, (py2 - py1) * PERSON_BOX_PADDING
-            left = int(max(0, (px1 - pad_x - x1) * scale_x))
-            top = int(max(0, (py1 - pad_y - y1) * scale_y))
-            right = int(min(machine.roi_size[0], (px2 + pad_x - x1) * scale_x))
-            bottom = int(min(machine.roi_size[1], (py2 + pad_y - y1) * scale_y))
-            if right > left and bottom > top:
-                valid[top:bottom, left:right] = False
-        changed = cv2.absdiff(gray, previous) > PIXEL_DELTA
-        machine.activity = float(changed[valid].mean()) if valid.any() else 0.0
-        moving = machine.activity >= float(settings["motion_threshold"])
 
         if moving:
             machine.motions.append(at)
@@ -554,7 +668,7 @@ class MachineMonitor:
             if (at - quiet_since).total_seconds() >= stop_after:
                 self._transition(machine, zone, settings, STOPPED, quiet_since, frame)
 
-        if moving and not machine.was_moving and machine.state == RUNNING:
+        if moving and not machine.was_moving and machine.state == RUNNING and not light:
             self.activity.add_count(zone.id, at, "cycles")
         machine.was_moving = moving
 
@@ -562,6 +676,58 @@ class MachineMonitor:
         if machine.interval_id and (machine.last_touch is None or (at - machine.last_touch).total_seconds() >= TOUCH_SECONDS):
             self.activity.touch(machine.interval_id, at)
             machine.last_touch = at
+
+    def _motion_signal(
+        self, machine: _Machine, settings: dict[str, Any], crop: Any, people: list[tuple[float, float, float, float]], at: datetime
+    ) -> bool | None:
+        """Movement in the area since the previous sample; None on the first one."""
+        gray = cv2.GaussianBlur(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+        previous, machine.prev_gray = machine.prev_gray, gray
+        if previous is None or machine.monitoring_since is None:
+            self._start_monitoring(machine, at)
+            return None
+        valid = self._visible(machine, people)
+        changed = cv2.absdiff(gray, previous) > PIXEL_DELTA
+        machine.activity = float(changed[valid].mean()) if valid.any() else 0.0
+        return machine.activity >= float(settings["motion_threshold"])
+
+    def _light_signal(
+        self, machine: _Machine, settings: dict[str, Any], crop: Any, people: list[tuple[float, float, float, float]], at: datetime
+    ) -> bool | None:
+        """Whether the light says the machine runs; None while it is hidden."""
+        if machine.monitoring_since is None:
+            self._start_monitoring(machine, at)
+        valid = self._visible(machine, people)
+        if valid.sum() < machine.mask.sum() * LIGHT_MIN_VISIBLE:
+            return None
+        level = float(_lit_pixels(crop, settings["light_color"])[valid].mean())
+        machine.light_level = level
+        on, off = float(settings["light_on_level"]), float(settings["light_off_level"])
+        threshold = (on + off) / 2 if on > off else float(settings["light_threshold"])
+        if level >= threshold:
+            machine.last_lit = at
+        lit = machine.last_lit is not None and (at - machine.last_lit).total_seconds() <= LIGHT_HOLD_SECONDS
+        return lit if settings["light_means"] == "running" else not lit
+
+    def _start_monitoring(self, machine: _Machine, at: datetime) -> None:
+        machine.monitoring_since = at
+        if machine.state == UNKNOWN:
+            machine.state = None  # decide afresh once frames are back
+
+    def _visible(self, machine: _Machine, people: list[tuple[float, float, float, float]]) -> np.ndarray:
+        """The machine's area minus the people in front of it."""
+        x1, y1, x2, y2 = machine.roi
+        valid = machine.mask.copy()
+        scale_x, scale_y = machine.roi_size[0] / (x2 - x1), machine.roi_size[1] / (y2 - y1)
+        for px1, py1, px2, py2 in people:
+            pad_x, pad_y = (px2 - px1) * PERSON_BOX_PADDING, (py2 - py1) * PERSON_BOX_PADDING
+            left = int(max(0, (px1 - pad_x - x1) * scale_x))
+            top = int(max(0, (py1 - pad_y - y1) * scale_y))
+            right = int(min(machine.roi_size[0], (px2 + pad_x - x1) * scale_x))
+            bottom = int(min(machine.roi_size[1], (py2 + pad_y - y1) * scale_y))
+            if right > left and bottom > top:
+                valid[top:bottom, left:right] = False
+        return valid
 
     def _prepare_geometry(self, machine: _Machine, zone: Zone, width: int, height: int) -> None:
         xs = [point.x * width for point in zone.points]
@@ -635,8 +801,24 @@ class MachineMonitor:
         machine.state, machine.state_since = UNKNOWN, at
         # Nothing seen during the outage counts: decide afresh once it ends.
         machine.prev_gray, machine.monitoring_since, machine.last_motion = None, None, None
+        machine.last_lit, machine.light_level = None, None
         machine.motions.clear()
         machine.was_moving = False
+
+
+def _lit_pixels(crop: Any, color: str) -> np.ndarray:
+    """Pixels of a BGR crop that look like a lit light of ``color``."""
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    hue, saturation, value = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    lit = value >= LIGHT_MIN_VALUE
+    if color == "white":
+        return lit & (saturation <= LIGHT_WHITE_MAX_SATURATION)
+    if color in LIGHT_HUES:
+        in_hue = np.zeros(hue.shape, dtype=bool)
+        for low, high in LIGHT_HUES[color]:
+            in_hue |= (hue >= low) & (hue <= high)
+        return lit & in_hue & (saturation >= LIGHT_MIN_SATURATION)
+    return lit
 
 
 # Geometry (normalized frame coordinates)
