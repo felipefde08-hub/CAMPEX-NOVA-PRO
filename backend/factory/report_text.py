@@ -76,6 +76,8 @@ def _node_section(item: dict[str, Any]) -> str:
         (current.get("restricted_entries"), "entrada(s) em área restrita"),
         (current.get("after_hours"), "presença(s) fora do horário"),
         (current.get("dock_visits"), "visita(s) na doca"),
+        (current.get("occupancy_limits"), "vez(es) acima do limite de pessoas"),
+        (current.get("long_presences"), "permanência(s) prolongada(s)"),
     ]
     noted = [f"{count} {label}" for count, label in others if count]
     if noted:

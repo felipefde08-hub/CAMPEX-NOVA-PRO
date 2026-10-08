@@ -778,6 +778,15 @@ export function updateZone(zoneId, payload) {
   });
 }
 
+// Signal light machines (CAMPEX Node): the light's current level becomes its
+// lit ("on") or unlit ("off") reference.
+export function calibrateZoneLight(zoneId, state) {
+  return requestJson(`/zones/${zoneId}/calibrate-light`, {
+    method: "POST",
+    body: JSON.stringify({ state }),
+  });
+}
+
 export async function deleteZone(zoneId) {
   assertApiBaseUrl();
   const response = await fetch(`${API_BASE_URL}/zones/${zoneId}`, {

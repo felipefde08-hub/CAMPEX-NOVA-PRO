@@ -284,6 +284,125 @@
   display: none;
 }
 
+/* Form inputs are sized for text: checkboxes keep their own size. */
+.stack-form .inline-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stack-form input[type="checkbox"] {
+  min-width: 0;
+  width: auto;
+  padding: 0;
+}
+
+/* "Nova zona": the module catalog, then the chosen module's form. */
+.zone-module-picker,
+.zone-module-details {
+  display: grid;
+  gap: 14px;
+}
+
+.zone-module-picker[hidden],
+.zone-module-details[hidden] {
+  display: none;
+}
+
+.zone-module-intro,
+.zone-module-help {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.zone-module-group {
+  display: grid;
+  gap: 8px;
+}
+
+.zone-module-group-title {
+  color: var(--color-subtle);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.stack-form .zone-module-card {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--zone-color, var(--color-accent));
+  border-radius: var(--radius-control);
+  background: var(--color-panel-soft);
+  padding: 10px 12px;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stack-form .zone-module-card:hover,
+.stack-form .zone-module-card:focus-visible {
+  border-color: var(--zone-color, var(--color-accent));
+  background: var(--color-elevated);
+}
+
+.zone-module-card svg,
+.zone-module-icon svg {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  color: var(--zone-color, var(--color-accent));
+}
+
+.zone-module-card span {
+  display: grid;
+  gap: 3px;
+}
+
+.zone-module-card strong {
+  font-size: 14px;
+}
+
+.zone-module-card small {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.zone-module-chosen {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.zone-module-chosen strong {
+  flex: 1;
+  font-size: 15px;
+}
+
+.stack-form .zone-module-chosen button {
+  width: auto;
+  padding: 6px 12px;
+}
+
+.zone-points-advanced summary {
+  color: var(--color-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.zone-points-advanced textarea {
+  margin-top: 8px;
+  width: 100%;
+}
+
 @media (max-width: 720px) {
   .factory-tabs span {
     display: none;

@@ -7,7 +7,7 @@ import uuid
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import time
 
@@ -25,6 +25,7 @@ from campex_node.analytics import resolve_period
 from campex_node.auth import SESSION_TTL, NodeUser
 from campex_node.backup import backup_database, backup_filename, restore_database, validate_backup
 from campex_node.core.config import NodeCameraConfig, NodeSettings
+from campex_node.factory import ZONE_TYPES
 from campex_node.node_ui import NODE_HTML
 
 
@@ -64,7 +65,11 @@ class PairingAuthorizePayload(BaseModel):
     node_name: str | None = Field(default=None, max_length=120)
 
 
-ZONE_TYPE_PATTERN = "^(monitored|restricted|machine|station|dock|area|line)$"
+ZONE_TYPE_PATTERN = f"^({'|'.join(ZONE_TYPES)})$"
+
+
+class LightCalibrationPayload(BaseModel):
+    state: Literal["on", "off"]
 
 
 class ZoneCreatePayload(BaseModel):
@@ -1150,6 +1155,30 @@ def create_app() -> FastAPI:
         if zone is None:
             raise HTTPException(status_code=404, detail="Zone not found.")
         return runtime.lifecycle.events_store.zone_dict(zone)
+
+    @app.post("/api/zones/{zone_id}/calibrate-light")
+    def calibrate_light(zone_id: str, payload: LightCalibrationPayload) -> dict:
+        """Records the signal light's current level as its lit or unlit level."""
+        store = runtime.lifecycle.events_store
+        zone = store.get_zone(zone_id)
+        if zone is None:
+            raise HTTPException(status_code=404, detail="Zone not found.")
+        settings = store.zone_settings(zone.camera_id).get(zone_id) or {}
+        if zone.type != "machine" or settings.get("detection") != "light":
+            raise HTTPException(status_code=400, detail="Só máquinas monitoradas por sinaleiro/LED são calibradas.")
+        machines = runtime.lifecycle.machines
+        level = machines.light_level(zone_id) if machines is not None else None
+        if level is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Ainda não há leitura da luz: confira se a câmera está online e aguarde alguns segundos.",
+            )
+        key = "light_on_level" if payload.state == "on" else "light_off_level"
+        try:
+            zone = store.update_zone(zone_id, {"settings": {key: round(level, 4)}})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {**store.zone_dict(zone), "light_level": round(level, 4)}
 
     @app.delete("/api/zones/{zone_id}", status_code=204, response_class=Response, response_model=None)
     def delete_zone(zone_id: str) -> Response:

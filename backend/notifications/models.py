@@ -29,6 +29,8 @@ NODE_EVENT_ALERTS = {
     "STATION_VACANT": "station_vacant",
     "PERSON_RESTRICTED_ZONE": "restricted_zone",
     "AFTER_HOURS_PRESENCE": "after_hours_presence",
+    "OCCUPANCY_LIMIT": "crowding_started",
+    "LONG_PRESENCE": "long_presence",
 }
 
 REPORT_FREQUENCIES = {"DAILY", "WEEKLY", "MONTHLY"}

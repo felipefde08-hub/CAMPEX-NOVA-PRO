@@ -34,16 +34,31 @@ ZONE_SETTINGS: dict[str, dict[str, Any]] = {
         # count as movement.
         "motion_threshold": 0.015,
         "stop_after_seconds": 30.0,
+        # "motion": movement in the drawn area; "light": a signal light or
+        # LED drawn tightly, lit (or unlit) while the machine runs.
+        "detection": "motion",
+        "light_color": "any",
+        "light_means": "running",
+        # Share of the light's area that is lit. Calibrated from the camera
+        # (lit and unlit); until then light_threshold decides.
+        "light_on_level": 0.0,
+        "light_off_level": 0.0,
+        "light_threshold": 0.15,
     },
     "station": {"line": "", "vacant_alert_seconds": 300.0},
     "dock": {"min_visit_seconds": 120.0},
     "area": {"after_hours_alert": True},
     "line": {"subject": "person", "direction": "any"},
+    # People limit (0 = off) and the longest one person may stay (0 = off).
+    "occupancy": {"max_people": 0.0, "over_limit_seconds": 30.0, "max_dwell_seconds": 0.0},
 }
 ZONE_TYPES = tuple(ZONE_SETTINGS)
 EVENT_ZONE_TYPES = ("monitored", "restricted")
 LINE_SUBJECTS = ("person", "vehicle", "any")
 LINE_DIRECTIONS = ("any", "a_to_b", "b_to_a")
+MACHINE_DETECTIONS = ("motion", "light")
+LIGHT_COLORS = ("any", "red", "yellow", "green", "blue", "white")
+LIGHT_MEANINGS = ("running", "stopped")
 
 _TIME_PATTERN = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
@@ -86,6 +101,17 @@ def normalize_zone_settings(zone_type: str, settings: dict[str, Any] | None, bas
             raise ValueError(f"Line subject must be one of {', '.join(LINE_SUBJECTS)}.")
         if result["direction"] not in LINE_DIRECTIONS:
             raise ValueError(f"Line direction must be one of {', '.join(LINE_DIRECTIONS)}.")
+    if zone_type == "machine":
+        for key, allowed in (
+            ("detection", MACHINE_DETECTIONS),
+            ("light_color", LIGHT_COLORS),
+            ("light_means", LIGHT_MEANINGS),
+        ):
+            if result[key] not in allowed:
+                raise ValueError(f"Machine {key} must be one of {', '.join(allowed)}.")
+        for key in ("light_on_level", "light_off_level", "light_threshold"):
+            if result[key] > 1:
+                raise ValueError(f"Machine {key} must be between 0 and 1.")
     return result
 
 

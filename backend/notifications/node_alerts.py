@@ -51,8 +51,17 @@ def send_node_event_alerts(
                     "camera_name": camera_names.get(str(event.get("camera_id"))),
                     "zone_name": metadata.get("zone_name"),
                     "line": metadata.get("line"),
+                    "detail": _detail(event["event_type"], metadata),
                     "started_at": event.get("timestamp"),
                 },
             )
         except Exception:
             logger.exception("Alert for Node event %s failed", event.get("event_id"))
+
+
+def _detail(event_type: str, metadata: dict[str, Any]) -> str | None:
+    if event_type == "OCCUPANCY_LIMIT" and metadata.get("max_people"):
+        return f"{metadata.get('people', '?')} pessoas (limite {metadata['max_people']})"
+    if event_type == "LONG_PRESENCE" and metadata.get("max_dwell_seconds"):
+        return f"Uma pessoa está há mais de {round(float(metadata['max_dwell_seconds']) / 60)} min no local"
+    return None

@@ -280,6 +280,7 @@ class FactoryAnalytics:
                     "type": zone.type,
                     "camera_id": zone.camera_id,
                     "occupied_seconds": round(_productive(items, "OCCUPIED", calendar, start, end, now)),
+                    "peak_people": max((item.peak for item in items if item.state == "OCCUPIED"), default=0),
                     "vacant_seconds": round(_productive(items, "VACANT", calendar, start, end, now)),
                     "within_shifts": bool(calendar[0]),
                     "vacancies": vacancies,
@@ -467,6 +468,8 @@ class FactoryAnalytics:
             "missing_operator": by_type.get("MISSING_OPERATOR", 0),
             "after_hours": by_type.get("AFTER_HOURS_PRESENCE", 0),
             "dock_visits": by_type.get("DOCK_VISIT", 0),
+            "occupancy_limits": by_type.get("OCCUPANCY_LIMIT", 0),
+            "long_presences": by_type.get("LONG_PRESENCE", 0),
             "events_by_type": dict(by_type),
         }
 

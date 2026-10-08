@@ -439,6 +439,8 @@ FACTORY_ALERT_TITLES = {
     "station_vacant": "🟠 Posto vazio",
     "restricted_zone": "⛔ Entrada em área restrita",
     "after_hours_presence": "🌙 Presença fora do horário",
+    "crowding_started": "👥 Limite de pessoas excedido",
+    "long_presence": "⏱ Permanência prolongada",
 }
 
 
@@ -480,6 +482,8 @@ def _format_factory_alert(event_type: str, event: dict[str, Any], pref: Notifica
         f"{FACTORY_ALERT_TITLES.get(event_type, event_type)}: {where}",
         f"Desde: {_local_time(event.get('started_at'), pref.timezone)}",
     ]
+    if event.get("detail"):
+        lines.append(event["detail"])
     if event.get("camera_name"):
         lines.append(f"Câmera: {event['camera_name']}")
     return "\n".join(lines)
