@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import platform
 import sys
@@ -8,12 +10,14 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import time
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import HTTPConnection
 from pydantic import BaseModel, Field
 
 from backend.cameras.security import sanitize_error_message
@@ -350,7 +354,14 @@ class LocalNodeRuntime:
             "cameras_total": summary["cameras_total"],
             "cameras_online": summary["cameras_online"],
             "cameras": summary["cameras"],
+            "streaming": self.streaming_status(),
         }
+
+    def streaming_status(self) -> dict:
+        relay = self.lifecycle.camera_manager.relay
+        if relay is None:
+            return {"enabled": False, "status": "DISABLED", "error": None, "version": None, "live_mode": "mjpeg"}
+        return relay.summary()
 
     def node_summary(self) -> dict:
         data = self.status()
@@ -1034,6 +1045,21 @@ def create_app() -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.websocket("/api/cameras/{camera_id}/live")
+    async def camera_live(websocket: WebSocket, camera_id: str) -> None:
+        # The HTTP login middleware does not see WebSockets: check access here.
+        if not _websocket_allowed(runtime, websocket):
+            await websocket.close(code=1008)
+            return
+        manager = runtime.lifecycle.camera_manager
+        camera = next((item for item in manager.configs() if item.id == camera_id), None)
+        upstream = manager.relay.live_upstream(camera) if camera is not None and manager.relay is not None else None
+        if upstream is None:
+            await websocket.close(code=1013, reason="live_unavailable")
+            return
+        await websocket.accept()
+        await _proxy_live(websocket, *upstream)
+
     @app.post("/api/cameras/{camera_id}/vision/start")
     def start_camera_vision(camera_id: str) -> dict:
         try:
@@ -1448,10 +1474,13 @@ PUBLIC_API_PATHS = frozenset(
     {"/api/health", "/api/status", "/api/auth/setup", "/api/auth/login", "/api/auth/register", "/api/auth/logout"}
 )
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+LIVE_MESSAGE_TYPES = frozenset({"mse", "mp4"})
+# One fMP4 fragment; a 4K keyframe stays well below this.
+LIVE_MAX_MESSAGE_BYTES = 16 * 1024**2
 MAX_BACKUP_BYTES = 4 * 1024**3
 
 
-def _is_local_request(request: Request) -> bool:
+def _is_local_request(request: HTTPConnection) -> bool:
     """A request from the Node's own computer, addressed to it by a loopback name.
 
     Checking the Host header too keeps a web page that rebinds its domain to
@@ -1462,12 +1491,12 @@ def _is_local_request(request: Request) -> bool:
     return client in LOOPBACK_HOSTS and host in LOOPBACK_HOSTS
 
 
-def _session_token(request: Request) -> str | None:
+def _session_token(request: HTTPConnection) -> str | None:
     # The panel sends the header; images and videos carry the cookie.
     return request.headers.get(SESSION_HEADER) or request.cookies.get(_cookie_name(request)) or None
 
 
-def _session_user(runtime: "LocalNodeRuntime", request: Request) -> NodeUser | None:
+def _session_user(runtime: "LocalNodeRuntime", request: HTTPConnection) -> NodeUser | None:
     return runtime.lifecycle.auth_store.authenticate(_session_token(request))
 
 
@@ -1481,7 +1510,7 @@ def _require_admin(runtime: "LocalNodeRuntime", request: Request) -> NodeUser | 
     raise HTTPException(status_code=403, detail="Apenas administradores podem fazer isso.")
 
 
-def _cookie_name(request: Request) -> str:
+def _cookie_name(request: HTTPConnection) -> str:
     return f"{SESSION_COOKIE_PREFIX}{request.url.port or 80}"
 
 
@@ -1524,6 +1553,59 @@ def _evidence_file(data_dir: Path, stored: str) -> Path | None:
     if evidence_root not in file_path.parents or not file_path.is_file():
         return None
     return file_path
+
+
+def _websocket_allowed(runtime: "LocalNodeRuntime", websocket: WebSocket) -> bool:
+    # Browsers apply no CORS to WebSockets: without the origin check any web
+    # page open on a viewer's computer could read the camera's video.
+    origin = websocket.headers.get("origin")
+    if origin:
+        same_origin = urlsplit(origin).netloc.lower() == (websocket.headers.get("host") or "").lower()
+        if not same_origin and not _is_allowed_frontend_origin(origin):
+            return False
+    return _is_local_request(websocket) or _session_user(runtime, websocket) is not None
+
+
+async def _proxy_live(websocket: WebSocket, url: str, headers: dict[str, str]) -> None:
+    """Relays go2rtc's MSE/MP4 WebSocket, which listens only on this computer."""
+    from websockets.asyncio.client import connect
+    from websockets.exceptions import WebSocketException
+
+    async def to_browser(upstream) -> None:
+        async for message in upstream:
+            if isinstance(message, bytes):
+                await websocket.send_bytes(message)
+            else:
+                await websocket.send_text(message)
+
+    async def to_go2rtc(upstream) -> None:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                return
+            try:
+                kind = json.loads(message.get("text") or "").get("type")
+            except (ValueError, AttributeError):
+                continue
+            # Only playback requests: go2rtc's other messages (WebRTC
+            # signalling, HLS) stay out of reach.
+            if kind in LIVE_MESSAGE_TYPES:
+                await upstream.send(message["text"])
+
+    try:
+        async with connect(url, additional_headers=headers, max_size=LIVE_MAX_MESSAGE_BYTES, open_timeout=5) as upstream:
+            tasks = [asyncio.create_task(to_browser(upstream)), asyncio.create_task(to_go2rtc(upstream))]
+            _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    except (OSError, WebSocketException, asyncio.TimeoutError):
+        pass
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass  # already closed by the browser
 
 
 def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str, *, overlay: bool = False):

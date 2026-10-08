@@ -26,6 +26,12 @@ if (-not $SkipInstall) {
   & $Python -m pip install -r "campex_node\requirements.txt"
 }
 
+# go2rtc ships inside the Node; it only runs with CAMPEX_NODE_GO2RTC=1.
+& $Python scripts\fetch_go2rtc.py
+if ($LASTEXITCODE -ne 0) {
+  throw "Falha ao baixar o go2rtc."
+}
+
 $PublicKeyPath = Join-Path $ProjectDir "campex_node\updates\release_public_key.txt"
 if (-not (Test-Path $PublicKeyPath)) {
   Write-Warning ("Sem chave publica de atualizacao: este Node NAO vai se atualizar sozinho. " +

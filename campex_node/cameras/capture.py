@@ -10,7 +10,12 @@ from backend.cameras.opencv_source import RTSPSource
 from campex_node.core.config import NodeCameraConfig, NodeSettings
 
 
-def create_rtsp_source(camera: NodeCameraConfig, settings: NodeSettings | None = None) -> CameraSource:
+def create_rtsp_source(
+    camera: NodeCameraConfig,
+    settings: NodeSettings | None = None,
+    *,
+    url: str | None = None,
+) -> CameraSource:
     timeouts = {}
     if settings is not None:
         timeouts = {
@@ -21,7 +26,7 @@ def create_rtsp_source(camera: NodeCameraConfig, settings: NodeSettings | None =
         CameraConfig(
             id=camera.id,
             source_type="rtsp",
-            source_uri=camera.rtsp_url,
+            source_uri=url or camera.rtsp_url,
         ),
         **timeouts,
     )

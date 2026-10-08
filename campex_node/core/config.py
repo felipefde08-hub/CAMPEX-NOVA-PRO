@@ -141,6 +141,14 @@ class NodeSettings:
     vision_input_size: int = 640
     # A frame older than this is a frozen stream, not the current scene.
     vision_stale_frame_seconds: float = 10.0
+    # "edge": the Node's own tracker; "bytetrack": Roboflow's ByteTrack.
+    vision_tracker: str = "edge"
+    # go2rtc keeps one connection per camera and restreams it locally to the
+    # vision worker, the recorder and the live view.
+    go2rtc_enabled: bool = False
+    go2rtc_path: str | None = None  # default: bundled binary, then PATH
+    go2rtc_api_port: int = 8788
+    go2rtc_rtsp_port: int = 8789
     # Continuous recording: the camera stream is remuxed into segments.
     recording_enabled: bool = True
     recording_dir: Path | None = None  # default: <data_dir>/recordings
@@ -211,6 +219,11 @@ class NodeSettings:
             pose_model=os.getenv("CAMPEX_NODE_POSE_MODEL", "yolo11n-pose.pt"),
             vision_input_size=_env_int("CAMPEX_NODE_VISION_INPUT_SIZE", 640),
             vision_stale_frame_seconds=_env_float("CAMPEX_NODE_VISION_STALE_FRAME_SECONDS", 10.0),
+            vision_tracker=os.getenv("CAMPEX_NODE_VISION_TRACKER", "edge").strip().lower() or "edge",
+            go2rtc_enabled=_env_bool("CAMPEX_NODE_GO2RTC", False),
+            go2rtc_path=os.getenv("CAMPEX_NODE_GO2RTC_PATH") or None,
+            go2rtc_api_port=_env_int("CAMPEX_NODE_GO2RTC_API_PORT", 8788),
+            go2rtc_rtsp_port=_env_int("CAMPEX_NODE_GO2RTC_RTSP_PORT", 8789),
             recording_enabled=_env_bool("CAMPEX_NODE_RECORDING_ENABLED", True),
             recording_dir=(
                 Path(os.environ["CAMPEX_NODE_RECORDING_DIR"]).expanduser().resolve()
@@ -261,6 +274,13 @@ class NodeSettings:
             raise ValueError("CAMPEX_NODE_EVIDENCE_RETENTION_DAYS must be zero (keep forever) or positive.")
         if self.vision_stale_frame_seconds <= 0:
             raise ValueError("CAMPEX_NODE_VISION_STALE_FRAME_SECONDS must be greater than zero.")
+        if self.vision_tracker not in {"edge", "bytetrack"}:
+            raise ValueError("CAMPEX_NODE_VISION_TRACKER must be 'edge' or 'bytetrack'.")
+        for port in (self.go2rtc_api_port, self.go2rtc_rtsp_port):
+            if not 1 <= port <= 65535:
+                raise ValueError("go2rtc ports must be between 1 and 65535.")
+        if self.go2rtc_api_port == self.go2rtc_rtsp_port:
+            raise ValueError("CAMPEX_NODE_GO2RTC_API_PORT and CAMPEX_NODE_GO2RTC_RTSP_PORT must differ.")
         if self.recording_segment_seconds < 10:
             raise ValueError("CAMPEX_NODE_RECORDING_SEGMENT_SECONDS must be at least 10.")
         if self.recording_retention_days <= 0 or self.recording_min_free_gb < 0 or self.recording_max_gb < 0:

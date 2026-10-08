@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime
 from math import hypot
 from typing import Any, Iterable
+
+
+logger = logging.getLogger("campex.node.tracking")
 
 
 # The Node samples ~2-3 frames per second, so a walking person moves most of
@@ -139,3 +143,103 @@ def _iou(first: tuple[float, float, float, float], second: tuple[float, float, f
 
 def _area(box: tuple[float, float, float, float]) -> float:
     return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+# ByteTrack (Roboflow's ``trackers`` package, Apache-2.0). It predicts with a
+# Kalman filter driven by each frame's timestamp, so the Node's low, uneven
+# frame rate does not break it. Detections below the activation threshold
+# never start a track; they only keep an existing one alive (ByteTrack's
+# "second association").
+BYTETRACK_ACTIVATION = 0.5
+BYTETRACK_HIGH_CONFIDENCE = 0.5
+BYTETRACK_MIN_IOU = 0.1
+
+
+class ByteTrackEdgeTracker:
+    """Same contract as ``EdgeTracker``, backed by ByteTrack.
+
+    One ByteTrack per class keeps a person and a vehicle from swapping IDs;
+    the Node hands out its own IDs so they stay unique across classes.
+    """
+
+    def __init__(self, max_age_seconds: float = MAX_AGE_SECONDS) -> None:
+        import trackers  # optional dependency: raises ImportError when missing
+
+        self._factory = lambda: trackers.ByteTrackTracker(
+            # Counted in 30 FPS frames; with timestamps it becomes seconds * 30.
+            lost_track_buffer=max(1, round(max_age_seconds * 30)),
+            frame_rate=30.0,
+            track_activation_threshold=BYTETRACK_ACTIVATION,
+            minimum_consecutive_frames=CONFIRM_HITS,
+            minimum_iou_threshold=BYTETRACK_MIN_IOU,
+            high_conf_det_threshold=BYTETRACK_HIGH_CONFIDENCE,
+        )
+        self._trackers: dict[str, Any] = {}
+        self._ids: dict[tuple[str, int], int] = {}
+        self._next_id = 1
+
+    def update(self, detections: Iterable[Any], timestamp: datetime) -> list[Any]:
+        import numpy as np
+        import supervision as sv
+
+        detections = list(detections)
+        results: list[Any] = [replace(detection, track_id=None) for detection in detections]
+        by_class: dict[str, list[int]] = {}
+        for index, detection in enumerate(detections):
+            by_class.setdefault(detection.class_name, []).append(index)
+        seconds = timestamp.timestamp()
+        # Classes absent from this frame still age their tracks.
+        for class_name in self._trackers.keys() - by_class.keys():
+            self._trackers[class_name].update(sv.Detections.empty(), timestamp=seconds)
+        for class_name, indexes in by_class.items():
+            tracker = self._trackers.get(class_name)
+            if tracker is None:
+                tracker = self._trackers[class_name] = self._factory()
+            batch = sv.Detections(
+                xyxy=np.array([_box(detections[i]) for i in indexes], dtype=np.float32),
+                confidence=np.array([float(detections[i].confidence) for i in indexes], dtype=np.float32),
+                class_id=np.zeros(len(indexes), dtype=int),
+                data={"index": np.array(indexes, dtype=int)},
+            )
+            tracked = tracker.update(batch, timestamp=seconds)
+            if tracked.tracker_id is None:
+                continue
+            # ByteTrack reorders its output; "index" points back to the input.
+            for index, raw_id in zip(tracked.data["index"], tracked.tracker_id):
+                if raw_id >= 0:
+                    results[int(index)] = replace(detections[int(index)], track_id=self._node_id(class_name, int(raw_id)))
+        return results
+
+    def reset(self) -> None:
+        self._trackers.clear()
+        self._ids.clear()
+
+    def _node_id(self, class_name: str, raw_id: int) -> int:
+        key = (class_name, raw_id)
+        if key not in self._ids:
+            self._ids[key] = self._next_id
+            self._next_id += 1
+        return self._ids[key]
+
+
+def create_tracker(kind: str) -> Any:
+    """``EdgeTracker`` or ``ByteTrackEdgeTracker``; ByteTrack falls back to
+    the Node's own tracker when its package is not installed."""
+    if kind == "bytetrack":
+        try:
+            return ByteTrackEdgeTracker()
+        except ImportError:
+            _warn_bytetrack_missing()
+    return EdgeTracker()
+
+
+_bytetrack_warned = False
+
+
+def _warn_bytetrack_missing() -> None:
+    global _bytetrack_warned
+    if not _bytetrack_warned:
+        _bytetrack_warned = True
+        logger.warning(
+            "CAMPEX_NODE_VISION_TRACKER=bytetrack but the 'trackers' package is missing; using the edge tracker"
+        )

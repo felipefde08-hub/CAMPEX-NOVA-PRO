@@ -23,10 +23,12 @@ class CameraWorker:
         camera: NodeCameraConfig,
         settings: NodeSettings,
         source: CameraSource | None = None,
+        *,
+        source_url: str | None = None,
     ) -> None:
         self.camera = camera
         self.settings = settings
-        self.source = source or create_rtsp_source(camera, settings)
+        self.source = source or create_rtsp_source(camera, settings, url=source_url)
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
