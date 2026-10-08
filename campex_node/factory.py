@@ -303,6 +303,41 @@ class FactoryStore:
         return self._cache
 
 
+class SnapshotFactory(FactoryStore):
+    """The calendar of a factory snapshot a Node synced (CAMPEX Cloud).
+
+    Same windows, breaks and time zone rules as on the Node; read-only.
+    """
+
+    def __init__(self, snapshot: dict[str, Any]) -> None:
+        super().__init__(Path(""))  # never opened
+        stored = snapshot.get("settings") or {}
+        self._settings = {
+            "timezone": stored.get("timezone") or DEFAULT_TIMEZONE,
+            "currency": stored.get("currency") or DEFAULT_CURRENCY,
+        }
+        shifts = [shift_from_dict(item) for item in snapshot.get("shifts") or []]
+        self._cache = (sorted(shifts, key=lambda shift: shift.start), _zone(self._settings["timezone"]))
+
+    def initialize(self) -> None:
+        pass
+
+    def settings(self) -> dict[str, Any]:
+        return dict(self._settings)
+
+
+def shift_from_dict(data: dict[str, Any]) -> Shift:
+    return Shift(
+        id=str(data["id"]),
+        name=str(data.get("name") or ""),
+        start=str(data["start"]),
+        end=str(data["end"]),
+        days=tuple(int(day) for day in data.get("days") or ()),
+        breaks=tuple(ShiftBreak(**item) for item in data.get("breaks") or ()),
+        enabled=bool(data.get("enabled", True)),
+    )
+
+
 def _windows(shifts: list[Shift], zone: tzinfo, start: datetime, end: datetime, *, breaks: bool) -> Iterator[Window]:
     # A shift that starts the evening before still covers the range.
     first = start.astimezone(zone).date() - timedelta(days=1)

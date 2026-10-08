@@ -5,11 +5,14 @@ import logging
 import re
 import threading
 import time
+from calendar import monthrange
 from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from backend.config import Settings
+from backend.factory.report_text import format_factory_report, report_subject
+from backend.factory.reports import factory_summaries
 from backend.integrations.email import EmailClient
 from backend.integrations.telegram import TelegramClient
 from backend.notifications.models import ALERT_TYPES, DeliveryResult, NotificationPreference
@@ -96,6 +99,12 @@ class NotificationService:
     def send_report_now(self, organization_id: str) -> dict[str, Any]:
         logger.info("[CAMPEX][NOTIFICATION] report requested")
         pref = self.repository.get_or_create_preference(organization_id)
+        # Organizations with a CAMPEX Node get the factory report; the video
+        # analysis report stays for those that only upload videos.
+        summaries = factory_summaries(self.settings, organization_id, period="today")
+        if summaries:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            return self._send_factory_report(pref, summaries, reference_id=f"manual-report:factory:{stamp}")
         analysis = _latest_completed_analysis(self.videos, organization_id)
         if analysis is None:
             raise ValueError("No completed CAMPEX report is available.")
@@ -128,6 +137,62 @@ class NotificationService:
                 subject=subject,
                 text=text,
                 html=html_body,
+            ).as_dict()
+        return {"status": "completed", "channels": results, "reference_id": reference_id}
+
+    def send_scheduled_reports(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        """Sends each organization's factory report once its time has come.
+
+        Safe to call as often as wanted (cron, local scheduler): a report is
+        delivered once per organization and scheduled date.
+        """
+        now = now or datetime.now(timezone.utc)
+        results = []
+        for pref in self.repository.list_report_preferences():
+            due = _report_due(pref, now)
+            if due is None:
+                continue
+            reference_id, period = due
+            try:
+                summaries = factory_summaries(self.settings, pref.organization_id, period=period, now=now)
+                if not summaries:
+                    continue
+                results.append(
+                    {"organization_id": pref.organization_id, **self._send_factory_report(pref, summaries, reference_id=reference_id)}
+                )
+            except Exception:
+                logger.exception("Scheduled report failed for %s", pref.organization_id)
+        return results
+
+    def _send_factory_report(
+        self, pref: NotificationPreference, summaries: list[dict[str, Any]], *, reference_id: str
+    ) -> dict[str, Any]:
+        if not pref.enabled:
+            return {"status": "skipped", "reason": "notifications disabled", "channels": {}}
+        text = format_factory_report(summaries)
+        results: dict[str, Any] = {}
+        if pref.telegram_enabled:
+            telegram_results = [
+                self._send_telegram(
+                    organization_id=pref.organization_id,
+                    delivery_type="REPORT",
+                    reference_id=reference_id,
+                    recipient=chat_id,
+                    message=text,
+                ).as_dict()
+                for chat_id in _telegram_recipients(pref)
+            ]
+            if telegram_results:
+                results["telegram"] = telegram_results
+        if pref.email_enabled and pref.email_recipients:
+            results["email"] = self._send_email(
+                organization_id=pref.organization_id,
+                delivery_type="REPORT",
+                reference_id=reference_id,
+                recipients=pref.email_recipients,
+                subject=report_subject(summaries),
+                text=text,
+                html=f"<html><body><pre>{html.escape(text)}</pre></body></html>",
             ).as_dict()
         return {"status": "completed", "channels": results, "reference_id": reference_id}
 
@@ -274,9 +339,44 @@ class NotificationScheduler:
 
     def _run(self) -> None:
         while not self._stop.wait(self.interval_seconds):
-            # The persisted preferences survive restarts. Scheduled dispatch can be
-            # expanded here without coupling notifications to vision processing.
-            continue
+            try:
+                self.service.send_scheduled_reports()
+            except Exception:
+                logger.exception("Scheduled reports failed")
+
+
+# Report frequency -> the analytics period it covers.
+REPORT_PERIODS = {"DAILY": "today", "WEEKLY": "week", "MONTHLY": "month"}
+
+
+def _report_due(pref: NotificationPreference, now: datetime) -> tuple[str, str] | None:
+    """(reference_id, period) when the report is due at ``now``, else None.
+
+    Due from the report time on the scheduled day until the day ends, so a
+    late or missed cron run still delivers it. WEEKLY uses report_weekday
+    (0 = Monday); MONTHLY uses report_month_day (0 = last day of the month).
+    """
+    if not (pref.enabled and pref.reports_enabled) or pref.report_frequency not in REPORT_PERIODS:
+        return None
+    try:
+        zone = ZoneInfo(pref.timezone)
+    except Exception:
+        zone = timezone.utc
+    local = now.astimezone(zone)
+    try:
+        hour, minute = (int(part) for part in pref.report_time.split(":", 1))
+    except ValueError:
+        hour, minute = 18, 0
+    if (local.hour, local.minute) < (hour, minute):
+        return None
+    if pref.report_frequency == "WEEKLY" and local.weekday() != pref.report_weekday % 7:
+        return None
+    if pref.report_frequency == "MONTHLY":
+        last_day = monthrange(local.year, local.month)[1]
+        day = last_day if pref.report_month_day <= 0 else min(pref.report_month_day, last_day)
+        if local.day != day:
+            return None
+    return f"scheduled-report:{pref.report_frequency}:{local.date().isoformat()}", REPORT_PERIODS[pref.report_frequency]
 
 
 def _latest_completed_analysis(repository: VideoAnalysisRepository, organization_id: str) -> dict[str, Any] | None:
@@ -333,8 +433,19 @@ def _format_report_html(analysis: dict[str, Any], pref: NotificationPreference) 
     return f"<html><body><pre>{html.escape(text)}</pre></body></html>"
 
 
+FACTORY_ALERT_TITLES = {
+    "equipment_stop_started": "🔴 Máquina parada",
+    "missing_operator": "🟠 Máquina sem operador",
+    "station_vacant": "🟠 Posto vazio",
+    "restricted_zone": "⛔ Entrada em área restrita",
+    "after_hours_presence": "🌙 Presença fora do horário",
+}
+
+
 def _format_alert_text(event: dict[str, Any], pref: NotificationPreference) -> str:
     event_type = str(event.get("event_type") or event.get("type") or "alerta")
+    if event.get("source") == "campex_node":
+        return _format_factory_alert(event_type, event, pref)
     labels = {
         "camera_offline": "Camera desconectada.",
         "camera_online": "Camera conectada.",
@@ -356,6 +467,36 @@ def _format_alert_text(event: dict[str, Any], pref: NotificationPreference) -> s
             f"Horario: {_local_now(pref.timezone)}",
         ]
     )
+
+
+def _format_factory_alert(event_type: str, event: dict[str, Any], pref: NotificationPreference) -> str:
+    """A CAMPEX Node event: what happened, where and since when."""
+    where = event.get("zone_name") or "Zona sem nome"
+    if event.get("line"):
+        where = f"{where} · {event['line']}"
+    lines = [
+        "CAMPEX - Alerta",
+        "",
+        f"{FACTORY_ALERT_TITLES.get(event_type, event_type)}: {where}",
+        f"Desde: {_local_time(event.get('started_at'), pref.timezone)}",
+    ]
+    if event.get("camera_name"):
+        lines.append(f"Câmera: {event['camera_name']}")
+    return "\n".join(lines)
+
+
+def _local_time(value: Any, timezone_name: str) -> str:
+    try:
+        at = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return _local_now(timezone_name)
+    try:
+        zone = ZoneInfo(timezone_name)
+    except Exception:
+        zone = timezone.utc
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.astimezone(zone).strftime("%H:%M (%d/%m)")
 
 
 def _local_now(timezone_name: str) -> str:

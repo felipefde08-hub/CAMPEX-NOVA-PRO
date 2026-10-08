@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from collections import defaultdict
@@ -8,10 +9,13 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from campex_node.storage.sqlite import connect, iso, loads, parse_iso, utc_now
+
+
+logger = logging.getLogger("campex.node.activity")
 
 
 # Interval kinds
@@ -66,6 +70,8 @@ class Interval:
     ended_at: datetime | None
     peak: int
     metadata: dict[str, Any]
+    # How far an open interval is confirmed (the Node touches it periodically).
+    last_seen_at: datetime | None = None
 
     def end_or(self, now: datetime) -> datetime:
         return self.ended_at or now
@@ -101,6 +107,10 @@ class ActivityStore:
         self._pending: dict[tuple[str, str, str], int] = defaultdict(int)
         self._pending_lock = threading.Lock()
         self._last_flush = time.monotonic()
+        # Called with each interval opened, confirmed or closed, and with the
+        # counter rows each flush changed (the Cloud outbox).
+        self.interval_listeners: list[Callable[[Interval], None]] = []
+        self.count_listeners: list[Callable[[list[dict[str, Any]]], None]] = []
 
     def initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,6 +147,7 @@ class ActivityStore:
                 (interval_id, kind, zone_id, camera_id, state, iso(started_at), iso(started_at), peak, json.dumps(metadata or {})),
             )
             connection.commit()
+        self._notify_interval(interval_id)
         return interval_id
 
     def touch(self, interval_id: str, seen_at: datetime, peak: int | None = None) -> None:
@@ -151,6 +162,7 @@ class ActivityStore:
                     (iso(seen_at), peak, interval_id),
                 )
             connection.commit()
+        self._notify_interval(interval_id)
 
     def close(self, interval_id: str, ended_at: datetime, peak: int | None = None) -> None:
         with closing(connect(self.database_path)) as connection:
@@ -163,6 +175,24 @@ class ActivityStore:
                 (iso(ended_at), iso(ended_at), peak or 0, interval_id),
             )
             connection.commit()
+        self._notify_interval(interval_id)
+
+    def get(self, interval_id: str) -> Interval | None:
+        with closing(connect(self.database_path)) as connection:
+            row = connection.execute("SELECT * FROM activity_intervals WHERE id = ?", (interval_id,)).fetchone()
+        return _row_to_interval(row) if row else None
+
+    def _notify_interval(self, interval_id: str) -> None:
+        if not self.interval_listeners:
+            return
+        interval = self.get(interval_id)
+        if interval is None:
+            return
+        for listener in self.interval_listeners:
+            try:
+                listener(interval)
+            except Exception:
+                logger.exception("Interval listener failed for %s", interval_id)
 
     def intervals(
         self,
@@ -219,6 +249,19 @@ class ActivityStore:
                     (zone_id, minute, amount),
                 )
             connection.commit()
+            if not self.count_listeners:
+                return
+            keys = sorted({(zone_id, minute) for zone_id, minute, _field in pending})
+            rows = [
+                connection.execute("SELECT * FROM zone_counts WHERE zone_id = ? AND minute = ?", key).fetchone()
+                for key in keys
+            ]
+        changed = [{"zone_id": row["zone_id"], "minute": row["minute"], **{f: row[f] for f in COUNT_FIELDS}} for row in rows if row]
+        for listener in self.count_listeners:
+            try:
+                listener(changed)
+            except Exception:
+                logger.exception("Count listener failed")
 
     def counts(self, zone_ids: Iterable[str], start: datetime, end: datetime) -> list[dict[str, Any]]:
         """Per-minute rows in [start, end): zone_id, minute (datetime) and the counters."""
@@ -259,4 +302,5 @@ def _row_to_interval(row) -> Interval:
         ended_at=parse_iso(row["ended_at"]),
         peak=row["peak"],
         metadata=loads(row["metadata"]),
+        last_seen_at=parse_iso(row["last_seen_at"]),
     )

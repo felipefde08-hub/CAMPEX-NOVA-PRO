@@ -4924,6 +4924,11 @@ function notificationsSettingsMarkup() {
         <label class="toggle-row"><input name="crowding_started" type="checkbox" /><span>Aglomeração</span></label>
         <label class="toggle-row"><input name="crowding_ended" type="checkbox" /><span>Aglomeração encerrada</span></label>
         <label class="toggle-row"><input name="long_presence" type="checkbox" /><span>Permanência prolongada</span></label>
+        <label class="toggle-row"><input name="equipment_stop_started" type="checkbox" /><span>Máquina parada</span></label>
+        <label class="toggle-row"><input name="missing_operator" type="checkbox" /><span>Máquina sem operador</span></label>
+        <label class="toggle-row"><input name="station_vacant" type="checkbox" /><span>Posto vazio</span></label>
+        <label class="toggle-row"><input name="restricted_zone" type="checkbox" /><span>Entrada em área restrita</span></label>
+        <label class="toggle-row"><input name="after_hours_presence" type="checkbox" /><span>Presença fora do horário</span></label>
       </div>
       <label class="settings-switch-row">
         <span><strong>Relatórios automáticos</strong><small>Agenda relatórios recorrentes conforme frequência e horário.</small></span>
@@ -5706,6 +5711,11 @@ function notificationAlertTypes() {
     "crowding_started",
     "crowding_ended",
     "long_presence",
+    "equipment_stop_started",
+    "missing_operator",
+    "station_vacant",
+    "restricted_zone",
+    "after_hours_presence",
   ];
 }
 

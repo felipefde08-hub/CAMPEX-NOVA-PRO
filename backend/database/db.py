@@ -14,6 +14,11 @@ def is_postgres_url(value: object) -> bool:
     return isinstance(value, str) and value.startswith(_POSTGRES_URL_PREFIXES)
 
 
+# The alert types offered before notification_preferences.known_alert_types
+# existed: preferences saved then chose among these, so any type added later
+# starts enabled for them.
+LEGACY_KNOWN_ALERT_TYPES = '["camera_offline","camera_online","crowding_ended","crowding_started","equipment_state_changed","equipment_stop_started","long_presence","zone_activity_resumed","zone_idle"]'
+
 SCHEMA_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS app_meta (
@@ -162,6 +167,7 @@ SCHEMA_STATEMENTS = (
         timezone TEXT NOT NULL DEFAULT 'America/Sao_Paulo',
         immediate_alerts_enabled INTEGER NOT NULL DEFAULT 1,
         alert_types TEXT NOT NULL DEFAULT '[]',
+        known_alert_types TEXT NOT NULL DEFAULT '""" + LEGACY_KNOWN_ALERT_TYPES + """',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -350,6 +356,47 @@ SCHEMA_STATEMENTS = (
         received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    # The factory data a CAMPEX Node monitors: machine and zone state
+    # intervals, per-minute counters (machine cycles, line crossings) and the
+    # Node's zones, shifts and cameras, so the Cloud builds the Node's reports.
+    """
+    CREATE TABLE IF NOT EXISTS node_activity_intervals (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        zone_id TEXT NOT NULL,
+        camera_id TEXT NOT NULL,
+        state TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT,
+        last_seen_at TEXT NOT NULL,
+        peak INTEGER NOT NULL DEFAULT 0,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS node_zone_counts (
+        organization_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        zone_id TEXT NOT NULL,
+        minute_at TEXT NOT NULL,
+        cycles INTEGER NOT NULL DEFAULT 0,
+        forward INTEGER NOT NULL DEFAULT 0,
+        backward INTEGER NOT NULL DEFAULT 0,
+        external INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (node_id, zone_id, minute_at)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS node_factory_snapshots (
+        node_id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -436,6 +483,9 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_node_pairing_sessions_status_expires ON node_pairing_sessions(status, expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_node_pairing_sessions_node ON node_pairing_sessions(node_public_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_node_metrics_org_node_time ON node_metrics(organization_id, node_id, captured_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_node_intervals_org_zone_time ON node_activity_intervals(organization_id, zone_id, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_node_zone_counts_org_zone_time ON node_zone_counts(organization_id, zone_id, minute_at)",
+    "CREATE INDEX IF NOT EXISTS idx_node_factory_snapshots_org ON node_factory_snapshots(organization_id)",
     # Índices por data para a limpeza automática não varrer tabelas inteiras.
     "CREATE INDEX IF NOT EXISTS idx_node_metrics_captured ON node_metrics(captured_at)",
     "CREATE INDEX IF NOT EXISTS idx_node_sync_items_received ON node_sync_items(received_at)",
@@ -446,7 +496,7 @@ SCHEMA_STATEMENTS = (
 
 CAMERAS_SCHEMA = SCHEMA_STATEMENTS[1]
 
-SCHEMA_VERSION = "8"
+SCHEMA_VERSION = "9"
 
 # Columns that SQLite databases received through the _migrate_* helpers after
 # their tables were first created. A Postgres database is always created fresh,
@@ -458,6 +508,9 @@ _POSTGRES_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_machines_org_camera ON machines(organization_id, camera_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_org_node_started ON events(organization_id, node_id, started_at DESC)",
 )
+_NOTIFICATION_COLUMNS = {
+    "known_alert_types": f"TEXT NOT NULL DEFAULT '{LEGACY_KNOWN_ALERT_TYPES}'",
+}
 # Which CAMPEX Node captures the camera (NULL: any Node of the organization)
 # and whether body mapping was requested; both are read by the Node relay.
 _CAMERA_NODE_COLUMNS = {
@@ -538,6 +591,8 @@ def _initialize_postgres(settings: Settings) -> None:
             )
         for column, definition in _CAMERA_NODE_COLUMNS.items():
             connection.execute(f"ALTER TABLE cameras ADD COLUMN IF NOT EXISTS {column} {definition}")
+        for column, definition in _NOTIFICATION_COLUMNS.items():
+            connection.execute(f"ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS {column} {definition}")
         for statement in _POSTGRES_INDEXES:
             connection.execute(statement)
         _ensure_default_organization(connection, default_organization_id)
@@ -691,6 +746,13 @@ def _migrate_node_sync_columns(connection: sqlite3.Connection) -> None:
     }
     if "node_id" not in event_columns:
         connection.execute("ALTER TABLE events ADD COLUMN node_id TEXT")
+    preference_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(notification_preferences)").fetchall()
+    }
+    for column, definition in _NOTIFICATION_COLUMNS.items():
+        if column not in preference_columns:
+            connection.execute(f"ALTER TABLE notification_preferences ADD COLUMN {column} {definition}")
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_events_org_node_started ON events(organization_id, node_id, started_at DESC)"
     )

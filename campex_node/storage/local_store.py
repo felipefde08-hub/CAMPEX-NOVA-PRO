@@ -167,6 +167,34 @@ class LocalStore:
             connection.commit()
         return event_id
 
+    def enqueue_state(self, item_type: str, item_id: str, payload: dict[str, Any]) -> None:
+        """Queues the latest state of something that keeps changing.
+
+        An open event that later closes, or an interval that grows: the item
+        is replaced and sent again, even when an older state was already
+        synced, so the Cloud always ends up with the last one.
+        """
+        now = _utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO outbound_events (
+                    id, type, payload_json, status, attempts, next_attempt_at, created_at, updated_at
+                )
+                VALUES (?, ?, ?, 'pending', 0, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    status = 'pending',
+                    attempts = 0,
+                    last_error = NULL,
+                    synced_at = NULL,
+                    next_attempt_at = excluded.next_attempt_at,
+                    updated_at = excluded.updated_at
+                """,
+                (item_id, item_type, json.dumps(payload, separators=(",", ":")), now, now, now),
+            )
+            connection.commit()
+
     def pending_outbound(self, limit: int = 50) -> list[dict[str, Any]]:
         now = _utc_now()
         with self._connect() as connection:
@@ -182,17 +210,17 @@ class LocalStore:
             ).fetchall()
         return [_row_to_outbound_item(row) for row in rows]
 
-    def mark_outbound_synced(self, item_id: str) -> None:
+    def mark_outbound_synced(self, item_id: str, version: str | None = None) -> None:
+        """``version``: the ``updated_at`` that was sent; a state queued while
+        it was in flight stays pending."""
         now = _utc_now()
+        query = "UPDATE outbound_events SET status = 'synced', synced_at = ?, updated_at = ? WHERE id = ?"
+        params: list[Any] = [now, now, item_id]
+        if version is not None:
+            query += " AND updated_at = ?"
+            params.append(version)
         with self._connect() as connection:
-            connection.execute(
-                """
-                UPDATE outbound_events
-                SET status = 'synced', synced_at = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (now, now, item_id),
-            )
+            connection.execute(query, params)
             connection.commit()
 
     def mark_outbound_failed(self, item_id: str, error: str, *, retry_seconds: float) -> None:
@@ -300,4 +328,5 @@ def _row_to_outbound_item(row) -> dict[str, Any]:
         "payload": payload,
         "attempts": int(row["attempts"] or 0),
         "last_error": row["last_error"],
+        "version": row["updated_at"],
     }

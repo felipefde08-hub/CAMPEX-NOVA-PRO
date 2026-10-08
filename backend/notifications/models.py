@@ -14,6 +14,21 @@ ALERT_TYPES = {
     "long_presence",
     "equipment_stop_started",
     "equipment_state_changed",
+    # Factory monitors of a CAMPEX Node.
+    "missing_operator",
+    "station_vacant",
+    "restricted_zone",
+    "after_hours_presence",
+}
+
+# CAMPEX Node event type -> the alert it raises. Other Node events (dock
+# visits, monitored zone entries) only feed reports.
+NODE_EVENT_ALERTS = {
+    "MACHINE_STOPPED": "equipment_stop_started",
+    "MISSING_OPERATOR": "missing_operator",
+    "STATION_VACANT": "station_vacant",
+    "PERSON_RESTRICTED_ZONE": "restricted_zone",
+    "AFTER_HOURS_PRESENCE": "after_hours_presence",
 }
 
 REPORT_FREQUENCIES = {"DAILY", "WEEKLY", "MONTHLY"}

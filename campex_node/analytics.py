@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from backend.zones.models import Zone
 from campex_node.activity import MACHINE, PERSON_OCCUPANCY, VEHICLE_OCCUPANCY, ActivityStore, Interval
-from campex_node.events import NodeEventStore
 from campex_node.factory import FactoryStore, Window
-from campex_node.recording import RecordingStore
 from campex_node.storage.sqlite import parse_iso, utc_now
+
+if TYPE_CHECKING:  # the Cloud runs these analytics without OpenCV or PyAV
+    from campex_node.events import NodeEventStore
+    from campex_node.recording import RecordingStore
 
 
 PERIODS = ("today", "yesterday", "week", "last_week", "month", "last_month")
