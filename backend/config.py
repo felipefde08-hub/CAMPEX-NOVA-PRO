@@ -182,6 +182,10 @@ class Settings:
     zone_idle_threshold_seconds: float = 300.0
     crowding_threshold: int = 8
     line_crossing_cooldown_seconds: float = 8.0
+    retention_metrics_days: float = 7.0
+    retention_history_days: float = 90.0
+    retention_evidence_days: float = 90.0
+    retention_interval_hours: float = 6.0
 
     def __post_init__(self) -> None:
         if self.camera_reconnect_seconds < 0:
@@ -242,6 +246,10 @@ class Settings:
             raise ValueError("CROWDING_THRESHOLD must be at least 1.")
         if self.line_crossing_cooldown_seconds < 0:
             raise ValueError("LINE_CROSSING_COOLDOWN_SECONDS must be non-negative.")
+        if min(self.retention_metrics_days, self.retention_history_days, self.retention_evidence_days) < 0:
+            raise ValueError("CAMPEX_RETENTION_*_DAYS must be zero (keep forever) or positive.")
+        if self.retention_interval_hours <= 0:
+            raise ValueError("CAMPEX_RETENTION_INTERVAL_HOURS must be greater than zero.")
 
     @property
     def uses_postgres(self) -> bool:
@@ -396,6 +404,10 @@ class Settings:
             line_crossing_cooldown_seconds=float(
                 os.getenv("LINE_CROSSING_COOLDOWN_SECONDS", "8")
             ),
+            retention_metrics_days=float(os.getenv("CAMPEX_RETENTION_METRICS_DAYS", "7")),
+            retention_history_days=float(os.getenv("CAMPEX_RETENTION_HISTORY_DAYS", "90")),
+            retention_evidence_days=float(os.getenv("CAMPEX_RETENTION_EVIDENCE_DAYS", "90")),
+            retention_interval_hours=float(os.getenv("CAMPEX_RETENTION_INTERVAL_HOURS", "6")),
         )
 
 

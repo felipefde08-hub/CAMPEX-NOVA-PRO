@@ -44,9 +44,15 @@ def test_telemetry_collector_queues_metrics_and_status_event(tmp_path):
     ).collect_once()
 
     pending = store.pending_outbound(limit=10)
-    assert result == {"metrics": 4, "events": 1}
-    assert store.outbound_queue_size() == 5
+    assert result == {"metrics": 1, "events": 1}
+    assert store.outbound_queue_size() == 2
     assert {item["type"] for item in pending} == {"metric", "event"}
+    metric = next(item["payload"] for item in pending if item["type"] == "metric")
+    assert metric["metric_type"] == "camera_health"
+    assert metric["value"] == 0.0
+    assert metric["payload"]["frames_received"] == 10
+    assert metric["payload"]["reconnect_attempts"] == 2
+    assert metric["payload"]["consecutive_failures"] == 1
     assert all("user:pass" not in str(item["payload"]) for item in pending)
 
 
@@ -76,7 +82,7 @@ def test_telemetry_collector_only_emits_status_event_on_change(tmp_path):
 
     assert first["events"] == 1
     assert second["events"] == 0
-    assert second["metrics"] == 4
+    assert second["metrics"] == 1
 
 
 def _settings(tmp_path):

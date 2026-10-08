@@ -565,10 +565,45 @@ export async function listCameras() {
 
 // RTSP cameras are registered in the Cloud; the organization's CAMPEX Node
 // picks them up from there, captures them and relays status and frames back.
+function encodeUserInfoPart(value) {
+  let decoded = value;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    // Mantém o valor original quando ele tem "%" solto.
+  }
+  return encodeURIComponent(decoded);
+}
+
+// Senhas com @, #, : ou ? quebram a URL RTSP se não forem codificadas.
+// O FFmpeg do Node decodifica de volta antes de autenticar na câmera.
+export function normalizeStreamUri(uri) {
+  const value = String(uri || "").trim();
+  const match = value.match(/^(rtsps?|https?):\/\/(.+)$/i);
+  if (!match) return value;
+  const rest = match[2];
+  const firstAt = rest.indexOf("@");
+  const firstSlash = rest.indexOf("/");
+  if (firstAt <= 0 || (firstSlash >= 0 && firstSlash < firstAt)) return value;
+  const lastAt = rest.lastIndexOf("@", firstSlash >= 0 ? firstSlash : rest.length);
+  const userInfo = rest.slice(0, lastAt);
+  const colon = userInfo.indexOf(":");
+  const credentials = colon >= 0
+    ? `${encodeUserInfoPart(userInfo.slice(0, colon))}:${encodeUserInfoPart(userInfo.slice(colon + 1))}`
+    : encodeUserInfoPart(userInfo);
+  return `${match[1]}://${credentials}@${rest.slice(lastAt + 1)}`;
+}
+
+function withNormalizedSource(payload) {
+  return payload && payload.source_uri
+    ? { ...payload, source_uri: normalizeStreamUri(payload.source_uri) }
+    : payload;
+}
+
 export function createCamera(payload) {
   return requestJson("/cameras", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withNormalizedSource(payload)),
   });
 }
 
@@ -576,19 +611,19 @@ export function updateCamera(cameraId, payload) {
   if (shouldUseLocalNodeCameraId(cameraId)) {
     return requestLocalNodeJson(`/cameras/${cameraId}`, {
       method: "PATCH",
-      body: JSON.stringify(payload),
+      body: JSON.stringify(withNormalizedSource(payload)),
     });
   }
   return requestJson(`/cameras/${cameraId}`, {
     method: "PATCH",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withNormalizedSource(payload)),
   });
 }
 
 export async function testCameraSource(payload) {
   const started = await requestJson("/cameras/test-source", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify(withNormalizedSource(payload)),
   });
   return started?.pending ? waitForNodeCameraTest(started.job_id) : started;
 }

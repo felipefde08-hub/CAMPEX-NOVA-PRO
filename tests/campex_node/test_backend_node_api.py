@@ -220,6 +220,8 @@ def test_node_list_marks_stale_heartbeat_offline(monkeypatch, tmp_path):
 
 def test_node_telemetry_endpoint_returns_metrics_events_and_camera_summary(monkeypatch, tmp_path):
     _settings(monkeypatch, tmp_path)
+    # Datas recentes: a limpeza automática apaga métricas com mais de 7 dias.
+    captured_at = datetime.now(timezone.utc) - timedelta(minutes=5)
     headers = {"X-CAMPEX-Token": "cloud-secret"}
 
     with TestClient(app) as client:
@@ -237,7 +239,7 @@ def test_node_telemetry_endpoint_returns_metrics_events_and_camera_summary(monke
                     "metric_id": "metric_online",
                     "metric_type": "camera_online",
                     "camera_id": "cam_1",
-                    "captured_at": "2026-09-23T18:00:00+00:00",
+                    "captured_at": captured_at.isoformat(),
                     "value": 1,
                     "payload": {"camera_name": "Entrada", "status": "ONLINE"},
                 },
@@ -245,7 +247,7 @@ def test_node_telemetry_endpoint_returns_metrics_events_and_camera_summary(monke
                     "metric_id": "metric_frames",
                     "metric_type": "camera_frames_received",
                     "camera_id": "cam_1",
-                    "captured_at": "2026-09-23T18:00:01+00:00",
+                    "captured_at": (captured_at + timedelta(seconds=1)).isoformat(),
                     "value": 42,
                     "payload": {"camera_name": "Entrada", "status": "ONLINE"},
                 },
@@ -326,3 +328,45 @@ def _settings(monkeypatch, tmp_path) -> Settings:
     settings = Settings.from_env()
     initialize_database(settings)
     return settings
+
+
+def test_camera_telemetry_reads_single_health_metric_and_legacy_metrics():
+    from backend.api.nodes import _camera_telemetry
+
+    metrics = [
+        {
+            "camera_id": "cam_new",
+            "metric_type": "camera_health",
+            "value": 1.0,
+            "captured_at": "2026-10-08T12:00:00+00:00",
+            "payload": {
+                "camera_name": "Nova",
+                "status": "ONLINE",
+                "frames_received": 300,
+                "reconnect_attempts": 1,
+                "consecutive_failures": 0,
+            },
+        },
+        {
+            "camera_id": "cam_old",
+            "metric_type": "camera_online",
+            "value": 0.0,
+            "captured_at": "2026-10-08T12:00:00+00:00",
+            "payload": {"camera_name": "Antiga", "status": "OFFLINE"},
+        },
+        {
+            "camera_id": "cam_old",
+            "metric_type": "camera_frames_received",
+            "value": 7.0,
+            "captured_at": "2026-10-08T12:00:00+00:00",
+            "payload": {},
+        },
+    ]
+
+    cameras = {camera["camera_id"]: camera for camera in _camera_telemetry(metrics, [])}
+
+    assert cameras["cam_new"]["online"] is True
+    assert cameras["cam_new"]["frames_received"] == 300
+    assert cameras["cam_new"]["reconnect_attempts"] == 1
+    assert cameras["cam_old"]["online"] is False
+    assert cameras["cam_old"]["frames_received"] == 7.0

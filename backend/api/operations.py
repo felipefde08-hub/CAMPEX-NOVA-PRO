@@ -18,6 +18,7 @@ from backend.database.db import connect
 from backend.events.taxonomy import list_operational_categories
 from backend.events.rules_repository import RuleRepository
 from backend.maintenance.local_archive import archive_month
+from backend.maintenance.retention import delete_evidence_files
 from backend.cameras.repository import CameraRepository
 from backend.machines.repository import MachineRepository
 from backend.operations import build_operational_intelligence
@@ -433,25 +434,8 @@ def list_evidence(
 
 @router.post("/operations/evidence/cleanup")
 def cleanup_evidence(payload: RetentionPayload) -> dict:
-    root = get_data_dir() / "evidence"
-    if not root.exists():
-        return {"deleted_files": 0, "deleted_bytes": 0}
-    cutoff = datetime.now(timezone.utc) - timedelta(days=payload.days)
-    deleted_files = 0
-    deleted_bytes = 0
-    for path in sorted(root.rglob("*"), reverse=True):
-        if path.is_file():
-            modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-            if payload.days == 0 or modified < cutoff:
-                deleted_bytes += path.stat().st_size
-                path.unlink()
-                deleted_files += 1
-        elif path.is_dir():
-            try:
-                path.rmdir()
-            except OSError:
-                pass
-    return {"deleted_files": deleted_files, "deleted_bytes": deleted_bytes}
+    cutoff = None if payload.days == 0 else datetime.now(timezone.utc) - timedelta(days=payload.days)
+    return delete_evidence_files(get_data_dir() / "evidence", older_than=cutoff)
 
 
 @router.post("/operations/archive/month")

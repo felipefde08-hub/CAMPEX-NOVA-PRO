@@ -45,3 +45,30 @@ def test_local_store_prunes_oldest_pending_and_old_synced_items(tmp_path):
     assert store.outbound_queue_size() == 2
     assert [item["id"] for item in store.pending_outbound()] == ["metric_3", "metric_4"]
     assert store.outbound_summary()["synced"] == 0
+
+
+def test_local_store_prune_drops_telemetry_before_events(tmp_path):
+    store = LocalStore(tmp_path / "node.sqlite3")
+    store.initialize()
+    store.enqueue_event("event", {"event_id": "zone_entry"}, event_id="zone_entry")
+    for index in range(5):
+        store.enqueue_event("metric", {"n": index}, event_id=f"metric_{index}")
+
+    removed = store.prune_outbound(max_pending=3)
+
+    pending_ids = {item["id"] for item in store.pending_outbound(limit=10)}
+    assert removed == 3
+    assert "zone_entry" in pending_ids
+    assert pending_ids == {"zone_entry", "metric_3", "metric_4"}
+
+
+def test_local_store_keeps_only_latest_pending_heartbeat(tmp_path):
+    store = LocalStore(tmp_path / "node.sqlite3")
+    store.initialize()
+
+    for index in range(5):
+        store.enqueue_latest("heartbeat", {"sequence": index})
+
+    pending = store.pending_outbound()
+    assert len(pending) == 1
+    assert pending[0]["payload"] == {"sequence": 4}

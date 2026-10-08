@@ -54,7 +54,7 @@ class HeartbeatService:
             logger.info("Heartbeat sent", extra={"status_code": result.status_code})
         else:
             self.store.set_meta("last_cloud_error", result.error or str(result.status_code))
-            self.store.enqueue_event("heartbeat", payload)
+            self.store.enqueue_latest("heartbeat", payload)
             logger.warning("Heartbeat not delivered: %s", result.error or result.status_code)
         return payload
 
