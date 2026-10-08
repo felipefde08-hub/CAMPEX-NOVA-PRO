@@ -202,7 +202,8 @@ class CameraRecorder:
 
     The stream is copied packet by packet (no decoding), so recording costs
     almost no CPU and keeps the camera's full quality. It opens its own RTSP
-    session, separate from the one the vision worker decodes.
+    session, separate from the one the vision worker decodes; with go2rtc
+    both read the same local restream.
     """
 
     def __init__(
@@ -212,8 +213,10 @@ class CameraRecorder:
         store: RecordingStore,
         *,
         clock: Callable[[], datetime] = utc_now,
+        source_url: str | None = None,
     ) -> None:
         self.camera = camera
+        self.source_url = source_url
         self.settings = settings
         self.store = store
         self.clock = clock
@@ -255,7 +258,7 @@ class CameraRecorder:
         import av
 
         source = av.open(
-            self.camera.rtsp_url,
+            self.source_url or self.camera.rtsp_url,
             options={"rtsp_transport": "tcp"},
             timeout=(self.settings.camera_open_timeout_ms / 1000, self.settings.camera_read_timeout_ms / 1000),
         )
@@ -480,7 +483,9 @@ class RecordingService:
                     del self._recorders[camera_id]
             for camera_id, camera in wanted.items():
                 if camera_id not in self._recorders:
-                    recorder = CameraRecorder(camera, self.settings, self.store)
+                    recorder = CameraRecorder(
+                        camera, self.settings, self.store, source_url=self.camera_manager.source_url(camera)
+                    )
                     self._recorders[camera_id] = recorder
                     recorder.start()
 

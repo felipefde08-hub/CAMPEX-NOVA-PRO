@@ -41,3 +41,6 @@ nvidia.js
 .vercel-backend-deploy-*
 .vercel-front-deploy-*
 .neon
+
+# go2rtc binary: scripts/fetch_go2rtc.py downloads the pinned release
+campex_node/bin/

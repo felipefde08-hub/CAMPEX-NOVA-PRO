@@ -1,4 +1,5 @@
 import { getApiToken, setApiToken } from "./api-token.js";
+import { createLivePlayer } from "./live-player.js";
 import {
   usesLocalNodeApi,
   createCamera,
@@ -31,6 +32,7 @@ import {
   getProductivitySummary,
   getRuntimeSettings,
   getStreamInfo,
+  getLocalNodeLiveMode,
   getVisionObjects,
   getVisionStatus,
   getVideoAnalysisStatus,
@@ -1198,8 +1200,9 @@ async function renderLiveMedia(camera) {
 
   if (String(camera.id).startsWith("local_")) {
     try {
-      const health = await getCameraHealth(camera.id);
+      const [health, liveMode] = await Promise.all([getCameraHealth(camera.id), getLocalNodeLiveMode()]);
       if (activeMediaCameraId !== camera.id) return;
+      nodeLiveMode = liveMode;
       renderNodeMjpegElement(
         camera,
         health.last_error || "Aguardando imagem da camera.",
@@ -1374,11 +1377,22 @@ function renderVideoElement(camera) {
   });
 }
 
+// "mse" when the local Node serves go2rtc video; refreshed on camera change.
+let nodeLiveMode = "mjpeg";
+
 function renderNodeMjpegElement(camera, fallbackMessage = "", hasFrames = true) {
   const mediaHost = document.querySelector("#live-media-host");
   if (!mediaHost) return;
   mediaHost.dataset.localFrames = String(hasFrames);
   mediaHost.dataset.localMessage = fallbackMessage;
+  // Detections are drawn by the Node on JPEG frames, so they keep the
+  // snapshot view; plain live video goes through go2rtc.
+  const embeddable = window.CAMPEX_NODE_PANEL || canEmbedLocalNodeMedia();
+  if (hasFrames && embeddable && nodeLiveMode === "mse" && !liveDetectionsVisible()) {
+    mediaHost.innerHTML = `<div class="node-stream-hint">Vídeo ao vivo via CAMPEX Node local (go2rtc)</div>`;
+    mediaHost.prepend(createLivePlayer(`${localNodeOrigin()}/api/cameras/${encodeURIComponent(camera.id)}/live`));
+    return;
+  }
   if (!canEmbedLocalNodeMedia()) {
     mediaHost.innerHTML = `
       <div class="media-placeholder">

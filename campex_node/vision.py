@@ -14,7 +14,7 @@ import cv2
 from campex_node.cameras.manager import CameraManager
 from campex_node.core.config import ROOT_DIR, NodeSettings
 from campex_node.events import NodeEventPipeline
-from campex_node.tracking import EdgeTracker
+from campex_node.tracking import create_tracker
 
 
 logger = logging.getLogger("campex.node.vision")
@@ -160,7 +160,7 @@ class EdgeVisionService:
         self.camera_manager = camera_manager
         self.events = events
         self.observers = list(observers or [])
-        self._trackers: dict[str, EdgeTracker] = {}
+        self._trackers: dict[str, Any] = {}
         # camera_id -> frame_at of the last analysed frame
         self._last_frame_at: dict[str, datetime] = {}
         self._hog = cv2.HOGDescriptor()
@@ -327,7 +327,9 @@ class EdgeVisionService:
             if camera.vision_enabled:
                 try:
                     detections, detector = self._detect(frame)
-                    tracker = self._trackers.setdefault(camera.id, EdgeTracker())
+                    tracker = self._trackers.get(camera.id)
+                    if tracker is None:
+                        tracker = self._trackers[camera.id] = create_tracker(self.settings.vision_tracker)
                     detections = tracker.update(detections, frame_at or datetime.now(timezone.utc))
                     updates.update(status="RUNNING", detections=detections, detector=detector, error=None)
                 except Exception as exc:
