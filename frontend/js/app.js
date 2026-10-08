@@ -2288,6 +2288,7 @@ function newCameraWizardState() {
       source_type: "rtsp",
       ip: "",
       port: "",
+      stream_path: "",
       source_uri: "",
       username: "",
       password: "",
@@ -2426,6 +2427,7 @@ function renderWizardCameraStep() {
             ${wizardInput(isRtsp ? "URL RTSP / Fonte principal" : "Fonte", "source_uri", c.source_uri, isRtsp ? "rtsp://usuario:senha@ip/stream" : "0 ou caminho/video.mp4")}
             ${isRtsp ? wizardInput("Endereço IP", "ip", c.ip, "192.168.0.10") : ""}
             ${isRtsp ? wizardInput("Porta", "port", c.port, "554") : ""}
+            ${isRtsp ? wizardInput("Caminho do stream", "stream_path", c.stream_path, "/cam/realmonitor?channel=1&subtype=0") : ""}
             ${isRtsp ? wizardInput("Usuário", "username", c.username, "Opcional") : ""}
             ${isRtsp ? wizardInput("Senha", "password", c.password, "Não será exibida após salvar", "password") : ""}
           </div>
@@ -2767,6 +2769,43 @@ async function moveCameraWizard(direction) {
   renderCameraWizard();
 }
 
+// Monta a URL RTSP a partir dos campos IP/porta/usuário/senha quando a URL
+// completa não foi informada; credenciais dos campos entram numa URL sem login.
+function wizardSourceUri(camera) {
+  const typed = String(camera.source_uri || "").trim();
+  const isRtsp = camera.source_type === "rtsp" || camera.source_type === "ip_camera";
+  if (!isRtsp) return typed || "0";
+  const user = String(camera.username || "").trim();
+  const password = String(camera.password || "");
+  const credentials = user
+    ? `${encodeURIComponent(user)}${password ? `:${encodeURIComponent(password)}` : ""}@`
+    : "";
+  if (typed) {
+    const schemeEnd = typed.indexOf("://");
+    const hasCredentials = schemeEnd >= 0 && typed.slice(schemeEnd + 3).split("/")[0].includes("@");
+    return credentials && schemeEnd >= 0 && !hasCredentials
+      ? `${typed.slice(0, schemeEnd + 3)}${credentials}${typed.slice(schemeEnd + 3)}`
+      : typed;
+  }
+  const ip = String(camera.ip || "").trim();
+  if (!ip) return "";
+  const port = String(camera.port || "").trim() || "554";
+  let path = String(camera.stream_path || "").trim();
+  if (path && !path.startsWith("/")) path = `/${path}`;
+  return `rtsp://${credentials}${ip}:${port}${path}`;
+}
+
+function requireWizardSourceUri() {
+  const sourceUri = wizardSourceUri(cameraWizard.camera);
+  if (!sourceUri) throw new Error("Informe a URL RTSP completa ou o IP da câmera.");
+  return sourceUri;
+}
+
+// O CAMPEX Node ainda não tem regiões/monitores; a câmera continua salva.
+function isUnsupportedRoute(error) {
+  return error?.status === 404 || error?.status === 405;
+}
+
 async function persistWizardStep() {
   try {
     if (cameraWizard.step === 0 && !cameraWizard.createdCamera) {
@@ -2774,22 +2813,32 @@ async function persistWizardStep() {
         name: cameraWizard.camera.name || "Camera sem nome",
         area_id: cameraWizard.camera.sector || cameraWizard.camera.area_id || null,
         source_type: cameraWizard.camera.source_type,
-        source_uri: cameraWizard.camera.source_uri || "0",
+        source_uri: requireWizardSourceUri(),
         enabled: true,
         vision_enabled: false,
       };
       cameraWizard.createdCamera = await createCamera(payload);
       await loadCameras();
     }
-    if (cameraWizard.step === 2 && cameraWizard.createdCamera && !cameraWizard.createdRoi) {
-      cameraWizard.createdRoi = await createCameraRoi(cameraWizard.createdCamera.id, {
-        name: cameraWizard.roi.name,
-        type: cameraWizard.roi.type,
-        shape: "rect",
-        coordinates: cameraWizard.roi.coordinates,
-        description: cameraWizard.roi.description,
-        enabled: true,
-      });
+    if (cameraWizard.step === 2 && cameraWizard.createdCamera && !cameraWizard.createdRoi && !cameraWizard.roiUnsupported) {
+      try {
+        cameraWizard.createdRoi = await createCameraRoi(cameraWizard.createdCamera.id, {
+          name: cameraWizard.roi.name,
+          type: cameraWizard.roi.type,
+          shape: "rect",
+          coordinates: cameraWizard.roi.coordinates,
+          description: cameraWizard.roi.description,
+          enabled: true,
+        });
+      } catch (error) {
+        if (!isUnsupportedRoute(error)) throw error;
+        cameraWizard.roiUnsupported = true;
+        notify(
+          "Etapa pulada",
+          "Regiões e monitores ainda não são suportados pelo CAMPEX Node. A câmera já está salva.",
+          "info"
+        );
+      }
     }
     if (cameraWizard.step === 3 && cameraWizard.createdCamera && cameraWizard.createdRoi && !cameraWizard.createdMonitor) {
       cameraWizard.createdMonitor = await createMonitor({
@@ -2833,7 +2882,7 @@ async function wizardTestCamera() {
       name: cameraWizard.camera.name || "Teste de câmera",
       area_id: cameraWizard.camera.sector || null,
       source_type: cameraWizard.camera.source_type,
-      source_uri: cameraWizard.camera.source_uri || "0",
+      source_uri: requireWizardSourceUri(),
       enabled: false,
       vision_enabled: false,
     });

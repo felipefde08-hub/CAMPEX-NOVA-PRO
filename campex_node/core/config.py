@@ -126,7 +126,7 @@ class NodeSettings:
     cloud_timeout_seconds: float = 10.0
     config_sync_interval_seconds: float = 15.0
     sync_interval_seconds: float = 10.0
-    telemetry_interval_seconds: float = 30.0
+    telemetry_interval_seconds: float = 60.0
     heartbeat_interval_seconds: float = 30.0
     camera_reconnect_seconds: float = 5.0
     camera_read_failure_limit: int = 3
@@ -148,6 +148,8 @@ class NodeSettings:
     recording_retention_days: float = 30.0
     recording_min_free_gb: float = 10.0
     recording_max_gb: float = 0.0  # 0 = limited only by free space and age
+    # Clipes e imagens de eventos; os eventos em si não são apagados.
+    evidence_retention_days: float = 90.0  # 0 = guardar para sempre
     machine_monitor_interval_seconds: float = 0.2
     # Daily copies of the Node database; default: <data_dir>/backups.
     backup_dir: Path | None = None
@@ -197,7 +199,7 @@ class NodeSettings:
             cloud_timeout_seconds=_env_float("CAMPEX_NODE_CLOUD_TIMEOUT_SECONDS", 10.0),
             config_sync_interval_seconds=_env_float("CAMPEX_NODE_CONFIG_SYNC_SECONDS", 15.0),
             sync_interval_seconds=_env_float("CAMPEX_NODE_SYNC_SECONDS", 10.0),
-            telemetry_interval_seconds=_env_float("CAMPEX_NODE_TELEMETRY_SECONDS", 30.0),
+            telemetry_interval_seconds=_env_float("CAMPEX_NODE_TELEMETRY_SECONDS", 60.0),
             heartbeat_interval_seconds=_env_float("CAMPEX_NODE_HEARTBEAT_SECONDS", 30.0),
             camera_reconnect_seconds=_env_float("CAMPEX_NODE_CAMERA_RECONNECT_SECONDS", 5.0),
             camera_read_failure_limit=_env_int("CAMPEX_NODE_CAMERA_READ_FAILURE_LIMIT", 3),
@@ -219,6 +221,7 @@ class NodeSettings:
             recording_retention_days=_env_float("CAMPEX_NODE_RECORDING_RETENTION_DAYS", 30.0),
             recording_min_free_gb=_env_float("CAMPEX_NODE_RECORDING_MIN_FREE_GB", 10.0),
             recording_max_gb=_env_float("CAMPEX_NODE_RECORDING_MAX_GB", 0.0),
+            evidence_retention_days=_env_float("CAMPEX_NODE_EVIDENCE_RETENTION_DAYS", 90.0),
             machine_monitor_interval_seconds=_env_float("CAMPEX_NODE_MACHINE_MONITOR_SECONDS", 0.2),
             backup_dir=(
                 Path(os.environ["CAMPEX_NODE_BACKUP_DIR"]).expanduser().resolve()
@@ -254,6 +257,8 @@ class NodeSettings:
             raise ValueError("CAMPEX_NODE_VISION_INTERVAL_SECONDS must be greater than zero.")
         if not 0.0 <= self.vision_confidence <= 1.0:
             raise ValueError("CAMPEX_NODE_VISION_CONFIDENCE must be between 0 and 1.")
+        if self.evidence_retention_days < 0:
+            raise ValueError("CAMPEX_NODE_EVIDENCE_RETENTION_DAYS must be zero (keep forever) or positive.")
         if self.vision_stale_frame_seconds <= 0:
             raise ValueError("CAMPEX_NODE_VISION_STALE_FRAME_SECONDS must be greater than zero.")
         if self.recording_segment_seconds < 10:

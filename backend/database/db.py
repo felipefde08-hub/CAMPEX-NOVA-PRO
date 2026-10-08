@@ -436,6 +436,11 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_node_pairing_sessions_status_expires ON node_pairing_sessions(status, expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_node_pairing_sessions_node ON node_pairing_sessions(node_public_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_node_metrics_org_node_time ON node_metrics(organization_id, node_id, captured_at DESC)",
+    # Índices por data para a limpeza automática não varrer tabelas inteiras.
+    "CREATE INDEX IF NOT EXISTS idx_node_metrics_captured ON node_metrics(captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_node_sync_items_received ON node_sync_items(received_at)",
+    "CREATE INDEX IF NOT EXISTS idx_state_transitions_occurred ON state_transitions(occurred_at)",
+    "CREATE INDEX IF NOT EXISTS idx_notification_delivery_created ON notification_deliveries(created_at)",
 )
 
 

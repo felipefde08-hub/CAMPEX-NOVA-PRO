@@ -33,6 +33,7 @@ from backend.auth.service import AuthService
 from backend.config import get_settings
 from backend.database.db import initialize_database
 from backend.logging_config import configure_logging
+from backend.maintenance.retention import RetentionWorker
 from backend.middleware.security import RateLimitMiddleware, SecurityHeadersMiddleware
 from backend.security.organization_scope import resolve_organization_scope
 from backend.vision.engine import VisionEngine
@@ -156,10 +157,14 @@ async def lifespan(app_instance: FastAPI):
                             camera.id,
                         )
             _warn_security_posture(settings)
+            retention_worker = RetentionWorker(settings)
+            if "PYTEST_CURRENT_TEST" not in os.environ:
+                retention_worker.start()
 
             try:
                 yield
             finally:
+                retention_worker.stop()
                 vision_engine.shutdown()
                 manager.shutdown()
         except Exception:

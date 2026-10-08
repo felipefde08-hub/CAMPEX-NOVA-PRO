@@ -224,16 +224,19 @@ class LocalStore:
         ).isoformat()
         with self._connect() as connection:
             removed = connection.execute(
-                "DELETE FROM outbound_events WHERE status = 'synced' AND synced_at < ?",
+                "DELETE FROM outbound_events WHERE status = 'synced' AND synced_at <= ?",
                 (cutoff,),
             ).rowcount
+            # Acima do limite, descarta telemetria (substituível) antes de
+            # eventos: senão métricas novas empurram eventos reais para fora.
             removed += connection.execute(
                 """
                 DELETE FROM outbound_events
                 WHERE id IN (
                     SELECT id FROM outbound_events
                     WHERE status = 'pending'
-                    ORDER BY created_at DESC
+                    ORDER BY CASE WHEN type IN ('metric', 'heartbeat') THEN 1 ELSE 0 END,
+                             created_at DESC, rowid DESC
                     LIMIT -1 OFFSET ?
                 )
                 """,
@@ -241,6 +244,20 @@ class LocalStore:
             ).rowcount
             connection.commit()
         return removed
+
+    def enqueue_latest(self, event_type: str, payload: dict[str, Any]) -> str:
+        """Enfileira mantendo só o item pendente mais recente desse tipo.
+
+        Para estados que só valem o último (ex.: heartbeat): sem isso, um Node
+        sem Cloud enfileiraria um item a cada 30s.
+        """
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM outbound_events WHERE type = ? AND status = 'pending'",
+                (event_type,),
+            )
+            connection.commit()
+        return self.enqueue_event(event_type, payload)
 
     def outbound_queue_size(self) -> int:
         with self._connect() as connection:

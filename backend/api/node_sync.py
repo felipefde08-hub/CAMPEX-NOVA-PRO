@@ -4,13 +4,14 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 
 from backend.cameras.cloud_runtime import CameraReport, CloudCameraRuntime, decode_frame
 from backend.cloud.nodes import NodeIdentity, get_node_identity
 from backend.config import get_settings
 from backend.database.db import connect
+from backend.maintenance.retention import run_retention_if_due
 
 
 router = APIRouter(prefix="/api/v1/node-sync", tags=["node-sync"])
@@ -106,11 +107,14 @@ def sync_camera_live_state(
 @router.post("/events")
 def sync_events(
     events: list[NodeEventPayload],
+    background_tasks: BackgroundTasks,
     identity: NodeIdentity = Depends(get_node_identity),
 ) -> dict:
     accepted = 0
     duplicates = 0
     settings = get_settings()
+    # Limpeza automática em segundo plano (no máximo a cada N horas).
+    background_tasks.add_task(run_retention_if_due, settings)
     with connect(settings.database_target) as connection:
         for event in events:
             inserted = _insert_event(connection, identity, event)
@@ -123,11 +127,14 @@ def sync_events(
 @router.post("/metrics")
 def sync_metrics(
     metrics: list[NodeMetricPayload],
+    background_tasks: BackgroundTasks,
     identity: NodeIdentity = Depends(get_node_identity),
 ) -> dict:
     accepted = 0
     duplicates = 0
     settings = get_settings()
+    # Limpeza automática em segundo plano (no máximo a cada N horas).
+    background_tasks.add_task(run_retention_if_due, settings)
     with connect(settings.database_target) as connection:
         for metric in metrics:
             inserted = _insert_metric(connection, identity, metric)
@@ -140,9 +147,12 @@ def sync_metrics(
 @router.post("/batch")
 def sync_batch(
     batch: NodeSyncBatch,
+    background_tasks: BackgroundTasks,
     identity: NodeIdentity = Depends(get_node_identity),
 ) -> dict:
     settings = get_settings()
+    # Limpeza automática em segundo plano (no máximo a cada N horas).
+    background_tasks.add_task(run_retention_if_due, settings)
     accepted_events = duplicate_events = accepted_metrics = duplicate_metrics = 0
     with connect(settings.database_target) as connection:
         for event in batch.events:

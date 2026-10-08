@@ -232,9 +232,9 @@ class LocalNodeRuntime:
     def add_camera(self, payload: LocalCameraPayload) -> dict:
         rtsp_url = (payload.rtsp_url or payload.source_uri or "").strip()
         if not payload.name.strip():
-            raise ValueError("Camera name is required.")
+            raise ValueError("Informe o nome da câmera.")
         if not rtsp_url:
-            raise ValueError("RTSP URL is required.")
+            raise ValueError("Informe a URL RTSP da câmera.")
         camera_id = _camera_id(payload.id)
         if self._is_cloud_camera(camera_id):
             raise CloudManagedCameraError()
@@ -1082,11 +1082,17 @@ def create_app() -> FastAPI:
         return runtime.cameras()
 
     @app.post("/api/cameras")
-    def add_camera(payload: LocalCameraPayload) -> dict:
+    def add_camera(payload: LocalCameraPayload):
         try:
             return runtime.add_camera(payload)
         except ValueError as exc:
-            return {"ok": False, "error": str(exc), **runtime.status()}
+            # 400 para o painel web não tratar a recusa como sucesso; "error"
+            # continua no corpo para a tela local do Node.
+            status_code = 409 if isinstance(exc, CloudManagedCameraError) else 400
+            return JSONResponse(
+                status_code=status_code,
+                content={"ok": False, "error": str(exc), "detail": str(exc)},
+            )
 
     @app.patch("/api/cameras/{camera_id}")
     def update_camera(camera_id: str, payload: LocalCameraPayload) -> dict:

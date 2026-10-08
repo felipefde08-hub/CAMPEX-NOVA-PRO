@@ -22,6 +22,7 @@ from campex_node.factory import FactoryStore
 from campex_node.monitors import MachineMonitor, OccupancyMonitor, ZoneCache
 from campex_node.recording import RecordingService, RecordingStore
 from campex_node.storage.local_store import LocalStore
+from campex_node.storage.retention import EvidenceRetentionService
 from campex_node.telemetry.collector import TelemetryCollector
 from campex_node.updates.service import UpdateService
 from campex_node.vision import EdgeVisionService
@@ -63,6 +64,7 @@ class NodeLifecycle:
         self.recording: RecordingService | None = None
         self.live_relay: LiveRelayService | None = None
         self.updates: UpdateService | None = None
+        self.evidence_retention: EvidenceRetentionService | None = None
         self._running = False
         self.started_at: datetime | None = None
 
@@ -160,6 +162,8 @@ class NodeLifecycle:
             self.live_relay.start()
         self.updates = UpdateService(settings=self.settings, store=self.store)
         self.updates.start()
+        self.evidence_retention = EvidenceRetentionService(self.settings)
+        self.evidence_retention.start()
         self._running = True
         self.started_at = datetime.now(timezone.utc)
         logger.info("CAMPEX Node started")
@@ -184,6 +188,8 @@ class NodeLifecycle:
             self.stop()
 
     def stop(self) -> None:
+        if self.evidence_retention is not None:
+            self.evidence_retention.stop()
         if self.updates is not None:
             self.updates.stop()
         if self.live_relay is not None:

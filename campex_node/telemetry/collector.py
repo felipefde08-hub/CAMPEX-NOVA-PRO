@@ -74,29 +74,27 @@ class TelemetryCollector:
         camera_id = str(state["id"])
         status = str(state.get("status") or CameraStatus.OFFLINE.value)
         online = 1.0 if status == CameraStatus.ONLINE.value else 0.0
+        # Uma linha por câmera por coleta: os contadores vão no payload em vez
+        # de virarem quatro métricas separadas (4x menos linhas na Cloud).
         payload = {
             "status": status,
             "camera_name": state.get("name"),
             "last_frame_at": state.get("last_frame_at"),
             "last_connected_at": state.get("last_connected_at"),
             "last_error": sanitize_error_message(state.get("last_error")),
-        }
-        values = {
-            "camera_online": online,
-            "camera_frames_received": float(state.get("frames_received") or 0),
-            "camera_reconnect_attempts": float(state.get("reconnect_attempts") or 0),
-            "camera_consecutive_failures": float(state.get("consecutive_failures") or 0),
+            "frames_received": int(state.get("frames_received") or 0),
+            "reconnect_attempts": int(state.get("reconnect_attempts") or 0),
+            "consecutive_failures": int(state.get("consecutive_failures") or 0),
         }
         return [
             {
-                "metric_id": self._item_id("metric", camera_id, metric_type, captured_at),
-                "metric_type": metric_type,
+                "metric_id": self._item_id("metric", camera_id, "camera_health", captured_at),
+                "metric_type": "camera_health",
                 "camera_id": camera_id,
                 "captured_at": captured_at,
-                "value": value,
+                "value": online,
                 "payload": payload,
             }
-            for metric_type, value in values.items()
         ]
 
     def _status_event_payload(self, state: dict[str, Any], captured_at: str) -> dict[str, Any] | None:

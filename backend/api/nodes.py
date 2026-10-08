@@ -454,6 +454,15 @@ def _camera_telemetry(metrics: list[dict], events: list[dict]) -> list[dict]:
         camera["frames_received"] = _metric_value(camera, "camera_frames_received")
         camera["reconnect_attempts"] = _metric_value(camera, "camera_reconnect_attempts")
         camera["consecutive_failures"] = _metric_value(camera, "camera_consecutive_failures")
+        # Nodes novos mandam uma única métrica "camera_health" com os valores no
+        # payload; Nodes antigos mandam as quatro métricas separadas.
+        health = camera["metrics"].get("camera_health")
+        if health and _is_newer(health, online_metric):
+            health_payload = health.get("payload") or {}
+            camera["online"] = health.get("value") == 1
+            camera["frames_received"] = health_payload.get("frames_received")
+            camera["reconnect_attempts"] = health_payload.get("reconnect_attempts")
+            camera["consecutive_failures"] = health_payload.get("consecutive_failures")
         camera["last_metric_at"] = max((m["captured_at"] for m in camera["metrics"].values()), default=None)
     return sorted(cameras.values(), key=lambda item: item.get("name") or item["camera_id"])
 
@@ -461,6 +470,10 @@ def _camera_telemetry(metrics: list[dict], events: list[dict]) -> list[dict]:
 def _metric_value(camera: dict, metric_type: str) -> float | None:
     metric = camera["metrics"].get(metric_type)
     return metric.get("value") if metric else None
+
+
+def _is_newer(metric: dict, other: dict | None) -> bool:
+    return other is None or str(metric.get("captured_at") or "") >= str(other.get("captured_at") or "")
 
 
 def _loads_json(value) -> dict:
