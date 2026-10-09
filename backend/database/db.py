@@ -441,7 +441,8 @@ SCHEMA_STATEMENTS = (
         poses_json TEXT NOT NULL DEFAULT '[]',
         frame_jpeg BYTEA,
         frame_captured_at TEXT,
-        viewer_seen_at TEXT
+        viewer_seen_at TEXT,
+        frame_overlay_json TEXT
     )
     """,
     """
@@ -496,7 +497,9 @@ SCHEMA_STATEMENTS = (
 
 CAMERAS_SCHEMA = SCHEMA_STATEMENTS[1]
 
-SCHEMA_VERSION = "9"
+# 10: camera_live_state.frame_overlay_json. Version 9 (factory sync tables)
+# may already be deployed, so this column needs a version of its own.
+SCHEMA_VERSION = "10"
 
 # Columns that SQLite databases received through the _migrate_* helpers after
 # their tables were first created. A Postgres database is always created fresh,
@@ -516,6 +519,11 @@ _NOTIFICATION_COLUMNS = {
 _CAMERA_NODE_COLUMNS = {
     "node_id": "TEXT",
     "mapping_enabled": "INTEGER NOT NULL DEFAULT 0",
+}
+# The objects detected on the stored live frame, kept apart from the latest
+# objects so the dashboard overlay never mixes two analyses.
+_CAMERA_LIVE_STATE_COLUMNS = {
+    "frame_overlay_json": "TEXT",
 }
 # Serializes schema setup when several serverless instances cold start at once.
 _POSTGRES_SCHEMA_LOCK_ID = 7_242_617
@@ -554,6 +562,7 @@ def initialize_database(settings: Settings) -> Path | str:
         _migrate_node_columns(connection)
         _migrate_node_pairing_session_columns(connection)
         _migrate_node_sync_columns(connection)
+        _migrate_camera_live_state_columns(connection)
         _ensure_default_organization(connection, settings.intelligence_default_organization_id)
         _record_schema_version(connection)
         connection.commit()
@@ -591,6 +600,8 @@ def _initialize_postgres(settings: Settings) -> None:
             )
         for column, definition in _CAMERA_NODE_COLUMNS.items():
             connection.execute(f"ALTER TABLE cameras ADD COLUMN IF NOT EXISTS {column} {definition}")
+        for column, definition in _CAMERA_LIVE_STATE_COLUMNS.items():
+            connection.execute(f"ALTER TABLE camera_live_state ADD COLUMN IF NOT EXISTS {column} {definition}")
         for column, definition in _NOTIFICATION_COLUMNS.items():
             connection.execute(f"ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS {column} {definition}")
         for statement in _POSTGRES_INDEXES:
@@ -756,6 +767,16 @@ def _migrate_node_sync_columns(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_events_org_node_started ON events(organization_id, node_id, started_at DESC)"
     )
+
+
+def _migrate_camera_live_state_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(camera_live_state)").fetchall()
+    }
+    for column, definition in _CAMERA_LIVE_STATE_COLUMNS.items():
+        if column not in columns:
+            connection.execute(f"ALTER TABLE camera_live_state ADD COLUMN {column} {definition}")
 
 
 def _ensure_default_organization(

@@ -34,6 +34,10 @@ CLIP_MAX_WIDTH = 960
 CLIP_PRE_ROLL_SECONDS = 5.0
 CLIP_POST_ROLL_SECONDS = 3.0
 CLIP_MAX_SECONDS = 120.0
+# Vision can analyse faster than this, but every clip frame is VP8-encoded
+# once per open clip (~30 ms each on a mid-range CPU): clips keep the rate
+# they had when vision ran at 2-3 FPS and their cost no longer grows with it.
+CLIP_MAX_FPS = 3.0
 ZONE_CACHE_SECONDS = 2.0
 
 SCHEMA = (
@@ -362,6 +366,7 @@ class _OpenClip:
 @dataclass
 class _CameraBuffer:
     frames: deque = field(default_factory=deque)  # (monotonic, jpeg bytes)
+    last_taken: float | None = None
 
 
 class ClipRecorder:
@@ -374,22 +379,31 @@ class ClipRecorder:
 
     def __init__(self, evidence_dir: Path, fps: float) -> None:
         self.evidence_dir = evidence_dir
-        self.fps = max(1.0, min(30.0, fps))
+        self.fps = max(1.0, min(CLIP_MAX_FPS, fps))
         self._buffers: dict[str, _CameraBuffer] = {}
         self._clips: dict[str, dict[str, _OpenClip]] = {}
 
     def push(self, camera_id: str, frame: Any, now: float) -> list[tuple[str, Path]]:
-        """Feed a frame; returns (event_id, path) for clips that just finished."""
-        small = _downscale(frame)
-        ok, encoded = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        """Feed a frame; returns (event_id, path) for clips that just finished.
+
+        Frames arriving faster than CLIP_MAX_FPS are not recorded; clips that
+        are due to finish still finish on them.
+        """
         buffer = self._buffers.setdefault(camera_id, _CameraBuffer())
-        if ok:
-            buffer.frames.append((now, encoded.tobytes()))
+        take = buffer.last_taken is None or now - buffer.last_taken >= 1.0 / CLIP_MAX_FPS
+        small = None
+        if take:
+            buffer.last_taken = now
+            small = _downscale(frame)
+            ok, encoded = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ok:
+                buffer.frames.append((now, encoded.tobytes()))
         while buffer.frames and now - buffer.frames[0][0] > CLIP_PRE_ROLL_SECONDS:
             buffer.frames.popleft()
         finished = []
         for clip in list(self._clips.get(camera_id, {}).values()):
-            _write(clip, small)
+            if small is not None:
+                _write(clip, small)
             expired = now - clip.started_at >= CLIP_MAX_SECONDS
             if expired or (clip.stop_at is not None and now >= clip.stop_at):
                 finished.append(self._finish(camera_id, clip.event_id))

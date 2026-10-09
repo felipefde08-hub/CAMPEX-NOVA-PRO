@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any
@@ -13,6 +14,9 @@ class LatestFrameSnapshot:
     frame_id: int
     frames_received: int
     frames_replaced: int
+    # frame_id restarts in every buffer, so (session_id, frame_id) identifies a
+    # frame across camera restarts.
+    session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -25,9 +29,14 @@ class LatestFrameStats:
 
 
 class LatestFrameBuffer:
-    """Single-slot frame buffer: new frames replace stale frames."""
+    """Single-slot frame buffer: new frames replace stale frames.
+
+    ``frame_at`` is when the frame reached this process, not when the camera
+    exposed it: RTSP/FFmpeg buffering in between is not measured.
+    """
 
     def __init__(self) -> None:
+        self.session_id = uuid.uuid4().hex[:12]
         self._frame: Any | None = None
         self._frame_at: datetime | None = None
         self._frames_received = 0
@@ -48,6 +57,14 @@ class LatestFrameBuffer:
             frame = self._frame.copy() if hasattr(self._frame, "copy") else self._frame
             return frame, self._frame_at
 
+    def identity(self) -> tuple[str, int, datetime | None]:
+        """(session_id, frame_id, frame_at) of the latest frame, without copying it.
+
+        frame_id is 0 while no frame has arrived.
+        """
+        with self._lock:
+            return self.session_id, self._frames_received, self._frame_at
+
     def snapshot(self) -> LatestFrameSnapshot:
         with self._lock:
             frame = self._frame.copy() if hasattr(self._frame, "copy") else self._frame
@@ -57,6 +74,7 @@ class LatestFrameBuffer:
                 frame_id=self._frames_received,
                 frames_received=self._frames_received,
                 frames_replaced=self._frames_replaced,
+                session_id=self.session_id,
             )
 
     def stats(self) -> LatestFrameStats:

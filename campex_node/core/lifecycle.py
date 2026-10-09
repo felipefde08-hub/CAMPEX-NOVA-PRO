@@ -126,7 +126,7 @@ class NodeLifecycle:
             occupancy=self.occupancy,
             evidence_dir=evidence_dir,
             camera_manager=self.camera_manager,
-            people=self.vision.people_boxes,
+            people=self.vision.people_observation,
             interval_seconds=self.settings.machine_monitor_interval_seconds,
             stale_frame_seconds=self.settings.vision_stale_frame_seconds,
             zones=zones,

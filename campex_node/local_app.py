@@ -1020,6 +1020,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/cameras/{camera_id}/snapshot")
     def camera_snapshot(camera_id: str, overlay: bool = Query(False)):
+        result = _overlay_result(runtime, camera_id) if overlay else None
+        if result is not None:
+            return Response(
+                content=_encode_jpeg(runtime.lifecycle.vision.render_result(result), quality=72),
+                media_type="image/jpeg",
+                headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "live", **_overlay_headers(result)},
+            )
         frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
         if frame is None:
             encoded = _encode_jpeg(_blank_frame("Aguardando imagem da camera"), quality=72)
@@ -1028,13 +1035,11 @@ def create_app() -> FastAPI:
                 media_type="image/jpeg",
                 headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "waiting"},
             )
-        if overlay and runtime.lifecycle.vision is not None:
-            frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
         encoded = _encode_jpeg(frame, quality=72)
         return Response(
             content=encoded,
             media_type="image/jpeg",
-            headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "live"},
+            headers={"Cache-Control": "no-store", "X-CAMPEX-Frame": "live", **_overlay_headers(None, overlay)},
         )
 
     @app.get("/api/cameras/{camera_id}/stream")
@@ -1555,6 +1560,29 @@ def _evidence_file(data_dir: Path, stored: str) -> Path | None:
     return file_path
 
 
+def _overlay_result(runtime: LocalNodeRuntime, camera_id: str):
+    vision = runtime.lifecycle.vision
+    return vision.overlay_result(camera_id) if vision is not None else None
+
+
+def _overlay_headers(result, requested: bool = True) -> dict[str, str]:
+    """How the image relates to the detections drawn on it.
+
+    synced: boxes drawn on the very frame they were detected on.
+    unavailable: overlay asked for but there is no recent analysis (vision
+    off, starting, failing or stalled), so the live frame is sent without boxes.
+    none: no overlay asked for.
+    """
+    if result is None:
+        return {"X-CAMPEX-Overlay": "unavailable" if requested else "none"}
+    ref = result.frame_ref()
+    return {
+        "X-CAMPEX-Overlay": "synced",
+        "X-CAMPEX-Frame-Id": f"{ref['session_id']}:{ref['frame_id']}",
+        "X-CAMPEX-Frame-At": ref["frame_at"] or "",
+    }
+
+
 def _websocket_allowed(runtime: "LocalNodeRuntime", websocket: WebSocket) -> bool:
     # Browsers apply no CORS to WebSockets: without the origin check any web
     # page open on a viewer's computer could read the camera's video.
@@ -1609,18 +1637,36 @@ async def _proxy_live(websocket: WebSocket, url: str, headers: dict[str, str]) -
 
 
 def _mjpeg_frames(runtime: LocalNodeRuntime, camera_id: str, *, overlay: bool = False):
+    """MJPEG of the live camera; with overlay, of the analysed frames instead.
+
+    With overlay the stream advances at the vision rate: each image carries the
+    boxes found on that same image, never on a newer one. Before the first
+    analysis, or when vision stops, it falls back to the live frame without boxes.
+    """
     last_payload: bytes | None = None
+    last_result_key = None
+    headers = _overlay_headers(None, overlay)
     while True:
-        frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
-        if frame is not None:
-            if overlay and runtime.lifecycle.vision is not None:
-                frame = runtime.lifecycle.vision.render_overlay(camera_id, frame.copy())
-            last_payload = _encode_jpeg(frame, quality=68)
+        result = _overlay_result(runtime, camera_id) if overlay else None
+        if result is not None:
+            if result.key != last_result_key:
+                last_payload = _encode_jpeg(runtime.lifecycle.vision.render_result(result), quality=68)
+                last_result_key = result.key
+                headers = _overlay_headers(result)
+        else:
+            last_result_key = None
+            headers = _overlay_headers(None, overlay)
+            frame, _frame_at = runtime.lifecycle.camera_manager.latest_frame(camera_id)
+            if frame is not None:
+                last_payload = _encode_jpeg(frame, quality=68)
         payload = last_payload or _encode_jpeg(_blank_frame("Aguardando imagem da camera"), quality=68)
+        part_headers = "".join(f"{name}: {value}\r\n" for name, value in headers.items()).encode("ascii")
         yield (
             b"--frame\r\n"
             b"Content-Type: image/jpeg\r\n"
-            b"Cache-Control: no-store\r\n\r\n"
+            b"Cache-Control: no-store\r\n"
+            + part_headers
+            + b"\r\n"
             + payload
             + b"\r\n"
         )

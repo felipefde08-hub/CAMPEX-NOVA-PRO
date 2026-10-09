@@ -58,6 +58,15 @@ PIXEL_DELTA = 25
 RUN_WINDOW_SECONDS = 5.0
 RUN_MIN_MOTION_SAMPLES = 2
 PERSON_BOX_PADDING = 0.15
+# People boxes come from the last analysed frame, which is older than the
+# frame sampled here. Within this age each box is widened by how far a person
+# can have walked meanwhile; beyond it the boxes say nothing reliable about
+# where people are now.
+PERSON_OBSERVATION_MAX_AGE_SECONDS = 2.0
+PERSON_MAX_SPEED_BOX_WIDTHS = 3.0  # a brisk walk (~1.5 m/s), in body widths per second
+# Below this share of the machine area left unmasked the sample cannot tell
+# whether the machine moved.
+MIN_VISIBLE_FRACTION = 0.25
 
 # Machine signal lights
 LIGHT_MIN_VALUE = 200  # HSV brightness of a lit pixel
@@ -495,6 +504,11 @@ class _Machine:
     mask: np.ndarray | None = None
     stop_event_id: str | None = None
     operator_event_id: str | None = None
+    # Last sample that could not tell whether the machine moved (people
+    # boxes too old, or the machine hidden behind people).
+    last_unclear: datetime | None = None
+    observation_age: float | None = None
+    conclusive: bool = True
     # Signal light machines
     light_level: float | None = None
     last_lit: datetime | None = None
@@ -513,6 +527,12 @@ class MachineMonitor:
     - STOPPED after ``stop_after_seconds`` without movement, starting at the
       last movement seen;
     - UNKNOWN while the camera is offline or frozen (never counted as downtime).
+
+    ``people(camera_id)`` returns ``(frame_at, boxes)``: the people boxes and
+    when their frame was received. They are older than the sampled frame, so
+    they are widened by how far a person can have walked since; samples they
+    cannot clear up are inconclusive and count neither as movement nor as
+    stillness. A provider returning a plain list of boxes is taken as current.
 
     A signal light gives the same running signal as movement: lit (or unlit,
     for a light that means "stopped") within ``LIGHT_HOLD_SECONDS``. The
@@ -533,7 +553,7 @@ class MachineMonitor:
         occupancy: OccupancyMonitor | None,
         evidence_dir: Path,
         camera_manager: Any = None,
-        people: Callable[[str], list[tuple[float, float, float, float]]] | None = None,
+        people: Callable[[str], Any] | None = None,
         interval_seconds: float = 0.2,
         stale_frame_seconds: float = 10.0,
         zones: ZoneCache | None = None,
@@ -572,6 +592,11 @@ class MachineMonitor:
                     "activity": round(item.activity, 4),
                     "light_level": round(item.light_level, 4) if item.light_level is not None else None,
                     "last_motion_at": iso(item.last_motion),
+                    # Whether the last sample could tell movement from people.
+                    "conclusive": item.conclusive,
+                    "people_observation_age_ms": (
+                        round(item.observation_age * 1000) if item.observation_age is not None else None
+                    ),
                     "stop_event_id": item.stop_event_id,
                     "operator_event_id": item.operator_event_id,
                 }
@@ -610,11 +635,14 @@ class MachineMonitor:
 
     def sample(self, camera_id: str, frame: Any, at: datetime) -> None:
         machines = [item for item in self.zones.camera_zones(camera_id) if item[0].type == "machine"]
-        people = self.people(camera_id)
+        observed = self.people(camera_id)
+        observed_at, people = observed if isinstance(observed, tuple) else (None, observed)
+        # Seconds between the frame the boxes came from and this frame.
+        age = max(0.0, (at - observed_at).total_seconds()) if observed_at is not None else 0.0
         with self._lock:
             for zone, settings in machines:
                 machine = self._machines.setdefault(zone.id, _Machine(zone.id, camera_id))
-                self._sample_machine(machine, zone, settings, frame, people, at)
+                self._sample_machine(machine, zone, settings, frame, people, at, age)
             wanted = {zone.id for zone, _ in machines}
             for zone_id, machine in list(self._machines.items()):
                 if machine.camera_id == camera_id and zone_id not in wanted:
@@ -636,6 +664,7 @@ class MachineMonitor:
         frame: Any,
         people: list[tuple[float, float, float, float]],
         at: datetime,
+        people_age: float = 0.0,
     ) -> None:
         height, width = frame.shape[:2]
         key = (width, height, tuple((point.x, point.y) for point in zone.points))
@@ -648,7 +677,8 @@ class MachineMonitor:
         crop = cv2.resize(frame[y1:y2, x1:x2], machine.roi_size, interpolation=cv2.INTER_AREA)
         machine.last_sample = at
         light = settings.get("detection") == "light"
-        moving = self._light_signal(machine, settings, crop, people, at) if light else self._motion_signal(machine, settings, crop, people, at)
+        signal = self._light_signal if light else self._motion_signal
+        moving = signal(machine, settings, crop, people, at, people_age)
         if moving is None:
             return
 
@@ -659,13 +689,16 @@ class MachineMonitor:
             machine.motions.popleft()
 
         stop_after = float(settings["stop_after_seconds"])
+        # A stop is only concluded after stop_after seconds of samples that
+        # could see the machine; it still starts at the last movement.
+        unclear = machine.last_unclear
         if machine.state != RUNNING and len(machine.motions) >= RUN_MIN_MOTION_SAMPLES:
             self._transition(machine, zone, settings, RUNNING, machine.motions[0], frame)
-        elif machine.state == RUNNING and machine.last_motion and (at - machine.last_motion).total_seconds() >= stop_after:
+        elif machine.state == RUNNING and machine.last_motion and _quiet_for(at, machine.last_motion, unclear) >= stop_after:
             self._transition(machine, zone, settings, STOPPED, machine.last_motion, frame)
         elif machine.state is None and not machine.motions:
             quiet_since = machine.last_motion or machine.monitoring_since
-            if (at - quiet_since).total_seconds() >= stop_after:
+            if _quiet_for(at, quiet_since, unclear) >= stop_after:
                 self._transition(machine, zone, settings, STOPPED, quiet_since, frame)
 
         if moving and not machine.was_moving and machine.state == RUNNING and not light:
@@ -678,27 +711,56 @@ class MachineMonitor:
             machine.last_touch = at
 
     def _motion_signal(
-        self, machine: _Machine, settings: dict[str, Any], crop: Any, people: list[tuple[float, float, float, float]], at: datetime
+        self,
+        machine: _Machine,
+        settings: dict[str, Any],
+        crop: Any,
+        people: list[tuple[float, float, float, float]],
+        at: datetime,
+        people_age: float = 0.0,
     ) -> bool | None:
-        """Movement in the area since the previous sample; None on the first one."""
+        """Movement in the area since the previous sample; None on the first one.
+
+        An inconclusive sample (see ``_note_observation``) reports no movement.
+        """
         gray = cv2.GaussianBlur(cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY), (5, 5), 0)
         previous, machine.prev_gray = machine.prev_gray, gray
         if previous is None or machine.monitoring_since is None:
             self._start_monitoring(machine, at)
             return None
-        valid = self._visible(machine, people)
+        valid = self._visible(machine, people, people_age)
         changed = cv2.absdiff(gray, previous) > PIXEL_DELTA
         machine.activity = float(changed[valid].mean()) if valid.any() else 0.0
-        return machine.activity >= float(settings["motion_threshold"])
+        moving = machine.activity >= float(settings["motion_threshold"])
+        visible = valid.sum() / max(1, machine.mask.sum())
+        # Movement next to boxes too old to mask cannot be told from people;
+        # a machine mostly hidden behind people cannot be seen to stand still.
+        stale = people_age > PERSON_OBSERVATION_MAX_AGE_SECONDS and bool(people)
+        conclusive = not ((moving and stale) or visible < MIN_VISIBLE_FRACTION)
+        self._note_observation(machine, people, people_age, conclusive, at)
+        return moving and conclusive
 
     def _light_signal(
-        self, machine: _Machine, settings: dict[str, Any], crop: Any, people: list[tuple[float, float, float, float]], at: datetime
+        self,
+        machine: _Machine,
+        settings: dict[str, Any],
+        crop: Any,
+        people: list[tuple[float, float, float, float]],
+        at: datetime,
+        people_age: float = 0.0,
     ) -> bool | None:
-        """Whether the light says the machine runs; None while it is hidden."""
+        """Whether the light says the machine runs; None while it is hidden.
+
+        Boxes too old to place people hide the light as well: anyone could be
+        standing in front of it now.
+        """
         if machine.monitoring_since is None:
             self._start_monitoring(machine, at)
-        valid = self._visible(machine, people)
-        if valid.sum() < machine.mask.sum() * LIGHT_MIN_VISIBLE:
+        valid = self._visible(machine, people, people_age)
+        stale = people_age > PERSON_OBSERVATION_MAX_AGE_SECONDS and bool(people)
+        hidden = stale or valid.sum() < machine.mask.sum() * LIGHT_MIN_VISIBLE
+        self._note_observation(machine, people, people_age, not hidden, at)
+        if hidden:
             return None
         level = float(_lit_pixels(crop, settings["light_color"])[valid].mean())
         machine.light_level = level
@@ -714,13 +776,31 @@ class MachineMonitor:
         if machine.state == UNKNOWN:
             machine.state = None  # decide afresh once frames are back
 
-    def _visible(self, machine: _Machine, people: list[tuple[float, float, float, float]]) -> np.ndarray:
-        """The machine's area minus the people in front of it."""
+    def _note_observation(
+        self, machine: _Machine, people: list, people_age: float, conclusive: bool, at: datetime
+    ) -> None:
+        machine.conclusive = conclusive
+        machine.observation_age = people_age if people else None
+        if not conclusive:
+            machine.last_unclear = at  # restarts the count towards a stop
+
+    def _visible(
+        self, machine: _Machine, people: list[tuple[float, float, float, float]], people_age: float = 0.0
+    ) -> np.ndarray:
+        """The machine's area minus the people in front of it.
+
+        Each box is widened by how far its person can have walked since it was
+        detected. Boxes older than PERSON_OBSERVATION_MAX_AGE_SECONDS are not
+        used: the caller treats the sample as inconclusive instead.
+        """
         x1, y1, x2, y2 = machine.roi
         valid = machine.mask.copy()
         scale_x, scale_y = machine.roi_size[0] / (x2 - x1), machine.roi_size[1] / (y2 - y1)
-        for px1, py1, px2, py2 in people:
-            pad_x, pad_y = (px2 - px1) * PERSON_BOX_PADDING, (py2 - py1) * PERSON_BOX_PADDING
+        recent = people_age <= PERSON_OBSERVATION_MAX_AGE_SECONDS
+        for px1, py1, px2, py2 in people if recent else []:
+            drift = (px2 - px1) * PERSON_MAX_SPEED_BOX_WIDTHS * people_age
+            pad_x = (px2 - px1) * PERSON_BOX_PADDING + drift
+            pad_y = (py2 - py1) * PERSON_BOX_PADDING + drift
             left = int(max(0, (px1 - pad_x - x1) * scale_x))
             top = int(max(0, (py1 - pad_y - y1) * scale_y))
             right = int(min(machine.roi_size[0], (px2 + pad_x - x1) * scale_x))
@@ -822,6 +902,12 @@ def _lit_pixels(crop: Any, color: str) -> np.ndarray:
 
 
 # Geometry (normalized frame coordinates)
+
+
+def _quiet_for(at: datetime, quiet_since: datetime, unclear: datetime | None) -> float:
+    """Seconds of conclusive stillness: an inconclusive sample restarts the count."""
+    since = max(quiet_since, unclear) if unclear is not None else quiet_since
+    return (at - since).total_seconds()
 
 
 def _subject(class_name: str) -> str | None:

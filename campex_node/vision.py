@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import logging
+import queue
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
 import cv2
+import psutil
 
 from campex_node.cameras.manager import CameraManager
 from campex_node.core.config import ROOT_DIR, NodeSettings
@@ -32,6 +34,16 @@ VEHICLE_CLASSES = frozenset({"car", "motorcycle", "bus", "truck"})
 # A model that failed to load (e.g. no internet to fetch the pose weights) is
 # retried after this delay instead of on every frame.
 MODEL_RETRY_SECONDS = 60.0
+# An analysed frame older than this is not shown as the synchronized overlay:
+# the vision loop stalled, so the image would look live while it is not.
+OVERLAY_RESULT_MAX_AGE_SECONDS = 5.0
+# With no camera ready the scheduler waits this long for a new frame instead
+# of spinning (Windows rounds short waits up to its ~15 ms timer tick).
+IDLE_WAIT_SECONDS = 0.01
+RESOURCE_SAMPLE_SECONDS = 2.0
+# How long stop() waits for queued event work to finish before giving up.
+POST_QUEUE_STOP_SECONDS = 10.0
+_STOP_TASK = object()
 
 
 @dataclass(frozen=True)
@@ -84,12 +96,138 @@ class EdgePose:
         }
 
 
+@dataclass(frozen=True)
+class VisionResult:
+    """One analysed frame and everything found on it, published as a unit.
+
+    Boxes are in ``frame`` pixels and belong to ``frame`` only: draw them on
+    ``frame.copy()``, never on a newer camera frame. ``frame`` is read-only.
+    ``frame_at`` is when the Node received the frame, not the camera's own
+    capture time (RTSP/FFmpeg buffering in between is not measured).
+    """
+
+    camera_id: str
+    session_id: str
+    frame_id: int | None
+    frame_at: datetime | None
+    processed_at: datetime
+    frame_width: int
+    frame_height: int
+    detections: tuple[EdgeDetection, ...]
+    poses: tuple[EdgePose, ...]
+    frame: Any = field(repr=False, compare=False)
+
+    @property
+    def key(self) -> tuple[str, int | None, str | None]:
+        return (self.session_id, self.frame_id, self.frame_at.isoformat() if self.frame_at else None)
+
+    def frame_ref(self) -> dict[str, Any]:
+        return {
+            "session_id": self.session_id,
+            "frame_id": self.frame_id,
+            "frame_at": self.frame_at.isoformat() if self.frame_at else None,
+            "processed_at": self.processed_at.isoformat(),
+            "width": self.frame_width,
+            "height": self.frame_height,
+        }
+
+
 class FrameObserver(Protocol):
     """Consumes each analysed frame (occupancy, counting lines...)."""
 
     def observe(self, camera_id: str, frame: Any, detections: list[EdgeDetection], observed_at: datetime) -> None: ...
 
     def camera_unavailable(self, camera_id: str, reason: str) -> None: ...
+
+
+def _age_ms(at: datetime | None) -> float | None:
+    return round((datetime.now(timezone.utc) - at).total_seconds() * 1000, 1) if at else None
+
+
+@dataclass
+class _CameraSchedule:
+    # Detector seconds this camera has used: the next analysis goes to the
+    # ready camera that used least, so an expensive camera cannot starve others.
+    virtual_time: float
+    next_due: float = 0.0
+    last_frame: tuple[str, int] | None = None
+    frames_skipped: int = 0
+
+
+class _PostProcessor:
+    """Runs the event rules and frame observers off the inference thread.
+
+    One worker and one FIFO queue, so per camera the analysed frames and the
+    "camera unavailable" notices keep their order. The queue is bounded: when
+    it is full the inference thread waits (back-pressure) instead of dropping
+    work, so no event is lost. Before start() and after stop() tasks run
+    inline on the caller's thread.
+    """
+
+    def __init__(self, maxsize: int) -> None:
+        self._queue: queue.Queue = queue.Queue(maxsize=maxsize)
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._accepting = False
+        self.max_depth = 0
+        self.full_waits = 0
+        self.failed = 0
+
+    def start(self) -> None:
+        with self._lock:
+            if self._accepting:
+                return
+            self._accepting = True
+            self._thread = threading.Thread(target=self._work, name="campex-node-vision-post", daemon=True)
+            self._thread.start()
+
+    def submit(self, task) -> float:
+        """Queues the task; returns the seconds spent waiting for room."""
+        with self._lock:
+            if not self._accepting:
+                self._execute(task)
+                return 0.0
+            try:
+                self._queue.put_nowait(task)
+                waited = 0.0
+            except queue.Full:
+                self.full_waits += 1
+                started = time.perf_counter()
+                self._queue.put(task)  # back-pressure: wait for the worker
+                waited = time.perf_counter() - started
+            self.max_depth = max(self.max_depth, self._queue.qsize())
+            return waited
+
+    def depth(self) -> int:
+        return self._queue.qsize()
+
+    def stop(self, timeout: float) -> bool:
+        """Finishes the queued work, then stops. False if it did not finish in time."""
+        with self._lock:
+            if not self._accepting:
+                return True
+            self._accepting = False
+            self._queue.put(_STOP_TASK)
+            thread = self._thread
+        thread.join(timeout)
+        if thread.is_alive():
+            logger.warning("Vision post-processing did not finish: %d tasks pending", self.depth())
+            return False
+        return True
+
+    def _work(self) -> None:
+        while True:
+            task = self._queue.get()
+            if task is _STOP_TASK:
+                return
+            self._execute(task)
+
+    def _execute(self, task) -> None:
+        try:
+            task()
+        except Exception:
+            self.failed += 1
+            logger.exception("Vision post-processing task failed")
 
 
 def resolve_model_path(name: str, data_dir: Path) -> str:
@@ -161,8 +299,10 @@ class EdgeVisionService:
         self.events = events
         self.observers = list(observers or [])
         self._trackers: dict[str, Any] = {}
-        # camera_id -> frame_at of the last analysed frame
-        self._last_frame_at: dict[str, datetime] = {}
+        # camera_id -> identity of the last analysed frame: (session_id,
+        # frame_id) when the camera manager provides it, else its frame_at
+        # (two frames read within one clock tick can share a frame_at).
+        self._last_frame_at: dict[str, Any] = {}
         self._hog = cv2.HOGDescriptor()
         self._hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
         self._detector = _LazyModel(lambda: resolve_model_path(settings.vision_model, settings.data_dir))
@@ -175,18 +315,29 @@ class EdgeVisionService:
             daemon=True,
         )
         self._state: dict[str, dict[str, Any]] = {}
+        # camera_id -> last analysed frame with its detections. Replaced as a
+        # whole under the lock, so readers never mix two analyses.
+        self._results: dict[str, VisionResult] = {}
         # camera_id -> (sampled_at, frames_received, fps); status() is polled by
         # several callers, so the FPS is only resampled once per window.
         self._capture_fps: dict[str, tuple[float, int, float | None]] = {}
+        self._schedules: dict[str, _CameraSchedule] = {}
+        self._post = _PostProcessor(settings.vision_post_queue_size)
+        self._process = psutil.Process()
+        self._resources: dict[str, float | None] = {"cpu_usage_percent": None, "memory_usage_mb": None}
+        self._resources_sampled_at = 0.0
 
     def start(self) -> None:
         if not self._thread.is_alive():
+            self._post.start()
             self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread.is_alive():
             self._thread.join(timeout=3)
+        # Events already queued are still written before the Node exits.
+        self._post.stop(POST_QUEUE_STOP_SECONDS)
 
     def status(self, camera_id: str) -> dict[str, Any]:
         with self._lock:
@@ -204,7 +355,10 @@ class EdgeVisionService:
         frames_received, camera_fps = self._capture_metrics(camera_id)
         mapping_status = state.get("mapping_status") or "STOPPED"
         poses = len(state.get("poses") or [])
+        result = self.latest_result(camera_id)
         return {
+            # Identity of the frame objects()/cloud_objects() were detected on.
+            "frame": result.frame_ref() if result else None,
             "camera_id": camera_id,
             "status": state.get("status") or ("STARTING" if camera.vision_enabled else "STOPPED"),
             "enabled": camera.vision_enabled,
@@ -220,6 +374,8 @@ class EdgeVisionService:
             "poses": poses,
             "error": state.get("error"),
             # Same shape the cloud API serves, so the panel reads one format.
+            # Times start when the Node received the frame (frame_at), not
+            # when the camera captured it: RTSP/FFmpeg buffering is not known.
             "metrics": {
                 "camera_fps": camera_fps or 0,
                 "vision_fps": state.get("vision_fps", 0),
@@ -227,6 +383,24 @@ class EdgeVisionService:
                 "frames_processed": state.get("frames_processed", 0),
                 "frames_received": frames_received,
                 "objects_detected": len(state.get("detections") or []),
+                "capture_fps": camera_fps or 0,
+                "inference_fps": state.get("vision_fps", 0),
+                # Detector (+ pose) time of the last analysis.
+                "inference_latency_ms": state.get("inference_latency_ms"),
+                # How old the frame already was when its inference started.
+                "frame_age_ms": state.get("frame_age_ms"),
+                # Frame received -> result published, for the last analysis.
+                "known_latency_ms": state.get("known_latency_ms"),
+                # How old the overlay image would be if shown now.
+                "overlay_age_ms": _age_ms(result.frame_at) if result else None,
+                # Camera frames replaced before the detector reached them.
+                "frames_skipped": state.get("frames_skipped", 0),
+                "queue_depth": self._post.depth(),
+                "queue_full_waits": self._post.full_waits,
+                # Whole Node process, not this camera alone.
+                "cpu_usage_percent": self._resources["cpu_usage_percent"],
+                "memory_usage_mb": self._resources["memory_usage_mb"],
+                "time_basis": "node_receipt",
             },
             "components": {
                 "mapping": {
@@ -252,30 +426,54 @@ class EdgeVisionService:
                 self._capture_fps[camera_id] = (now, frames_received, fps)
         return frames_received, fps
 
-    def objects(self, camera_id: str) -> list[dict[str, Any]]:
+    def latest_result(self, camera_id: str) -> VisionResult | None:
         with self._lock:
-            detections = list((self._state.get(camera_id) or {}).get("detections") or [])
-        return [item.as_dict() for item in detections]
+            return self._results.get(camera_id)
+
+    def objects(self, camera_id: str) -> list[dict[str, Any]]:
+        result = self.latest_result(camera_id)
+        if result is None:
+            return []
+        ref = {"frame_id": result.frame_id, "frame_at": result.frame_ref()["frame_at"]}
+        return [{**item.as_dict(), **ref} for item in result.detections]
 
     def cloud_objects(self, camera_id: str) -> list[dict[str, Any]]:
-        with self._lock:
-            detections = list((self._state.get(camera_id) or {}).get("detections") or [])
-        return [item.as_cloud_dict() for item in detections]
+        result = self.latest_result(camera_id)
+        return [item.as_cloud_dict() for item in result.detections] if result else []
 
     def people_boxes(self, camera_id: str) -> list[tuple[float, float, float, float]]:
-        with self._lock:
-            detections = list((self._state.get(camera_id) or {}).get("detections") or [])
-        return [(item.x1, item.y1, item.x2, item.y2) for item in detections if item.class_name == "person"]
+        # The boxes come from the last analysed frame, which can be some
+        # hundred ms older than the frame the caller samples: see
+        # people_observation() for the timestamp a caller needs to account for it.
+        return self.people_observation(camera_id)[1]
+
+    def people_observation(
+        self, camera_id: str
+    ) -> tuple[datetime | None, list[tuple[float, float, float, float]]]:
+        """People boxes with the frame_at of the frame they were detected on."""
+        result = self.latest_result(camera_id)
+        if result is None:
+            return None, []
+        boxes = [(item.x1, item.y1, item.x2, item.y2) for item in result.detections if item.class_name == "person"]
+        return result.frame_at, boxes
 
     def cloud_poses(self, camera_id: str) -> list[dict[str, Any]]:
-        with self._lock:
-            poses = list((self._state.get(camera_id) or {}).get("poses") or [])
-        return [item.as_cloud_dict(index + 1) for index, item in enumerate(poses)]
+        result = self.latest_result(camera_id)
+        return [item.as_cloud_dict(index + 1) for index, item in enumerate(result.poses)] if result else []
 
-    def render_overlay(self, camera_id: str, frame):
-        with self._lock:
-            detections = list((self._state.get(camera_id) or {}).get("detections") or [])
-        for detection in detections:
+    def overlay_result(self, camera_id: str) -> VisionResult | None:
+        """The result to show as the synchronized overlay, if it is still recent."""
+        result = self.latest_result(camera_id)
+        if result is None:
+            return None
+        age = (datetime.now(timezone.utc) - result.processed_at).total_seconds()
+        return result if age <= OVERLAY_RESULT_MAX_AGE_SECONDS else None
+
+    @staticmethod
+    def render_result(result: VisionResult):
+        """The analysed frame with its own boxes drawn on a copy."""
+        frame = result.frame.copy()
+        for detection in result.detections:
             x1, y1, x2, y2 = map(int, (detection.x1, detection.y1, detection.x2, detection.y2))
             cv2.rectangle(frame, (x1, y1), (x2, y2), (125, 179, 255), 2)
             prefix = f"#{detection.track_id} " if detection.track_id is not None else ""
@@ -295,58 +493,236 @@ class EdgeVisionService:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                self._process_enabled_cameras()
+                busy = self._run_once()
             except Exception:
                 logger.exception("Edge vision loop failed")
-            self._stop.wait(self.settings.vision_interval_seconds)
+                self._stop.wait(1.0)
+                continue
+            self._sample_resources()
+            self._stop.wait(self._pause_after(busy))
+
+    def _pause_after(self, busy: float | None) -> float:
+        if busy is None:
+            return IDLE_WAIT_SECONDS  # nothing ready: wait for a new frame
+        # Rest in proportion to the work just done so the inference thread
+        # stays under vision_max_busy_ratio of the CPU time.
+        ratio = self.settings.vision_max_busy_ratio
+        return busy * (1.0 - ratio) / ratio
+
+    def _run_once(self) -> float | None:
+        """Analyses one camera; None when no camera has a new frame due.
+
+        Among the cameras with a new frame and whose minimum interval has
+        passed, the one that used least detector time goes first. Only the
+        newest frame of a camera is ever analysed: older ones are skipped.
+        """
+        now = time.monotonic()
+        cameras = self.camera_manager.configs()
+        self._forget_removed_cameras({camera.id for camera in cameras})
+        ready = [camera for camera in cameras if self._check_camera(camera, now)]
+        if not ready:
+            return None
+        camera = min(ready, key=lambda item: self._schedules[item.id].virtual_time)
+        schedule = self._schedules[camera.id]
+        schedule.next_due = now + self.settings.vision_interval_seconds
+        busy = self._analyse(camera)
+        schedule.virtual_time += max(busy, 1e-3)
+        return busy
 
     def _process_enabled_cameras(self) -> None:
+        """One pass over every camera, ignoring the per-camera interval."""
         for camera in self.camera_manager.configs():
-            if not camera.enabled or not (camera.vision_enabled or camera.mapping_enabled):
-                self._set_state(camera.id, status="STOPPED", detections=[], poses=[], mapping_status="STOPPED", mapping_error=None)
-                self._events_unavailable(camera.id, "vision_stopped")
-                continue
-            frame, frame_at = self.camera_manager.latest_frame(camera.id)
-            if frame is None:
-                self._set_state(camera.id, status="WAITING_FRAME", detections=[], poses=[])
-                self._events_unavailable(camera.id, "camera_observation_unavailable")
-                continue
-            if frame_at is not None and self._last_frame_at.get(camera.id) == frame_at:
-                continue  # the camera has not delivered a new frame yet
-            age = (datetime.now(timezone.utc) - frame_at).total_seconds() if frame_at else 0.0
-            if age > self.settings.vision_stale_frame_seconds:
-                # The stream froze without disconnecting: the last image is
-                # not what the camera sees now.
-                self._set_state(camera.id, status="STALE_FRAME", detections=[], poses=[], error="Imagem da câmera congelada.")
-                self._events_unavailable(camera.id, "camera_frame_stale")
-                continue
+            if self._check_camera(camera, time.monotonic(), force=True):
+                self._analyse(camera)
+
+    def _check_camera(self, camera, now: float, force: bool = False) -> bool:
+        """Whether the camera has a new, live frame to analyse now."""
+        if not camera.enabled or not (camera.vision_enabled or camera.mapping_enabled):
+            self._mark_unavailable(
+                camera.id, "STOPPED", "vision_stopped", mapping_status="STOPPED", mapping_error=None
+            )
+            return False
+        schedule = self._schedule(camera.id)
+        if not force and now < schedule.next_due:
+            return False
+        identity = self._frame_identity(camera.id)
+        if identity is None:
+            self._mark_unavailable(camera.id, "WAITING_FRAME", "camera_observation_unavailable")
+            return False
+        frame_key, frame_at = identity
+        if frame_key is not None and self._last_frame_at.get(camera.id) == frame_key:
+            return False  # the camera has not delivered a new frame yet
+        age = (datetime.now(timezone.utc) - frame_at).total_seconds() if frame_at else 0.0
+        if age > self.settings.vision_stale_frame_seconds:
+            # The stream froze without disconnecting: the last image is
+            # not what the camera sees now.
+            self._mark_unavailable(
+                camera.id, "STALE_FRAME", "camera_frame_stale", error="Imagem da câmera congelada."
+            )
+            return False
+        return True
+
+    def _schedule(self, camera_id: str) -> _CameraSchedule:
+        schedule = self._schedules.get(camera_id)
+        if schedule is None:
+            # A new camera starts level with the others instead of owing or
+            # being owed all the detector time used before it appeared.
+            start = min((item.virtual_time for item in self._schedules.values()), default=0.0)
+            schedule = self._schedules[camera_id] = _CameraSchedule(virtual_time=start)
+        return schedule
+
+    def _forget_removed_cameras(self, camera_ids: set[str]) -> None:
+        for camera_id in set(self._schedules) - camera_ids:
+            del self._schedules[camera_id]
+
+    def _mark_unavailable(self, camera_id: str, status: str, reason: str, **state: Any) -> None:
+        """Nothing to analyse: clears the boxes once, not on every scheduler pass."""
+        with self._lock:
+            current = (self._state.get(camera_id) or {}).get("status")
+            has_result = camera_id in self._results
+        if current == status and not has_result:
+            return
+        self._set_state(camera_id, status=status, detections=[], poses=[], **state)
+        self._drop_result(camera_id)
+        self._events_unavailable(camera_id, reason)
+
+    def _frame_identity(self, camera_id: str) -> tuple[Any, datetime | None] | None:
+        """(frame key, frame_at) of the latest frame, copying it only if unavoidable."""
+        latest_identity = getattr(self.camera_manager, "latest_identity", None)
+        if latest_identity is not None:
+            identity = latest_identity(camera_id)
+            if identity is None or not identity[1]:
+                return None
+            session_id, frame_id, frame_at = identity
+            return (session_id, frame_id), frame_at
+        frame, frame_at, session_id, frame_id = self._latest_frame(camera_id)
+        if frame is None:
+            return None
+        return ((session_id, frame_id) if frame_id is not None else frame_at), frame_at
+
+    def _analyse(self, camera) -> float:
+        """Runs the models on the camera's newest frame.
+
+        Returns the seconds of work, not counting time spent waiting for the
+        post-processing queue: that wait is not CPU this camera used.
+        """
+        started = time.perf_counter()
+        waited = 0.0
+        frame, frame_at, session_id, frame_id = self._latest_frame(camera.id)
+        if frame is None:
+            self._mark_unavailable(camera.id, "WAITING_FRAME", "camera_observation_unavailable")
+            return time.perf_counter() - started
+        frame_key = (session_id, frame_id) if frame_id is not None else frame_at
+        if frame_key is not None:
+            self._last_frame_at[camera.id] = frame_key
+        schedule = self._schedule(camera.id)
+        if frame_id is not None:
+            last = schedule.last_frame
+            if last is not None and last[0] == session_id and frame_id > last[1] + 1:
+                schedule.frames_skipped += frame_id - last[1] - 1
+            schedule.last_frame = (session_id, frame_id)
+        frame_age_ms = (
+            round((datetime.now(timezone.utc) - frame_at).total_seconds() * 1000, 1) if frame_at else None
+        )
+        updates: dict[str, Any] = {
+            "last_frame_at": frame_at.isoformat() if frame_at else None,
+            "frame_age_ms": frame_age_ms,
+            "frames_skipped": schedule.frames_skipped,
+        }
+        detections: list[EdgeDetection] = []
+        vision_ok = False
+        detect_ms = pose_ms = 0.0
+        if camera.vision_enabled:
+            model_started = time.perf_counter()
+            try:
+                detections, detector = self._detect(frame)
+                detect_ms = (time.perf_counter() - model_started) * 1000
+                tracker = self._trackers.get(camera.id)
+                if tracker is None:
+                    tracker = self._trackers[camera.id] = create_tracker(self.settings.vision_tracker)
+                detections = tracker.update(detections, frame_at or datetime.now(timezone.utc))
+                updates.update(status="RUNNING", detections=detections, detector=detector, error=None)
+                vision_ok = True
+            except Exception as exc:
+                updates.update(status="ERROR", detections=[], error=str(exc))
+                self._events_unavailable(camera.id, "detector_error")
+        else:
+            updates.update(status="STOPPED", detections=[])
+            self._events_unavailable(camera.id, "vision_stopped")
+        if camera.mapping_enabled:
+            pose_started = time.perf_counter()
+            updates.update(self._estimate_poses(frame))
+            pose_ms = (time.perf_counter() - pose_started) * 1000
+        else:
+            updates.update(poses=[], mapping_status="STOPPED", mapping_error=None)
+        if vision_ok or updates.get("mapping_status") == "ACTIVE":
+            result = self._publish_result(
+                camera.id, frame, frame_at, session_id, frame_id,
+                detections if vision_ok else [], updates.get("poses") or [],
+            )
             if frame_at is not None:
-                self._last_frame_at[camera.id] = frame_at
-            updates: dict[str, Any] = {"last_frame_at": frame_at.isoformat() if frame_at else None}
-            started = time.perf_counter()
-            if camera.vision_enabled:
-                try:
-                    detections, detector = self._detect(frame)
-                    tracker = self._trackers.get(camera.id)
-                    if tracker is None:
-                        tracker = self._trackers[camera.id] = create_tracker(self.settings.vision_tracker)
-                    detections = tracker.update(detections, frame_at or datetime.now(timezone.utc))
-                    updates.update(status="RUNNING", detections=detections, detector=detector, error=None)
-                except Exception as exc:
-                    updates.update(status="ERROR", detections=[], error=str(exc))
-                    self._events_unavailable(camera.id, "detector_error")
-                else:
-                    self._process_events(camera.id, frame, detections, frame_at)
-                    self._notify_observers(camera.id, frame, detections, frame_at)
-            else:
-                updates.update(status="STOPPED", detections=[])
-                self._events_unavailable(camera.id, "vision_stopped")
-            if camera.mapping_enabled:
-                updates.update(self._estimate_poses(frame))
-            else:
-                updates.update(poses=[], mapping_status="STOPPED", mapping_error=None)
-            updates["inference_ms"] = round((time.perf_counter() - started) * 1000, 1)
-            self._set_state(camera.id, **updates)
+                updates["known_latency_ms"] = round((result.processed_at - frame_at).total_seconds() * 1000, 1)
+        else:
+            self._drop_result(camera.id)
+        if vision_ok:
+            # Event rules and observers run on the post-processing worker, so
+            # a slow disk write does not delay the next camera's inference.
+            camera_id = camera.id
+            waited = self._post.submit(lambda: self._observe_frame(camera_id, frame, detections, frame_at))
+        updates["inference_latency_ms"] = round(detect_ms + pose_ms, 1)
+        updates["inference_ms"] = round((time.perf_counter() - started - waited) * 1000, 1)
+        self._set_state(camera.id, **updates)
+        return time.perf_counter() - started - waited
+
+    def _latest_frame(self, camera_id: str) -> tuple[Any | None, datetime | None, str, int | None]:
+        latest_snapshot = getattr(self.camera_manager, "latest_snapshot", None)
+        if latest_snapshot is None:  # a camera manager without frame identity
+            frame, frame_at = self.camera_manager.latest_frame(camera_id)
+            return frame, frame_at, "", None
+        snapshot = latest_snapshot(camera_id)
+        if snapshot is None:
+            return None, None, "", None
+        return snapshot.frame, snapshot.frame_at, snapshot.session_id, snapshot.frame_id
+
+    def _publish_result(
+        self,
+        camera_id: str,
+        frame,
+        frame_at: datetime | None,
+        session_id: str,
+        frame_id: int | None,
+        detections: list[EdgeDetection],
+        poses: list[EdgePose],
+    ) -> VisionResult:
+        # The frame is this loop's own copy (LatestFrameBuffer copies on read).
+        # Freezing it after the models ran lets readers share it without
+        # copying, and makes any in-place drawing fail loudly.
+        frame.flags.writeable = False
+        height, width = frame.shape[:2]
+        result = VisionResult(
+            camera_id=camera_id,
+            session_id=session_id,
+            frame_id=frame_id,
+            frame_at=frame_at,
+            processed_at=datetime.now(timezone.utc),
+            frame_width=int(width),
+            frame_height=int(height),
+            detections=tuple(detections),
+            poses=tuple(poses),
+            frame=frame,
+        )
+        with self._lock:
+            self._results[camera_id] = result
+        return result
+
+    def _drop_result(self, camera_id: str) -> None:
+        """Nothing was analysed: old boxes must not be shown as current."""
+        with self._lock:
+            self._results.pop(camera_id, None)
+
+    def _observe_frame(self, camera_id: str, frame, detections: list[EdgeDetection], frame_at) -> None:
+        self._process_events(camera_id, frame, detections, frame_at)
+        self._notify_observers(camera_id, frame, detections, frame_at)
 
     def _process_events(self, camera_id: str, frame, detections: list[EdgeDetection], frame_at) -> None:
         if self.events is None:
@@ -367,6 +743,10 @@ class EdgeVisionService:
     def _events_unavailable(self, camera_id: str, reason: str) -> None:
         self._trackers.pop(camera_id, None)
         self._last_frame_at.pop(camera_id, None)
+        # Queued behind this camera's pending frames, so observers see them in order.
+        self._post.submit(lambda: self._release_camera(camera_id, reason))
+
+    def _release_camera(self, camera_id: str, reason: str) -> None:
         for observer in self.observers:
             try:
                 observer.camera_unavailable(camera_id, reason)
@@ -378,6 +758,23 @@ class EdgeVisionService:
             self.events.camera_unavailable(camera_id, reason)
         except Exception:
             logger.exception("Event pipeline failed to release camera %s", camera_id)
+
+    def _sample_resources(self) -> None:
+        """Process-wide CPU and memory, resampled at most every few seconds."""
+        now = time.monotonic()
+        if now - self._resources_sampled_at < RESOURCE_SAMPLE_SECONDS:
+            return
+        try:
+            cpu = self._process.cpu_percent(None)  # since the previous sample
+            rss = self._process.memory_info().rss
+        except (psutil.Error, OSError):
+            return
+        first = self._resources_sampled_at == 0.0
+        self._resources_sampled_at = now
+        self._resources = {
+            "cpu_usage_percent": None if first else round(cpu / (psutil.cpu_count() or 1), 1),
+            "memory_usage_mb": round(rss / 2**20, 1),
+        }
 
     def _detect(self, frame) -> tuple[list[EdgeDetection], str]:
         model = self._detector.get()

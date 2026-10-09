@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 
 from backend.cameras.base import CameraSource
-from backend.cameras.frame_buffer import LatestFrameBuffer
+from backend.cameras.frame_buffer import LatestFrameBuffer, LatestFrameSnapshot
 from backend.cameras.health import CameraStatus, utc_now
 from backend.cameras.security import sanitize_error_message
 
@@ -82,6 +82,14 @@ class CameraWorker:
 
     def latest_frame(self):
         return self._frame_buffer.latest()
+
+    def latest_snapshot(self) -> LatestFrameSnapshot:
+        """Latest frame with its identity; a new worker starts a new session."""
+        return self._frame_buffer.snapshot()
+
+    def latest_identity(self):
+        """(session_id, frame_id, frame_at) of the latest frame, without copying it."""
+        return self._frame_buffer.identity()
 
     def _run(self) -> None:
         consecutive_failures = 0

@@ -105,6 +105,10 @@ class CameraLiveReport(BaseModel):
     vision: dict[str, Any] = Field(default_factory=dict)
     objects: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
     poses: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
+    # Identity ({session_id, frame_id, frame_at, ...}) of the frame the objects
+    # were detected on, and of the uploaded frame. Older Nodes send neither.
+    vision_frame: dict[str, Any] | None = None
+    frame_ref: dict[str, Any] | None = None
     frame_jpeg_base64: str | None = Field(default=None, max_length=2_100_000)
 
 
@@ -142,6 +146,8 @@ def sync_camera_live_state(
             objects=item.objects,
             poses=item.poses,
             frame_jpeg=decode_frame(item.frame_jpeg_base64),
+            vision_frame=item.vision_frame,
+            frame_ref=item.frame_ref,
         )
         for item in batch.cameras
     ]
