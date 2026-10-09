@@ -111,6 +111,22 @@ class CameraManager:
             return None, None
         return worker.latest_frame()
 
+    def latest_snapshot(self, camera_id: str):
+        """Latest frame with (session_id, frame_id); None while the camera is stopped."""
+        with self._lock:
+            worker = self._workers.get(camera_id)
+        if worker is None:
+            return None
+        return worker.latest_snapshot()
+
+    def latest_identity(self, camera_id: str):
+        """(session_id, frame_id, frame_at) without copying the frame; None while stopped."""
+        with self._lock:
+            worker = self._workers.get(camera_id)
+        if worker is None:
+            return None
+        return worker.latest_identity()
+
     def summary(self) -> dict:
         states = self.states()
         return {

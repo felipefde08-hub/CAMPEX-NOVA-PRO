@@ -52,6 +52,15 @@ PIXEL_DELTA = 25
 RUN_WINDOW_SECONDS = 5.0
 RUN_MIN_MOTION_SAMPLES = 2
 PERSON_BOX_PADDING = 0.15
+# People boxes come from the last analysed frame, which is older than the
+# frame sampled here. Within this age each box is widened by how far a person
+# can have walked meanwhile; beyond it the boxes say nothing reliable about
+# where people are now.
+PERSON_OBSERVATION_MAX_AGE_SECONDS = 2.0
+PERSON_MAX_SPEED_BOX_WIDTHS = 3.0  # a brisk walk (~1.5 m/s), in body widths per second
+# Below this share of the machine area left unmasked the sample cannot tell
+# whether the machine moved.
+MIN_VISIBLE_FRACTION = 0.25
 
 
 class ZoneCache:
@@ -380,6 +389,11 @@ class _Machine:
     mask: np.ndarray | None = None
     stop_event_id: str | None = None
     operator_event_id: str | None = None
+    # Last sample that could not tell whether the machine moved (people
+    # boxes too old, or the machine hidden behind people).
+    last_unclear: datetime | None = None
+    observation_age: float | None = None
+    conclusive: bool = True
 
 
 class MachineMonitor:
@@ -395,6 +409,12 @@ class MachineMonitor:
       last movement seen;
     - UNKNOWN while the camera is offline or frozen (never counted as downtime).
 
+    ``people(camera_id)`` returns ``(frame_at, boxes)``: the people boxes and
+    when their frame was received. They are older than the sampled frame, so
+    they are widened by how far a person can have walked since; samples they
+    cannot clear up are inconclusive and count neither as movement nor as
+    stillness. A provider returning a plain list of boxes is taken as current.
+
     Each burst of movement after a still sample counts as one cycle (a press
     stroke, a robot pick). It raises MACHINE_STOPPED for every stop and, for
     machines that require an operator, MISSING_OPERATOR when the machine runs
@@ -409,7 +429,7 @@ class MachineMonitor:
         occupancy: OccupancyMonitor | None,
         evidence_dir: Path,
         camera_manager: Any = None,
-        people: Callable[[str], list[tuple[float, float, float, float]]] | None = None,
+        people: Callable[[str], Any] | None = None,
         interval_seconds: float = 0.2,
         stale_frame_seconds: float = 10.0,
         zones: ZoneCache | None = None,
@@ -447,6 +467,11 @@ class MachineMonitor:
                     "since": iso(item.state_since),
                     "activity": round(item.activity, 4),
                     "last_motion_at": iso(item.last_motion),
+                    # Whether the last sample could tell movement from people.
+                    "conclusive": item.conclusive,
+                    "people_observation_age_ms": (
+                        round(item.observation_age * 1000) if item.observation_age is not None else None
+                    ),
                     "stop_event_id": item.stop_event_id,
                     "operator_event_id": item.operator_event_id,
                 }
@@ -479,11 +504,14 @@ class MachineMonitor:
 
     def sample(self, camera_id: str, frame: Any, at: datetime) -> None:
         machines = [item for item in self.zones.camera_zones(camera_id) if item[0].type == "machine"]
-        people = self.people(camera_id)
+        observed = self.people(camera_id)
+        observed_at, people = observed if isinstance(observed, tuple) else (None, observed)
+        # Seconds between the frame the boxes came from and this frame.
+        age = max(0.0, (at - observed_at).total_seconds()) if observed_at is not None else 0.0
         with self._lock:
             for zone, settings in machines:
                 machine = self._machines.setdefault(zone.id, _Machine(zone.id, camera_id))
-                self._sample_machine(machine, zone, settings, frame, people, at)
+                self._sample_machine(machine, zone, settings, frame, people, at, age)
             wanted = {zone.id for zone, _ in machines}
             for zone_id, machine in list(self._machines.items()):
                 if machine.camera_id == camera_id and zone_id not in wanted:
@@ -505,6 +533,7 @@ class MachineMonitor:
         frame: Any,
         people: list[tuple[float, float, float, float]],
         at: datetime,
+        people_age: float = 0.0,
     ) -> None:
         height, width = frame.shape[:2]
         key = (width, height, tuple((point.x, point.y) for point in zone.points))
@@ -526,8 +555,12 @@ class MachineMonitor:
 
         valid = machine.mask.copy()
         scale_x, scale_y = machine.roi_size[0] / (x2 - x1), machine.roi_size[1] / (y2 - y1)
-        for px1, py1, px2, py2 in people:
-            pad_x, pad_y = (px2 - px1) * PERSON_BOX_PADDING, (py2 - py1) * PERSON_BOX_PADDING
+        recent = people_age <= PERSON_OBSERVATION_MAX_AGE_SECONDS
+        for px1, py1, px2, py2 in people if recent else []:
+            # How far the person can have walked since their box was detected.
+            drift = (px2 - px1) * PERSON_MAX_SPEED_BOX_WIDTHS * people_age
+            pad_x = (px2 - px1) * PERSON_BOX_PADDING + drift
+            pad_y = (py2 - py1) * PERSON_BOX_PADDING + drift
             left = int(max(0, (px1 - pad_x - x1) * scale_x))
             top = int(max(0, (py1 - pad_y - y1) * scale_y))
             right = int(min(machine.roi_size[0], (px2 + pad_x - x1) * scale_x))
@@ -537,6 +570,14 @@ class MachineMonitor:
         changed = cv2.absdiff(gray, previous) > PIXEL_DELTA
         machine.activity = float(changed[valid].mean()) if valid.any() else 0.0
         moving = machine.activity >= float(settings["motion_threshold"])
+        visible = valid.sum() / max(1, machine.mask.sum())
+        # Movement next to boxes too old to mask cannot be told from people;
+        # a machine mostly hidden behind people cannot be seen to stand still.
+        machine.conclusive = not ((moving and not recent and bool(people)) or visible < MIN_VISIBLE_FRACTION)
+        machine.observation_age = people_age if people else None
+        if not machine.conclusive:
+            machine.last_unclear = at
+            moving = False
 
         if moving:
             machine.motions.append(at)
@@ -545,13 +586,16 @@ class MachineMonitor:
             machine.motions.popleft()
 
         stop_after = float(settings["stop_after_seconds"])
+        # A stop is only concluded after stop_after seconds of samples that
+        # could see the machine; it still starts at the last movement.
+        unclear = machine.last_unclear
         if machine.state != RUNNING and len(machine.motions) >= RUN_MIN_MOTION_SAMPLES:
             self._transition(machine, zone, settings, RUNNING, machine.motions[0], frame)
-        elif machine.state == RUNNING and machine.last_motion and (at - machine.last_motion).total_seconds() >= stop_after:
+        elif machine.state == RUNNING and machine.last_motion and _quiet_for(at, machine.last_motion, unclear) >= stop_after:
             self._transition(machine, zone, settings, STOPPED, machine.last_motion, frame)
         elif machine.state is None and not machine.motions:
             quiet_since = machine.last_motion or machine.monitoring_since
-            if (at - quiet_since).total_seconds() >= stop_after:
+            if _quiet_for(at, quiet_since, unclear) >= stop_after:
                 self._transition(machine, zone, settings, STOPPED, quiet_since, frame)
 
         if moving and not machine.was_moving and machine.state == RUNNING:
@@ -640,6 +684,12 @@ class MachineMonitor:
 
 
 # Geometry (normalized frame coordinates)
+
+
+def _quiet_for(at: datetime, quiet_since: datetime, unclear: datetime | None) -> float:
+    """Seconds of conclusive stillness: an inconclusive sample restarts the count."""
+    since = max(quiet_since, unclear) if unclear is not None else quiet_since
+    return (at - since).total_seconds()
 
 
 def _subject(class_name: str) -> str | None:

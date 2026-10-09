@@ -63,6 +63,53 @@ class CameraReport:
     objects: list[dict[str, Any]]
     poses: list[dict[str, Any]]
     frame_jpeg: bytes | None
+    # {session_id, frame_id, frame_at, ...} of the frame the objects were
+    # detected on, and of frame_jpeg. Older Nodes send neither.
+    vision_frame: dict[str, Any] | None = None
+    frame_ref: dict[str, Any] | None = None
+
+
+def _frame_identity(ref: dict[str, Any] | None) -> tuple[str, int | None, datetime | None] | None:
+    if not isinstance(ref, dict):
+        return None
+    frame_id = ref.get("frame_id")
+    return (
+        str(ref.get("session_id") or ""),
+        int(frame_id) if isinstance(frame_id, (int, float)) else None,
+        _parse_time(ref.get("frame_at")),
+    )
+
+
+def _same_frame(first: dict[str, Any] | None, second: dict[str, Any] | None) -> bool:
+    a, b = _frame_identity(first), _frame_identity(second)
+    return a is not None and a == b and (a[1] is not None or a[2] is not None)
+
+
+def _supersedes(
+    incoming: dict[str, Any] | None,
+    stored: dict[str, Any] | None,
+    stored_received_at: str | None,
+    *,
+    allow_same: bool,
+) -> bool:
+    """Whether a report about ``incoming`` may replace what was stored for ``stored``.
+
+    Frame ids only order frames of one capture session; across sessions (camera
+    or Node restarted) the Node's frame_at is compared instead. A stored value
+    the Cloud received long ago never blocks a new one, so a Node clock that
+    went backwards cannot freeze the view.
+    """
+    new, old = _frame_identity(incoming), _frame_identity(stored)
+    if new is None or old is None:
+        return True
+    received_for = _seconds_since(stored_received_at)
+    if received_for is None or received_for > REPORT_STALE_SECONDS:
+        return True
+    if new[0] == old[0] and new[1] is not None and old[1] is not None:
+        return new[1] > old[1] or (allow_same and new[1] == old[1])
+    if new[2] is None or old[2] is None:
+        return True
+    return new[2] > old[2] or (allow_same and new[2] == old[2])
 
 
 def _utc_now() -> datetime:
@@ -223,14 +270,49 @@ class CloudCameraRuntime:
 
     def _store_report(self, connection, organization_id: str, node_id: str, report: CameraReport, now: str) -> None:
         status = report.status if report.status in {"CONNECTING", "ONLINE", "DEGRADED", "OFFLINE"} else "OFFLINE"
+        stored = connection.execute(
+            """
+            SELECT vision_json, objects_json, poses_json, reported_at, frame_overlay_json, frame_captured_at
+            FROM camera_live_state
+            WHERE camera_id = ? AND organization_id = ?
+            """,
+            (report.camera_id, organization_id),
+        ).fetchone()
+        stored_vision = _loads(stored["vision_json"], {}) if stored else {}
+        stored_overlay = _loads(stored["frame_overlay_json"], None) if stored else None
+
+        # Objects: a delayed report about an older analysis keeps the newer one.
+        vision = {**(report.vision or {}), "objects_frame": report.vision_frame}
+        vision_json, objects_json, poses_json = _json(vision), _json(report.objects or []), _json(report.poses or [])
+        if stored and not _supersedes(
+            report.vision_frame, stored_vision.get("objects_frame"), stored["reported_at"], allow_same=True
+        ):
+            vision_json, objects_json, poses_json = stored["vision_json"], stored["objects_json"], stored["poses_json"]
+
+        # Frame: stored together with the objects found on that same frame, so
+        # the overlay never draws one analysis over another analysis's image.
+        frame_jpeg, overlay_json = report.frame_jpeg, None
+        if frame_jpeg is not None and stored_overlay is not None and not _supersedes(
+            report.frame_ref, stored_overlay.get("ref"), stored["frame_captured_at"], allow_same=False
+        ):
+            frame_jpeg = None  # duplicate or out of order: keep the newer stored frame
+        if frame_jpeg is not None:
+            paired = _same_frame(report.frame_ref, report.vision_frame)
+            overlay_json = _json(
+                {
+                    "ref": report.frame_ref,
+                    "objects": (report.objects or []) if paired else [],
+                    "poses": (report.poses or []) if paired else [],
+                }
+            )
         connection.execute(
             """
             INSERT INTO camera_live_state (
                 camera_id, organization_id, node_id, status, last_error, frames_received,
                 approximate_fps, width, height, last_frame_at, reported_at,
-                vision_json, objects_json, poses_json, frame_jpeg, frame_captured_at
+                vision_json, objects_json, poses_json, frame_jpeg, frame_captured_at, frame_overlay_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(camera_id) DO UPDATE SET
                 node_id = excluded.node_id,
                 status = excluded.status,
@@ -245,7 +327,11 @@ class CloudCameraRuntime:
                 objects_json = excluded.objects_json,
                 poses_json = excluded.poses_json,
                 frame_jpeg = COALESCE(excluded.frame_jpeg, camera_live_state.frame_jpeg),
-                frame_captured_at = COALESCE(excluded.frame_captured_at, camera_live_state.frame_captured_at)
+                frame_captured_at = COALESCE(excluded.frame_captured_at, camera_live_state.frame_captured_at),
+                frame_overlay_json = CASE
+                    WHEN excluded.frame_jpeg IS NOT NULL THEN excluded.frame_overlay_json
+                    ELSE camera_live_state.frame_overlay_json
+                END
             """,
             (
                 report.camera_id,
@@ -259,11 +345,12 @@ class CloudCameraRuntime:
                 report.height,
                 report.last_frame_at,
                 now,
-                _json(report.vision or {}),
-                _json(report.objects or []),
-                _json(report.poses or []),
-                report.frame_jpeg,
-                now if report.frame_jpeg else None,
+                vision_json,
+                objects_json,
+                poses_json,
+                frame_jpeg,
+                now if frame_jpeg else None,
+                overlay_json,
             ),
         )
         connection.execute(
@@ -455,7 +542,7 @@ class CloudCameraRuntime:
             )
             row = connection.execute(
                 """
-                SELECT frame_jpeg, frame_captured_at, reported_at, objects_json, poses_json, width, height
+                SELECT frame_jpeg, frame_captured_at, reported_at, frame_overlay_json
                 FROM camera_live_state
                 WHERE camera_id = ? AND organization_id = ?
                 """,
@@ -470,11 +557,14 @@ class CloudCameraRuntime:
         frame_bytes = bytes(row["frame_jpeg"])
         if not overlay:
             return frame_bytes
-        objects = _loads(row["objects_json"], [])
-        poses = _loads(row["poses_json"], [])
-        if not objects and not poses:
+        # Only the objects detected on this very frame are drawn. A frame from
+        # a Node that does not report frame identity is shown without boxes.
+        pair = _loads(row["frame_overlay_json"], None) or {}
+        ref = pair.get("ref") if isinstance(pair.get("ref"), dict) else None
+        objects, poses = pair.get("objects") or [], pair.get("poses") or []
+        if ref is None or (not objects and not poses):
             return frame_bytes
-        source_size = (row["width"], row["height"]) if row["width"] and row["height"] else None
+        source_size = (ref["width"], ref["height"]) if ref.get("width") and ref.get("height") else None
         return _render_overlay(frame_bytes, camera_id, objects, poses, source_size) or frame_bytes
 
     def set_flags(

@@ -132,7 +132,16 @@ class NodeSettings:
     camera_read_failure_limit: int = 3
     camera_open_timeout_ms: int = 10000
     camera_read_timeout_ms: int = 6000
-    vision_interval_seconds: float = 0.35
+    # Minimum time between two analyses of the same camera: at most
+    # 1/interval inferences per second per camera (0.2 s -> 5 FPS).
+    vision_interval_seconds: float = 0.2
+    # Share of wall time the inference thread may keep the CPU busy; after
+    # each inference it rests long enough to stay under it, so capture,
+    # recording and the panel keep CPU even when cameras outnumber the CPU.
+    vision_max_busy_ratio: float = 0.75
+    # Analysed frames waiting for the event rules and observers. When full the
+    # inference waits (back-pressure): events are never dropped.
+    vision_post_queue_size: int = 8
     vision_confidence: float = 0.35
     # Ultralytics weights: the detector ships with the package; the pose model
     # is downloaded into <data_dir>/models on first use when it is missing.
@@ -205,7 +214,9 @@ class NodeSettings:
             camera_read_failure_limit=_env_int("CAMPEX_NODE_CAMERA_READ_FAILURE_LIMIT", 3),
             camera_open_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_OPEN_TIMEOUT_MS", 10000),
             camera_read_timeout_ms=_env_int("CAMPEX_NODE_CAMERA_READ_TIMEOUT_MS", 6000),
-            vision_interval_seconds=_env_float("CAMPEX_NODE_VISION_INTERVAL_SECONDS", 0.35),
+            vision_interval_seconds=_env_float("CAMPEX_NODE_VISION_INTERVAL_SECONDS", 0.2),
+            vision_max_busy_ratio=_env_float("CAMPEX_NODE_VISION_MAX_BUSY_RATIO", 0.75),
+            vision_post_queue_size=_env_int("CAMPEX_NODE_VISION_POST_QUEUE_SIZE", 8),
             vision_confidence=_env_float("CAMPEX_NODE_VISION_CONFIDENCE", 0.35),
             vision_model=os.getenv("CAMPEX_NODE_VISION_MODEL", "yolo11n.pt"),
             pose_model=os.getenv("CAMPEX_NODE_POSE_MODEL", "yolo11n-pose.pt"),
@@ -255,6 +266,10 @@ class NodeSettings:
             raise ValueError("Camera timeout values must be greater than zero.")
         if self.vision_interval_seconds <= 0:
             raise ValueError("CAMPEX_NODE_VISION_INTERVAL_SECONDS must be greater than zero.")
+        if not 0.05 <= self.vision_max_busy_ratio <= 1.0:
+            raise ValueError("CAMPEX_NODE_VISION_MAX_BUSY_RATIO must be between 0.05 and 1.")
+        if self.vision_post_queue_size < 1:
+            raise ValueError("CAMPEX_NODE_VISION_POST_QUEUE_SIZE must be at least 1.")
         if not 0.0 <= self.vision_confidence <= 1.0:
             raise ValueError("CAMPEX_NODE_VISION_CONFIDENCE must be between 0 and 1.")
         if self.evidence_retention_days < 0:

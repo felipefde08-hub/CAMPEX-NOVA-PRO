@@ -117,14 +117,29 @@ class LiveRelayService:
                 "approximate_fps": self._fps(camera.id, state.frames_received if state else 0),
                 "last_frame_at": state.last_frame_at.isoformat() if state and state.last_frame_at else None,
             }
+            result = None
             if self.vision is not None:
                 report["vision"] = self.vision.status(camera.id)
-                report["objects"] = self.vision.cloud_objects(camera.id)
-                report["poses"] = self.vision.cloud_poses(camera.id)
+                result, report["objects"], report["poses"] = self._vision_payload(camera.id)
+                if result is not None:
+                    # Identity of the frame these objects were detected on.
+                    report["vision_frame"] = result.frame_ref()
             if camera.id in live:
-                report.update(self._encoded_frame(camera.id))
+                report.update(self._encoded_frame(camera.id, result))
             reports.append(report)
         return reports
+
+    def _vision_payload(self, camera_id: str) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
+        """Objects and poses of one single analysis, read once."""
+        latest_result = getattr(self.vision, "latest_result", None)
+        if latest_result is None:  # a vision service without frame identity
+            return None, self.vision.cloud_objects(camera_id), self.vision.cloud_poses(camera_id)
+        result = latest_result(camera_id)
+        if result is None:
+            return None, [], []
+        objects = [item.as_cloud_dict() for item in result.detections]
+        poses = [item.as_cloud_dict(index + 1) for index, item in enumerate(result.poses)]
+        return result, objects, poses
 
     def _fps(self, camera_id: str, frames_received: int) -> float | None:
         now = time.monotonic()
@@ -134,9 +149,20 @@ class LiveRelayService:
             return None
         return round((frames_received - previous[1]) / (now - previous[0]), 1)
 
-    def _encoded_frame(self, camera_id: str) -> dict[str, Any]:
-        frame, frame_at = self.camera_manager.latest_frame(camera_id)
-        if frame is None or self._last_uploaded_frame.get(camera_id) == frame_at:
+    def _encoded_frame(self, camera_id: str, result=None) -> dict[str, Any]:
+        """The frame to show in the dashboard, with its identity.
+
+        While Vision has a result, the uploaded frame is the analysed one, so
+        the Cloud can draw the report's objects on the very image they were
+        found on. Otherwise it is the latest camera frame.
+        """
+        if result is not None:
+            frame, frame_ref, source = result.frame, result.frame_ref(), "vision"
+        else:
+            frame, frame_ref = self._latest_camera_frame(camera_id)
+            source = "camera"
+        key = (frame_ref["session_id"], frame_ref["frame_id"], frame_ref["frame_at"])
+        if frame is None or self._last_uploaded_frame.get(camera_id) == key:
             return {}
         height, width = frame.shape[:2]
         if width > self.settings.live_frame_max_width:
@@ -145,12 +171,28 @@ class LiveRelayService:
         ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.settings.live_frame_jpeg_quality])
         if not ok:
             return {}
-        self._last_uploaded_frame[camera_id] = frame_at
+        self._last_uploaded_frame[camera_id] = key
         # Boxes and keypoints are in source-frame pixels; report the source size.
         return {
             "width": width,
             "height": height,
             "frame_jpeg_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+            "frame_ref": {**frame_ref, "width": width, "height": height, "source": source},
+        }
+
+    def _latest_camera_frame(self, camera_id: str) -> tuple[Any, dict[str, Any]]:
+        latest_snapshot = getattr(self.camera_manager, "latest_snapshot", None)
+        if latest_snapshot is None:  # a camera manager without frame identity
+            frame, frame_at = self.camera_manager.latest_frame(camera_id)
+            session_id, frame_id = "", None
+        else:
+            snapshot = latest_snapshot(camera_id)
+            frame, frame_at = (snapshot.frame, snapshot.frame_at) if snapshot else (None, None)
+            session_id, frame_id = (snapshot.session_id, snapshot.frame_id) if snapshot else ("", None)
+        return frame, {
+            "session_id": session_id,
+            "frame_id": frame_id,
+            "frame_at": frame_at.isoformat() if frame_at else None,
         }
 
     def _apply_cloud_flags(self, cameras: dict[str, dict[str, Any]]) -> None:
