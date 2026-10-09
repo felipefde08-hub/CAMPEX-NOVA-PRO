@@ -128,6 +128,15 @@ class CloudClient:
             return CloudResult(ok=False, error="Node is not paired.")
         return self._send("POST", "/node-sync/cameras/live", payload=payload)
 
+    def send_factory_batch(self, payload: dict[str, list[dict[str, Any]]]) -> CloudResult:
+        """Events, metrics, intervals, counters and the factory snapshot.
+
+        A Cloud without this endpoint answers 404 and the items stay queued.
+        """
+        if not self.settings.cloud_url:
+            return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")
+        return self._send("POST", "/node-sync/v2/batch", payload=payload)
+
     def send_batch(self, *, events: list[dict[str, Any]], metrics: list[dict[str, Any]]) -> CloudResult:
         if not self.settings.cloud_url:
             return CloudResult(ok=False, error="CAMPEX_NODE_CLOUD_URL is not configured.")

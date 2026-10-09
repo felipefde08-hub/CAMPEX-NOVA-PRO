@@ -6,7 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from backend.config import Settings
-from backend.database.db import connect
+from backend.database.db import LEGACY_KNOWN_ALERT_TYPES, connect
 from backend.notifications.models import ALERT_TYPES, NotificationPreference
 
 
@@ -24,6 +24,15 @@ class NotificationRepository:
         )
         self.save_preference(preference.as_dict())
         return self.get_preference(organization_id) or preference
+
+    def list_report_preferences(self) -> list[NotificationPreference]:
+        """Every organization with scheduled reports turned on."""
+        with connect(self.settings.database_target) as connection:
+            rows = connection.execute(
+                "SELECT * FROM notification_preferences WHERE enabled = ? AND reports_enabled = ?",
+                (True, True),
+            ).fetchall()
+        return [_preference_from_row(row) for row in rows]
 
     def get_preference(self, organization_id: str) -> NotificationPreference | None:
         with connect(self.settings.database_target) as connection:
@@ -55,6 +64,8 @@ class NotificationRepository:
             "timezone": payload.get("timezone", "America/Sao_Paulo"),
             "immediate_alerts_enabled": bool(payload.get("immediate_alerts_enabled", True)),
             "alert_types": json.dumps(alert_types, ensure_ascii=False),
+            # The types offered when this choice was made; see _enabled_alert_types.
+            "known_alert_types": json.dumps(sorted(ALERT_TYPES)),
         }
         with connect(self.settings.database_target) as connection:
             connection.execute(
@@ -63,13 +74,13 @@ class NotificationRepository:
                     id, organization_id, enabled, telegram_enabled, telegram_chat_id,
                     email_enabled, email_recipients, reports_enabled, report_frequency,
                     report_time, report_weekday, report_month_day, timezone,
-                    immediate_alerts_enabled, alert_types
+                    immediate_alerts_enabled, alert_types, known_alert_types
                 )
                 VALUES (
                     :id, :organization_id, :enabled, :telegram_enabled, :telegram_chat_id,
                     :email_enabled, :email_recipients, :reports_enabled, :report_frequency,
                     :report_time, :report_weekday, :report_month_day, :timezone,
-                    :immediate_alerts_enabled, :alert_types
+                    :immediate_alerts_enabled, :alert_types, :known_alert_types
                 )
                 ON CONFLICT(organization_id) DO UPDATE SET
                     enabled = excluded.enabled,
@@ -85,6 +96,7 @@ class NotificationRepository:
                     timezone = excluded.timezone,
                     immediate_alerts_enabled = excluded.immediate_alerts_enabled,
                     alert_types = excluded.alert_types,
+                    known_alert_types = excluded.known_alert_types,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 values,
@@ -194,8 +206,21 @@ def _preference_from_row(row) -> NotificationPreference:
         report_month_day=int(row["report_month_day"]),
         timezone=row["timezone"],
         immediate_alerts_enabled=bool(row["immediate_alerts_enabled"]),
-        alert_types=_decode_list(row["alert_types"]) or sorted(ALERT_TYPES),
+        alert_types=_enabled_alert_types(row),
     )
+
+
+def _enabled_alert_types(row) -> list[str]:
+    """The chosen types, plus those added to CAMPEX after the choice was made.
+
+    A type the user turned off stays off; a type that did not exist yet
+    (e.g. factory alerts for an organization that saved before them) is on.
+    """
+    chosen = _decode_list(row["alert_types"])
+    if not chosen:
+        return sorted(ALERT_TYPES)
+    known = _decode_list(row["known_alert_types"]) or _decode_list(LEGACY_KNOWN_ALERT_TYPES)
+    return sorted((set(chosen) | (ALERT_TYPES - set(known))) & ALERT_TYPES)
 
 
 def _decode_list(value: str | None) -> list[str]:

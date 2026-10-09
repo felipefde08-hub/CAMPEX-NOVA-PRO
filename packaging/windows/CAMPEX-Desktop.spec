@@ -24,6 +24,10 @@ ultralytics_datas, ultralytics_binaries, ultralytics_hiddenimports = safe_collec
 av_datas, av_binaries, av_hiddenimports = safe_collect_all("av")
 tzdata_datas, tzdata_binaries, tzdata_hiddenimports = safe_collect_all("tzdata")
 
+# go2rtc (CAMPEX_NODE_GO2RTC=1): build.ps1 downloads the pinned binary first.
+GO2RTC_BINARY = ROOT / "campex_node" / "bin" / "go2rtc.exe"
+go2rtc_binaries = [(str(GO2RTC_BINARY), "go2rtc")] if GO2RTC_BINARY.is_file() else []
+
 # Automatic updates: the swap script and the release public key travel with
 # the Node. Without the key the packaged Node keeps updates disabled.
 UPDATES_DIR = ROOT / "campex_node" / "updates"
@@ -40,6 +44,7 @@ a = Analysis(
         *torchvision_binaries,
         *ultralytics_binaries,
         *av_binaries,
+        *go2rtc_binaries,
     ],
     datas=[
         (str(ROOT / "frontend"), "frontend"),
@@ -79,6 +84,10 @@ a = Analysis(
         "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan",
         "uvicorn.lifespan.on",
+        "uvicorn.protocols.websockets.websockets_impl",
+        "websockets.asyncio.client",
+        "trackers",
+        "supervision",
     ]
     + collect_submodules("cv2")
     + torch_hiddenimports
@@ -92,7 +101,6 @@ a = Analysis(
     excludes=[
         "matplotlib",
         "pandas",
-        "scipy",
         "pytest",
         "numpy.tests",
         "numpy.f2py.tests",

@@ -16,7 +16,7 @@ import psutil
 from campex_node.cameras.manager import CameraManager
 from campex_node.core.config import ROOT_DIR, NodeSettings
 from campex_node.events import NodeEventPipeline
-from campex_node.tracking import EdgeTracker
+from campex_node.tracking import create_tracker
 
 
 logger = logging.getLogger("campex.node.vision")
@@ -298,7 +298,7 @@ class EdgeVisionService:
         self.camera_manager = camera_manager
         self.events = events
         self.observers = list(observers or [])
-        self._trackers: dict[str, EdgeTracker] = {}
+        self._trackers: dict[str, Any] = {}
         # camera_id -> identity of the last analysed frame: (session_id,
         # frame_id) when the camera manager provides it, else its frame_at
         # (two frames read within one clock tick can share a frame_at).
@@ -637,7 +637,9 @@ class EdgeVisionService:
             try:
                 detections, detector = self._detect(frame)
                 detect_ms = (time.perf_counter() - model_started) * 1000
-                tracker = self._trackers.setdefault(camera.id, EdgeTracker())
+                tracker = self._trackers.get(camera.id)
+                if tracker is None:
+                    tracker = self._trackers[camera.id] = create_tracker(self.settings.vision_tracker)
                 detections = tracker.update(detections, frame_at or datetime.now(timezone.utc))
                 updates.update(status="RUNNING", detections=detections, detector=detector, error=None)
                 vision_ok = True

@@ -83,8 +83,9 @@ def test_camera_worker_reconnects_without_exposing_rtsp_credentials(tmp_path):
 class CountingWorker:
     instances = []
 
-    def __init__(self, camera, settings):
+    def __init__(self, camera, settings, source_url=None):
         self.camera = camera
+        self.source_url = source_url
         self.stopped = False
         CountingWorker.instances.append(self)
 

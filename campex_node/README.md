@@ -86,6 +86,44 @@ GET  /api/cameras/{camera_id}/vision/status
 GET  /api/cameras/{camera_id}/vision/objects
 ```
 
+## Camera Streaming (go2rtc)
+
+Cheap cameras accept only two or three RTSP sessions, and the Node opens one
+for vision and one for recording. With `CAMPEX_NODE_GO2RTC=1` the Node runs
+[go2rtc](https://github.com/AlexxIT/go2rtc) (MIT) next to it: go2rtc keeps one
+connection per camera and vision, recording and the live view read its local
+restream. The live page then plays real video (MSE) instead of snapshots;
+with detections on it keeps the snapshots, since the boxes are drawn by the
+Node.
+
+```bash
+python scripts/fetch_go2rtc.py   # pinned release, SHA-256 checked; build.ps1 runs it
+export CAMPEX_NODE_GO2RTC=1
+export CAMPEX_NODE_GO2RTC_API_PORT=8788    # optional
+export CAMPEX_NODE_GO2RTC_RTSP_PORT=8789   # optional
+```
+
+go2rtc listens only on 127.0.0.1, asks for a password generated at each start
+even from this computer, loads no module that runs commands (exec, echo,
+expr) and no WebRTC. Browsers reach the video through the Node at
+`/api/cameras/{camera_id}/live`, which checks the login and the page origin.
+Its config, with the camera URLs, is `<data_dir>/go2rtc/go2rtc.yaml`; its log
+is next to it. When the binary is missing the cameras keep their direct
+connection. `GET /api/status` reports it under `streaming`.
+
+## Tracker
+
+`CAMPEX_NODE_VISION_TRACKER` picks how detections get IDs across frames:
+`edge` (default, the Node's own tracker) or `bytetrack` (Roboflow's
+`trackers` package, Apache-2.0). Compare them on a recording before switching:
+
+```bash
+python scripts/compare_trackers.py gravacao.mp4 --out comparacao.mp4
+```
+
+On `palace.mp4` (crowd, 0.35 s interval) the edge tracker was more stable:
+24 IDs vs 28, 93% vs 77% of detections with an ID.
+
 ## Cloud Behavior
 
 When `CAMPEX_NODE_CLOUD_URL` is missing or unavailable, heartbeat payloads,

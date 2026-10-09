@@ -157,6 +157,8 @@ class Settings:
     nemotron_top_p: float = 0.7
     nemotron_max_tokens: int = 700
     telegram_bot_token: str | None = None
+    # Vercel sends it as "Authorization: Bearer <CRON_SECRET>" on cron calls.
+    cron_secret: str | None = None
     resend_api_key: str | None = None
     resend_from_email: str | None = None
     resend_from_name: str = "CAMPEX"
@@ -358,6 +360,7 @@ class Settings:
             nemotron_top_p=float(os.getenv("NEMOTRON_TOP_P", "0.7")),
             nemotron_max_tokens=int(os.getenv("NEMOTRON_MAX_TOKENS", "700")),
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN") or None,
+            cron_secret=os.getenv("CRON_SECRET") or None,
             resend_api_key=os.getenv("RESEND_API_KEY") or None,
             resend_from_email=(
                 os.getenv("RESEND_FROM_EMAIL")

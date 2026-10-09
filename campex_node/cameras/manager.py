@@ -6,12 +6,14 @@ from backend.cameras.health import CameraStatus
 
 from campex_node.cameras.camera import CameraRuntimeState
 from campex_node.core.config import NodeCameraConfig, NodeSettings
+from campex_node.streaming.go2rtc import Go2rtcRelay
 from campex_node.workers.camera_worker import CameraWorker
 
 
 class CameraManager:
-    def __init__(self, settings: NodeSettings) -> None:
+    def __init__(self, settings: NodeSettings, relay: Go2rtcRelay | None = None) -> None:
         self.settings = settings
+        self.relay = relay
         self._cameras: dict[str, NodeCameraConfig] = {
             camera.id: camera for camera in settings.cameras
         }
@@ -19,12 +21,17 @@ class CameraManager:
         self._lock = threading.Lock()
 
     def start(self) -> None:
+        if self.relay is not None:
+            self.relay.start(self.configs())
         for camera in self._cameras.values():
             if camera.enabled:
                 self.start_camera(camera.id)
 
     def apply_configs(self, cameras: list[NodeCameraConfig]) -> None:
         desired = {camera.id: camera for camera in cameras}
+        if self.relay is not None:
+            # Before the workers restart, so they find their new stream.
+            self.relay.sync(cameras)
         with self._lock:
             existing_ids = set(self._cameras)
         for camera_id in existing_ids - set(desired):
@@ -56,7 +63,7 @@ class CameraManager:
             existing = self._workers.get(camera_id)
             if existing is not None and existing.is_alive():
                 return
-            worker = CameraWorker(camera, self.settings)
+            worker = CameraWorker(camera, self.settings, source_url=self.source_url(camera))
             self._workers[camera_id] = worker
             worker.start()
 
@@ -75,6 +82,12 @@ class CameraManager:
             worker.request_stop()
         for worker in workers:
             worker.join()
+        if self.relay is not None:
+            self.relay.stop()
+
+    def source_url(self, camera: NodeCameraConfig) -> str:
+        """The URL camera consumers open: go2rtc's restream when it runs."""
+        return self.relay.source_url(camera) if self.relay is not None else camera.rtsp_url
 
     def configs(self) -> list[NodeCameraConfig]:
         with self._lock:

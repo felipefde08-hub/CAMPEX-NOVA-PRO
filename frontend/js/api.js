@@ -137,6 +137,18 @@ export async function fetchLocalNode(path, { timeoutMs = 10000, ...options } = {
   }
 }
 
+// "mse" when the Node restreams its cameras through go2rtc, else "mjpeg".
+export async function getLocalNodeLiveMode() {
+  try {
+    const response = await fetchLocalNode("/api/status", { timeoutMs: 3000, headers: { Accept: "application/json" } });
+    if (!response.ok) return "mjpeg";
+    const status = await response.json();
+    return status?.streaming?.live_mode === "mse" ? "mse" : "mjpeg";
+  } catch {
+    return "mjpeg";
+  }
+}
+
 function shouldUseLocalNodeCameraId(cameraId = "") {
   return String(cameraId || "").startsWith("local_");
 }
@@ -775,6 +787,15 @@ export function updateZone(zoneId, payload) {
   return requestJson(`/zones/${zoneId}`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+// Signal light machines (CAMPEX Node): the light's current level becomes its
+// lit ("on") or unlit ("off") reference.
+export function calibrateZoneLight(zoneId, state) {
+  return requestJson(`/zones/${zoneId}/calibrate-light`, {
+    method: "POST",
+    body: JSON.stringify({ state }),
   });
 }
 

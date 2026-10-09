@@ -1043,6 +1043,7 @@ body[data-modal-open="true"] {
 }
 
 .live-media-host {
+  position: relative;
   display: grid;
   place-items: center;
   width: 100%;
@@ -1057,6 +1058,12 @@ body[data-modal-open="true"] {
   width: 100%;
   height: 100%;
   min-height: 560px;
+  object-fit: contain;
+  background: #05070a;
+}
+
+.live-player video {
+  min-height: inherit;
   object-fit: contain;
   background: #05070a;
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -83,6 +84,17 @@ def send_report(
         return _service(request).send_report_now(organization_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/cron/reports")
+def cron_reports(request: Request) -> dict[str, Any]:
+    """Scheduled reports, called by Vercel Cron (see vercel.json)."""
+    secret = request.app.state.settings.cron_secret
+    authorization = request.headers.get("authorization", "")
+    if not secret or not hmac.compare_digest(authorization.encode("utf-8"), f"Bearer {secret}".encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid cron secret.")
+    results = _service(request).send_scheduled_reports()
+    return {"ok": True, "reports": len(results)}
 
 
 @router.get("/deliveries")

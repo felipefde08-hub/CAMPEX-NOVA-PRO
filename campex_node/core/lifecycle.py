@@ -15,6 +15,7 @@ from campex_node.cloud.client import CloudClient
 from campex_node.cloud.config_sync import ConfigSyncService
 from campex_node.cloud.heartbeat import HeartbeatService
 from campex_node.cloud.live_relay import LiveRelayService
+from campex_node.cloud.outbox import CloudOutbox
 from campex_node.cloud.sync import SyncService
 from campex_node.core.config import NodeSettings
 from campex_node.events import NodeEventPipeline, NodeEventStore
@@ -65,6 +66,7 @@ class NodeLifecycle:
         self.live_relay: LiveRelayService | None = None
         self.updates: UpdateService | None = None
         self.evidence_retention: EvidenceRetentionService | None = None
+        self.outbox: CloudOutbox | None = None
         self._running = False
         self.started_at: datetime | None = None
 
@@ -99,6 +101,12 @@ class NodeLifecycle:
         )
         if self.cloud_client.is_configured():
             self.config_sync.sync_once()
+        if self.cloud_client.is_configured() and self.settings.cloud_token:
+            # Before the monitors start, so their first events are queued.
+            self.outbox = CloudOutbox(
+                self.store, self.events_store, self.activity_store, self.factory_store, self.camera_manager.configs
+            )
+            self.outbox.attach()
         self.camera_manager.start()
         events = NodeEventPipeline(
             self.events_store,
@@ -140,6 +148,7 @@ class NodeLifecycle:
             settings=self.settings,
             cloud_client=self.cloud_client,
             store=self.store,
+            outbox=self.outbox,
         )
         if self.cloud_client.is_configured():
             self.sync.start()
@@ -210,6 +219,9 @@ class NodeLifecycle:
         if self.vision is not None:
             self.vision.stop()
         self.activity_store.flush()
+        if self.outbox is not None:
+            self.outbox.detach()
+            self.outbox = None
         self.camera_manager.stop()
         self._running = False
         self.started_at = None
